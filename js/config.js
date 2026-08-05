@@ -10,5 +10,5 @@
 // the database instead (see sql/schema.sql).
 // ------------------------------------------------------------------
 
-const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+const SUPABASE_URL = "https://drwfedhhpuhgiqmqtwgi.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_9BqjPM1TnF1b1gy0YTWGiA_iw9yxpUw";
