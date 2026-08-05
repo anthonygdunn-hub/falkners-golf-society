@@ -30,9 +30,58 @@ function showLogin() {
 }
 
 async function showDashboard() {
-  document.getElementById("login-panel").style.display = "none";
-  document.getElementById("dashboard").style.display = "block";
-  await refreshData();
+    document.getElementById("login-panel").style.display = "none";
+    document.getElementById("dashboard").style.display = "block";
+    await refreshData();
+    await refreshPendingMembers();
+}
+
+async function refreshPendingMembers() {
+    const container = document.getElementById("pending-members-list");
+    if (!container) return;
+  
+    const { data: pending, error } = await client
+          .from("memberships")
+          .select("*, profiles(display_name)")
+          .eq("status", "pending")
+          .order("requested_at", { ascending: true });
+  
+    if (error) {
+          container.innerHTML = `<p class="small">Couldn't load requests: ${error.message}</p>`;
+          return;
+    }
+  
+    if (!pending.length) {
+          container.innerHTML = `<p class="small">No pending requests right now.</p>`;
+          return;
+    }
+  
+    container.innerHTML = pending.map(m => `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
+              <span>${escapeHtml(m.profiles?.display_name || 'Unknown')}</span>
+                    <span>
+                            <button class="btn btn-brass" style="padding:6px 12px; font-size:0.75rem;" data-approve="${m.profile_id}">Approve</button>
+                                    <button class="btn btn-outline" style="padding:6px 12px; font-size:0.75rem;" data-reject="${m.profile_id}">Reject</button>
+                                          </span>
+                                              </div>
+                                                `).join("");
+  
+    container.querySelectorAll("[data-approve]").forEach(btn => {
+          btn.addEventListener("click", () => decideMembership(btn.dataset.approve, "approved"));
+});
+  container.querySelectorAll("[data-reject]").forEach(btn => {
+        btn.addEventListener("click", () => decideMembership(btn.dataset.reject, "rejected"));
+});
+}
+
+async function decideMembership(profileId, status) {
+    const { data: { user } } = await client.auth.getUser();
+    await client.from("memberships").update({
+          status,
+          decided_at: new Date().toISOString(),
+          decided_by: user?.id || null
+    }).eq("profile_id", profileId);
+    await refreshPendingMembers();
 }
 
 function wireLogin() {
