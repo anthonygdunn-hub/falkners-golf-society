@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Committee Admin — The Falkners Arms Golf Society</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html">Back to site</a></li>
+    </ul>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container admin-shell">
+
+    <div id="login-panel">
+      <span class="eyebrow">Committee only</span>
+      <h1>Sign in</h1>
+      <p class="small">Use the email &amp; password set up for you in Supabase. Not got one yet? See README.md for how to create committee accounts.</p>
+      <div id="login-status"></div>
+      <form id="login-form">
+        <div class="form-field">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" required>
+        </div>
+        <div class="form-field">
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" required>
+        </div>
+        <button class="btn btn-brass" type="submit">Sign in</button>
+      </form>
+    </div>
+
+    <div id="dashboard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="eyebrow">Committee dashboard</span>
+          <h1 class="mt-0">Log a round's results</h1>
+        </div>
+        <button class="btn btn-outline" id="logout-btn">Sign out</button>
+      </div>
+
+      <div class="scorecard" style="margin-top:20px;">
+        <div class="scorecard-head">
+          <h3>Enter results</h3>
+        </div>
+        <div style="padding:20px;">
+          <div class="form-field">
+            <label for="event-select">Which round?</label>
+            <select id="event-select"></select>
+          </div>
+          <p class="small">Leave "Points" blank for anyone who didn't play — they'll simply be skipped. Points is whatever number should count toward the season leaderboard (Stableford points, converted ranking points, whatever this event used).</p>
+          <div id="results-entry-rows"></div>
+          <div id="results-status"></div>
+          <button class="btn btn-brass" id="save-results-btn" type="button">Save results</button>
+        </div>
+      </div>
+
+      <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
+        <div class="card">
+          <h3>Add a fixture</h3>
+          <form id="add-event-form">
+            <div class="form-field"><label>Round name</label><input id="new-event-name" required placeholder="e.g. Round 10"></div>
+            <div class="form-field"><label>Date</label><input id="new-event-date" type="date" required></div>
+            <div class="form-field"><label>Venue</label><input id="new-event-venue" placeholder="e.g. Hurtmore Golf Club"></div>
+            <div class="form-field"><label>Address</label><input id="new-event-address" placeholder="Optional"></div>
+            <button class="btn btn-outline" type="submit">Add fixture</button>
+            <div id="event-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Add a player</h3>
+          <form id="add-player-form">
+            <div class="form-field"><label>Name</label><input id="new-player-name" required></div>
+            <div class="form-field"><label>Handicap</label><input id="new-player-handicap" type="number" step="0.1" placeholder="Optional"></div>
+            <button class="btn btn-outline" type="submit">Add player</button>
+            <div id="player-status" class="small" style="margin-top:8px;"></div>
+          </form>
+          <h3 style="margin-top:20px;">Current members</h3>
+          <div id="player-manage-list"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>&copy; 2026 The Falkners Arms Golf Society</span>
+    <ul class="footer-links"><li><a href="index.html">Back to site</a></li></ul>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>

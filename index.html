@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Falkners Arms Golf Society</title>
+<meta name="description" content="Golf society based at The Falkners Arms, Fleet. Fixtures, results, and leaderboard for our 40+ members.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html" aria-current="page">The Society</a></li>
+      <li><a href="committee.html">Committee</a></li>
+      <li><a href="hole-in-one.html">Hole in One Club</a></li>
+      <li><a href="leaderboard.html">Leaderboard</a></li>
+      <li><a href="fixtures.html">Fixtures</a></li>
+      <li><a href="results.html">Results</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container hero-inner">
+    <div>
+      <span class="eyebrow">Fleet, Hampshire · Founded 2023</span>
+      <h1>Chasing a silly little white ball, one Sunday at a time.</h1>
+      <p class="lede">40+ members strong and still growing. Nine rounds a year across some of the South's best courses, a Ryder Cup weekend, and — starting 2026 — a fines system for any misdemeanour on or off the course.</p>
+      <div class="hero-actions">
+        <a class="btn btn-brass" href="contact.html">Join the Society</a>
+        <a class="btn btn-outline" style="border-color:var(--white); color:var(--white);" href="fixtures.html">See fixtures</a>
+      </div>
+    </div>
+    <div class="hero-badge">
+      <div class="hero-badge-inner">
+        <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Who we are</span>
+      <h2>Great mates, warm welcomes, no airs and graces.</h2>
+      <p>We welcome players of all standards and guarantee a warm reception and a great day out. The Society was founded with the aim of playing ten events throughout the year, including a Ryder Cup-style tournament. We play some excellent courses across southern England while keeping costs reasonable — and usually fail miserably to get that dimpled little ball anywhere near the right hole. Couldn't be better.</p>
+    </div>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Order of Merit</h3>
+        <p class="small">Nine rounds count toward the season leaderboard. Every event, every point, tracked automatically.</p>
+      </div>
+      <div class="card">
+        <h3>Hole in One Club</h3>
+        <p class="small">£1 a head goes into the pot at every meeting. Whoever lands that first hole-in-one clears their bar tab.</p>
+      </div>
+      <div class="card">
+        <h3>2026 Fines System</h3>
+        <p class="small">Any misdemeanour on or off the course gets reported to the Captain. Laughter and fines guaranteed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">This season</span>
+      <h2>Current leaderboard</h2>
+    </div>
+    <div class="scorecard">
+      <div class="scorecard-head">
+        <h3>Order of Merit — 2026</h3>
+        <span class="meta" id="round-count-meta">loading…</span>
+      </div>
+      <div id="home-leaderboard"><div class="empty-state">Loading leaderboard…</div></div>
+    </div>
+    <p class="text-center small" style="margin-top:16px;"><a href="leaderboard.html">View full leaderboard →</a></p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Coming up</span>
+      <h2>Next fixture</h2>
+    </div>
+    <ul class="fixture-list" id="home-next-fixture">
+      <li class="empty-state">Loading fixtures…</li>
+    </ul>
+    <p class="text-center small" style="margin-top:16px;"><a href="fixtures.html">See the full 2026 schedule →</a></p>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>&copy; 2026 The Falkners Arms Golf Society</span>
+    <ul class="footer-links">
+      <li><a href="contact.html">Contact</a></li>
+      <li><a href="admin.html">Committee login</a></li>
+    </ul>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/site-data.js"></script>
+<script>
+(async function () {
+  try {
+    const { events, results } = await fetchAllData();
+
+    // Leaderboard
+    const leaderboard = buildLeaderboard(results);
+    renderLeaderboardTable(document.getElementById("home-leaderboard"), leaderboard.slice(0, 5));
+    const roundsLogged = new Set(results.map(r => r.event_id)).size;
+    document.getElementById("round-count-meta").textContent = `${roundsLogged} of ${events.length} rounds logged`;
+
+    // Next fixture
+    const today = new Date().toISOString().slice(0, 10);
+    const upcoming = events.filter(e => e.event_date >= today).sort((a, b) => a.event_date.localeCompare(b.event_date));
+    const list = document.getElementById("home-next-fixture");
+    if (upcoming.length) {
+      list.innerHTML = renderFixtureItem(upcoming[0]);
+    } else {
+      list.innerHTML = `<li class="empty-state">No upcoming fixtures posted yet.</li>`;
+    }
+  } catch (err) {
+    console.error(err);
+    document.getElementById("home-leaderboard").innerHTML = `<div class="empty-state">Couldn't load live data yet — has the Supabase connection been set up? See README.md.</div>`;
+    document.getElementById("home-next-fixture").innerHTML = `<li class="empty-state">Couldn't load fixtures yet.</li>`;
+  }
+})();
+</script>
+</body>
+</html>

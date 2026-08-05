@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results — The Falkners Arms Golf Society</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html">The Society</a></li>
+      <li><a href="committee.html">Committee</a></li>
+      <li><a href="hole-in-one.html">Hole in One Club</a></li>
+      <li><a href="leaderboard.html">Leaderboard</a></li>
+      <li><a href="fixtures.html">Fixtures</a></li>
+      <li><a href="results.html" aria-current="page">Results</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <span class="eyebrow">Round by round</span>
+    <h1>Results 2026</h1>
+    <p class="small">Most recent round first. Each scorecard updates the moment the committee logs it.</p>
+
+    <div id="results-list" style="margin-top:24px;">
+      <div class="empty-state">Loading results…</div>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>&copy; 2026 The Falkners Arms Golf Society</span>
+    <ul class="footer-links">
+      <li><a href="contact.html">Contact</a></li>
+      <li><a href="admin.html">Committee login</a></li>
+    </ul>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/site-data.js"></script>
+<script>
+(async function () {
+  const listEl = document.getElementById("results-list");
+  try {
+    const { events, results } = await fetchAllData();
+
+    const resultsByEvent = new Map();
+    for (const r of results) {
+      if (!resultsByEvent.has(r.event_id)) resultsByEvent.set(r.event_id, []);
+      resultsByEvent.get(r.event_id).push(r);
+    }
+
+    const eventsWithResults = events
+      .filter(e => resultsByEvent.has(e.id))
+      .sort((a, b) => b.event_date.localeCompare(a.event_date));
+
+    listEl.innerHTML = eventsWithResults.length
+      ? eventsWithResults.map(e => renderEventResultsCard(e, resultsByEvent.get(e.id))).join("")
+      : `<div class="empty-state">No results logged yet this season. Check back after the first fixture!</div>`;
+  } catch (err) {
+    console.error(err);
+    listEl.innerHTML = `<div class="empty-state">Couldn't load live data yet — has the Supabase connection been set up? See README.md.</div>`;
+  }
+})();
+</script>
+</body>
+</html>
