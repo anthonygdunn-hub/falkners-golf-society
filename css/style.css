@@ -350,6 +350,8 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 
 .fixture-body { flex: 1; }
 .fixture-body h3 { margin-bottom: 2px; text-transform: none; font-family: var(--font-body); font-weight: 700; font-size: 1.05rem; color: var(--ink); }
+.fixture-body h3 a { color: inherit; text-decoration: none; }
+.fixture-body h3 a:hover { text-decoration: underline; }
 .fixture-body .venue { color: var(--ink-soft); font-size: 0.9rem; }
 
 /* ---------- Forms ---------- */
@@ -435,6 +437,65 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 
 .gallery-caption span { color: var(--ink); }
 .gallery-caption small { color: var(--ink-soft); font-family: var(--font-mono); font-size: 0.7rem; }
+
+/* ---------- Attendance & groupings ---------- */
+
+.attendee-list {
+     display: flex;
+     flex-wrap: wrap;
+     gap: 8px;
+}
+
+.attendee-chip {
+     background: var(--paper);
+     border: 1px solid var(--line);
+     border-radius: 999px;
+     padding: 6px 14px;
+     font-size: 0.85rem;
+}
+
+.groupings-board {
+     display: flex;
+     gap: 16px;
+     flex-wrap: wrap;
+     margin-top: 12px;
+}
+
+.group-column {
+     flex: 1;
+     min-width: 180px;
+     background: var(--paper);
+     border: 1px solid var(--line);
+     border-radius: var(--radius);
+     padding: 12px;
+     min-height: 80px;
+}
+
+.group-column h4 {
+     margin: 0 0 8px;
+     font-size: 0.78rem;
+     text-transform: uppercase;
+     letter-spacing: 0.05em;
+     color: var(--ink-soft);
+}
+
+.group-column.drag-over {
+     border-color: var(--gold);
+     background: var(--gold-light);
+}
+
+.player-chip {
+     background: var(--white);
+     border: 1px solid var(--line);
+     border-radius: 8px;
+     padding: 8px 10px;
+     margin-bottom: 6px;
+     font-size: 0.88rem;
+     cursor: grab;
+     user-select: none;
+}
+
+.player-chip.dragging { opacity: 0.35; }
 
 /* ---------- Footer ---------- */
 
