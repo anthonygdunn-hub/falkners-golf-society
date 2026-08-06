@@ -119,14 +119,15 @@ function renderEventResultsCard(event, resultsForEvent) {
   `;
 }
 
-function renderFixtureItem(event, { withRsvp = true } = {}) {
   const { day, month } = shortDate(event.event_date);
+  const isPast = event.event_date < new Date().toISOString().slice(0, 10);
+  const link = isPast ? `results.html#event-${event.id}` : `fixture.html?id=${event.id}`;
   return `
-    <li class="fixture-item">
-      <div class="fixture-date"><strong>${day}</strong>${month}</div>
-      <div class="fixture-body">
-        <h3>${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</h3>
-        <div class="venue">${escapeHtml(event.address || 'Venue to be confirmed')}</div>
+      <li class="fixture-item">
+            <div class="fixture-date"><strong>${day}</strong>${month}</div>
+                  <div class="fixture-body">
+                          <h3><a href="${link}">${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</a></h3>
+                                  <div class="venue">${escapeHtml(event.address || 'Venue to be confirmed')}</div>
       </div>
     </li>
   `;
