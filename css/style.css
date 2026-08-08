@@ -604,3 +604,11 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
   .fixture-facts { grid-template-columns: 1fr; gap: 2px 0; }
   .fixture-facts dd { margin-bottom: 10px; }
 }
+
+/* Quick links above the fixture list */
+.fixtures-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+
+/* Non-interactive fixture row (homepage "next fixture"): links through to
+   the fixtures page rather than expanding in place. */
+.fixture-item-static .fixture-head { text-decoration: none; color: inherit; }
+.fixture-item-static .fixture-chevron { font-size: 1.4rem; line-height: 1; }
