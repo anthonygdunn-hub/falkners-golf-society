@@ -514,3 +514,93 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 :focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+
+/* ---------- Fixtures list: expandable detail panel ---------- */
+
+.fixture-item { display: block; padding: 0; overflow: hidden; }
+
+.fixture-head {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  width: 100%;
+  padding: 16px 20px;
+  background: none;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fixture-head:hover .fixture-title { text-decoration: underline; }
+.fixture-head:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+.fixture-title {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.fixture-chevron {
+  flex-shrink: 0;
+  color: var(--navy);
+  font-size: 0.9rem;
+  transition: transform 0.18s ease;
+}
+
+.fixture-item.is-open .fixture-chevron { transform: rotate(180deg); }
+
+.fixture-panel { padding: 4px 20px 20px; border-top: 1px solid var(--line); }
+.fixture-panel[hidden] { display: none; }
+
+.fixture-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  margin: 16px 0 20px;
+  font-size: 0.9rem;
+}
+
+.fixture-facts dt {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-top: 2px;
+}
+
+.fixture-facts dd { margin: 0; color: var(--ink); }
+.fixture-facts dd a { color: var(--navy); }
+
+.fixture-cost { font-weight: 700; }
+
+.fixture-notes {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border-left: 3px solid var(--gold);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.fixture-section-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+}
+
+.fixture-panel .attendee-list { margin-bottom: 16px; }
+
+@media (max-width: 560px) {
+  .fixture-facts { grid-template-columns: 1fr; gap: 2px 0; }
+  .fixture-facts dd { margin-bottom: 10px; }
+}
