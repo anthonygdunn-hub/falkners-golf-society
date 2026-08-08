@@ -33,11 +33,14 @@
   <div class="container">
     <span class="eyebrow">Round by round</span>
     <h1>Results 2026</h1>
-    <p class="small">Most recent round first. Each scorecard updates the moment the committee logs it.</p>
+    <p class="small">Click any round to see the full scorecard. Each one updates the moment the committee logs it.</p>
 
-    <div id="results-list" style="margin-top:24px;">
-      <div class="empty-state">Loading results…</div>
-    </div>
+    <div class="year-tabs" id="year-tabs"></div>
+    <p class="small" id="results-meta" style="margin-top:12px;"></p>
+
+    <ul class="fixture-list" id="results-list" style="margin-top:16px;">
+      <li class="empty-state">Loading results…</li>
+    </ul>
   </div>
 </section>
 
@@ -55,30 +58,6 @@
 <script src="js/config.js"></script>
 <script src="js/nav.js"></script>
 <script src="js/site-data.js"></script>
-<script>
-(async function () {
-  const listEl = document.getElementById("results-list");
-  try {
-    const { events, results } = await fetchAllData();
-
-    const resultsByEvent = new Map();
-    for (const r of results) {
-      if (!resultsByEvent.has(r.event_id)) resultsByEvent.set(r.event_id, []);
-      resultsByEvent.get(r.event_id).push(r);
-    }
-
-    const eventsWithResults = events
-      .filter(e => resultsByEvent.has(e.id))
-      .sort((a, b) => b.event_date.localeCompare(a.event_date));
-
-    listEl.innerHTML = eventsWithResults.length
-      ? eventsWithResults.map(e => renderEventResultsCard(e, resultsByEvent.get(e.id))).join("")
-      : `<div class="empty-state">No results logged yet this season. Check back after the first fixture!</div>`;
-  } catch (err) {
-    console.error(err);
-    listEl.innerHTML = `<div class="empty-state">Couldn't load live data yet — has the Supabase connection been set up? See README.md.</div>`;
-  }
-})();
-</script>
+<script src="js/results.js"></script>
 </body>
 </html>
