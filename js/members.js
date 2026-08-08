@@ -50,6 +50,8 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                 if (intendedEventId) { await registerForEventAndRedirect(intendedEventId); return; }
                                                                 show("approved-panel");
                                                                     document.getElementById("display-name-input").value = profile?.display_name || "";
+                                                                    document.getElementById("handicap-input").value = profile?.handicap ?? "";
+                                                                    document.getElementById("bio-input").value = profile?.bio || "";
                                                                         document.getElementById("current-avatar").src = profile?.avatar_url || "assets/logo.jpeg";
                                                                             document.getElementById("welcome-name").textContent = profile?.display_name || "there";
                                                                                 loadMyPhotos();
@@ -124,10 +126,16 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                                                   document.getElementById("profile-form").addEventListener("submit", async (e) => {
                                                                                                                                                                                                                                                                                       e.preventDefault();
                                                                                                                                                                                                                                                                                           const name = document.getElementById("display-name-input").value.trim();
+    const handicapRaw = document.getElementById("handicap-input").value.trim();
+    const bio = document.getElementById("bio-input").value.trim();
                                                                                                                                                                                                                                                                                               const statusEl = document.getElementById("profile-status");
                                                                                                                                                                                                                                                                                                   if (!name) return;
                                                                                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                                                                                      const { error } = await client.from("profiles").update({ display_name: name }).eq("id", currentUser.id);
+                                                                                                                                                                                                                                                                                                      const { error } = await client.from("profiles").update({
+      display_name: name,
+      handicap: handicapRaw === "" ? null : Number(handicapRaw),
+      bio: bio || null
+    }).eq("id", currentUser.id);
                                                                                                                                                                                                                                                                                                           statusEl.textContent = error ? error.message : "Saved.";
                                                                                                                                                                                                                                                                                                               statusEl.className = error ? "status-msg err" : "status-msg ok";
                                                                                                                                                                                                                                                                                                                   if (!error) document.getElementById("welcome-name").textContent = name;
