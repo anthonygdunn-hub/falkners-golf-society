@@ -42,7 +42,7 @@ async function refreshPendingMembers() {
   
     const { data: pending, error } = await client
           .from("memberships")
-          .select("*, profiles(display_name), events:intended_event_id(name, event_date)")
+          .select("*")
           .eq("status", "pending")
           .order("requested_at", { ascending: true });
   
@@ -55,6 +55,28 @@ async function refreshPendingMembers() {
           container.innerHTML = `<p class="small">No pending requests right now.</p>`;
           return;
     }
+
+    // Fetched separately rather than embedded: memberships has two foreign
+    // keys to profiles (profile_id and decided_by), so an embed is ambiguous
+    // and PostgREST refuses it.
+    const profileIds = pending.map(m => m.profile_id).filter(Boolean);
+    const eventIds = pending.map(m => m.intended_event_id).filter(Boolean);
+
+    const [{ data: profs }, { data: evs }] = await Promise.all([
+          profileIds.length
+            ? client.from("profiles").select("id, display_name").in("id", profileIds)
+            : Promise.resolve({ data: [] }),
+          eventIds.length
+            ? client.from("events").select("id, name, event_date").in("id", eventIds)
+            : Promise.resolve({ data: [] })
+    ]);
+
+    const profById = new Map((profs || []).map(p => [p.id, p]));
+    const evById = new Map((evs || []).map(e => [e.id, e]));
+    pending.forEach(m => {
+          m.profiles = profById.get(m.profile_id) || null;
+          m.events = evById.get(m.intended_event_id) || null;
+    });
   
     container.innerHTML = pending.map(m => `
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
