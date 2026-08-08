@@ -612,3 +612,81 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
    the fixtures page rather than expanding in place. */
 .fixture-item-static .fixture-head { text-decoration: none; color: inherit; }
 .fixture-item-static .fixture-chevron { font-size: 1.4rem; line-height: 1; }
+
+/* ---------- Navigation: burger menu on small screens ---------- */
+
+.nav-auth-btn {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--white);
+  text-decoration: none;
+  padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+
+.nav-auth-btn:hover { background: rgba(255,255,255,0.12); }
+
+.nav-toggle {
+  display: none;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: var(--radius);
+  color: var(--white);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+/* Three bars drawn from one element, so there's less markup to inject. */
+.nav-toggle-bars,
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.nav-toggle-bars { position: relative; }
+.nav-toggle-bars::before,
+.nav-toggle-bars::after { content: ""; position: absolute; left: 0; }
+.nav-toggle-bars::before { top: -6px; }
+.nav-toggle-bars::after { top: 6px; }
+
+/* Burger turns into a cross while the menu is open. */
+.is-nav-open .nav-toggle-bars { background: transparent; }
+.is-nav-open .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
+.is-nav-open .nav-toggle-bars::after { transform: translateY(-6px) rotate(-45deg); }
+
+@media (max-width: 860px) {
+  .nav-wrap { gap: 12px; }
+  .nav-toggle { display: block; order: 3; }
+  .nav-auth-btn { order: 2; margin-left: auto; }
+
+  .main-nav {
+    order: 4;
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 0;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.16);
+  }
+
+  .nav-wrap.is-nav-open .main-nav { display: flex; }
+
+  .main-nav li { width: 100%; }
+
+  .main-nav a {
+    display: block;
+    padding: 13px 4px;
+    font-size: 0.95rem;
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+}
