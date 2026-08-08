@@ -177,6 +177,8 @@ function renderFixtureFacts(event) {
   const rows = [];
 
   rows.push(["Date", formatDate(event.event_date)]);
+  if (event.meet_time) rows.push(["Meet", formatTime(event.meet_time)]);
+  if (event.tee_time) rows.push(["First tee", formatTime(event.tee_time)]);
   if (event.venue) rows.push(["Venue", escapeHtml(event.venue)]);
   if (event.address) {
     rows.push(["Address", `${escapeHtml(event.address)} · <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((event.venue ? event.venue + ", " : "") + event.address)}" target="_blank" rel="noopener">Open in Maps</a>`]);
@@ -198,6 +200,16 @@ function renderFixtureFacts(event) {
     : "";
 
   return facts + notes;
+}
+
+// Postgres hands back "08:30:00"; nobody says "oh eight thirty hundred".
+function formatTime(t) {
+  const parts = String(t).split(":");
+  const hour = Number(parts[0]);
+  if (parts.length < 2 || !isFinite(hour)) return escapeHtml(t);
+  const suffix = hour < 12 ? "am" : "pm";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${parts[1]}${suffix}`;
 }
 
 function formatCost(cost) {

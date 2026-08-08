@@ -155,6 +155,8 @@ function loadEventIntoEditForm(eventId) {
   set("edit-event-name", event.name);
   set("edit-event-date", event.event_date);
   set("edit-event-venue", event.venue);
+  set("edit-event-meet-time", (event.meet_time || "").slice(0, 5));
+  set("edit-event-tee-time", (event.tee_time || "").slice(0, 5));
   set("edit-event-cost", event.cost);
   set("edit-event-address", event.address);
   set("edit-event-website", event.website);
@@ -176,6 +178,8 @@ async function saveEventEdits(e) {
     name: val("edit-event-name"),
     event_date: val("edit-event-date"),
     venue: val("edit-event-venue") || null,
+    meet_time: val("edit-event-meet-time") || null,
+    tee_time: val("edit-event-tee-time") || null,
     address: val("edit-event-address") || null,
     website: val("edit-event-website") || null,
     format: val("edit-event-format") || null,
@@ -308,6 +312,8 @@ async function addEvent(e) {
   const venue = document.getElementById("new-event-venue").value.trim();
   const address = document.getElementById("new-event-address").value.trim();
   const website = document.getElementById("new-event-website").value.trim();
+  const meetTime = document.getElementById("new-event-meet-time").value;
+  const teeTime = document.getElementById("new-event-tee-time").value;
   const notes = document.getElementById("new-event-notes").value.trim();
   const costRaw = document.getElementById("new-event-cost").value.trim();
   const event_date = document.getElementById("new-event-date").value;
@@ -319,6 +325,8 @@ async function addEvent(e) {
     event_date,
     venue: venue || null,
     address: address || null,
+    meet_time: meetTime || null,
+    tee_time: teeTime || null,
     website: website || null,
     notes: notes || null,
     cost: costRaw === "" ? null : Number(costRaw)
