@@ -787,3 +787,31 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
   .footer-inner { flex-wrap: wrap; gap: 10px; }
   .social-footer { margin-left: 0; }
 }
+
+/* ---------- Floating WhatsApp button ---------- */
+
+.whatsapp-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: #25D366;
+  color: #fff;
+  box-shadow: 0 6px 18px -4px rgba(16,35,63,0.45);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.whatsapp-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 22px -6px rgba(16,35,63,0.55); }
+.whatsapp-fab:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+.whatsapp-fab svg { width: 28px; height: 28px; fill: currentColor; flex-shrink: 0; }
+
+@media (max-width: 560px) {
+  .whatsapp-fab { width: 50px; height: 50px; right: 14px; bottom: 14px; }
+  .whatsapp-fab svg { width: 26px; height: 26px; }
+}
