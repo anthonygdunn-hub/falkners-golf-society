@@ -59,6 +59,13 @@
                                                                                                                                                                                                                                                                                                     <div class="form-field"><label>Password</label><input id="login-password" type="password" required></div>
                                                                                                                                                                                                                                                                                                                 <button class="btn btn-outline" type="submit">Sign in</button>
 <p class="small" style="margin-top:10px;"><a href="#" id="forgot-password-link">Forgotten your password?</a></p>
+<div id="reset-request-panel" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--line);">
+<p class="small"><strong>Reset your password.</strong> Enter the email address you joined with and we'll send you a link to set a new one.</p>
+<div class="form-field"><label for="reset-email">Email address</label><input id="reset-email" type="email" autocomplete="email"></div>
+<button class="btn btn-brass" type="button" id="reset-submit">Send reset link</button>
+<button class="btn btn-outline" type="button" id="reset-cancel" style="margin-left:8px;">Cancel</button>
+<div id="reset-request-status" style="margin-top:12px;"></div>
+</div>
                                                                                                                                                                                                                                                                                                                             <div id="login-status" style="margin-top:12px;"></div>
                                                                                                                                                                                                                                                                                                                                       </form>
                                                                                                                                                                                                                                                                                                                                               </div>
