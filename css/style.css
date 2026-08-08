@@ -721,3 +721,41 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 @media (max-width: 800px) {
   .hero-badge { display: none; }
 }
+
+/* ---------- Score tables on small screens ---------- */
+/* Five columns of 20px-padded cells overflow a phone. Rather than let
+   them scroll off sideways, tighten the spacing and drop the least
+   important column on the narrowest screens. Column 3 is HCap and
+   column 4 is Rounds (leaderboard) / Gross (scorecards); position,
+   name and points — the things people actually look for — always stay. */
+
+@media (max-width: 620px) {
+  table.score-table { font-size: 0.88rem; }
+  table.score-table th,
+  table.score-table td { padding: 9px 8px; }
+  table.score-table td.pos { padding-left: 10px; }
+  table.score-table th:first-child,
+  table.score-table td:first-child { padding-left: 10px; }
+  table.score-table th:last-child,
+  table.score-table td:last-child { padding-right: 10px; }
+}
+
+@media (max-width: 470px) {
+  /* Drop Rounds / Gross first — it's the most expendable of the five. */
+  table.score-table th:nth-child(4),
+  table.score-table td:nth-child(4) { display: none; }
+}
+
+@media (max-width: 380px) {
+  /* Very narrow: handicap goes too, leaving Pos / Name / Points. */
+  table.score-table th:nth-child(3),
+  table.score-table td:nth-child(3) { display: none; }
+}
+
+/* Long names shouldn't force the table wider than the screen. */
+table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
+
+/* Belt and braces: if a table still can't fit (an unusually long name,
+   a future extra column), let that one table scroll rather than
+   stretching the whole page sideways. */
+.scorecard { overflow-x: auto; }
