@@ -119,18 +119,76 @@ function renderEventResultsCard(event, resultsForEvent) {
   `;
 }
 
+// Renders one row in the fixtures list as a collapsed accordion item.
+// Clicking the header expands a panel in place — no page navigation — with
+// the full details, who's playing, and the option to register.
+function renderFixtureItem(event) {
   const { day, month } = shortDate(event.event_date);
-  const isPast = event.event_date < new Date().toISOString().slice(0, 10);
-  const link = isPast ? `results.html#event-${event.id}` : `fixture.html?id=${event.id}`;
   return `
-      <li class="fixture-item">
-            <div class="fixture-date"><strong>${day}</strong>${month}</div>
-                  <div class="fixture-body">
-                          <h3><a href="${link}">${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</a></h3>
-                                  <div class="venue">${escapeHtml(event.address || 'Venue to be confirmed')}</div>
+    <li class="fixture-item" id="event-${event.id}" data-event-id="${event.id}">
+      <button class="fixture-head" type="button" aria-expanded="false" aria-controls="panel-${event.id}">
+        <span class="fixture-date"><strong>${day}</strong>${month}</span>
+        <span class="fixture-body">
+          <span class="fixture-title">${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</span>
+          <span class="venue">${escapeHtml(event.address || 'Venue to be confirmed')}</span>
+        </span>
+        <span class="fixture-chevron" aria-hidden="true">&#9662;</span>
+      </button>
+      <div class="fixture-panel" id="panel-${event.id}" hidden>
+        ${renderFixtureFacts(event)}
+        <div class="fixture-section-label">Who's playing</div>
+        <div class="attendee-slot" data-attendees-for="${event.id}"><p class="small">Loading…</p></div>
+        <div class="register-slot" data-register-for="${event.id}"></div>
       </div>
     </li>
   `;
+}
+
+// The detail block inside an expanded fixture. Only shows rows the
+// committee has actually filled in, so a sparse fixture stays tidy.
+function renderFixtureFacts(event) {
+  const rows = [];
+
+  rows.push(["Date", formatDate(event.event_date)]);
+  if (event.venue) rows.push(["Venue", escapeHtml(event.venue)]);
+  if (event.address) {
+    rows.push(["Address", `${escapeHtml(event.address)} · <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((event.venue ? event.venue + ", " : "") + event.address)}" target="_blank" rel="noopener">Open in Maps</a>`]);
+  }
+  if (event.cost != null && event.cost !== "") {
+    rows.push(["Cost", `<span class="fixture-cost">${formatCost(event.cost)}</span> per player`]);
+  }
+  if (event.website) {
+    rows.push(["Website", `<a href="${escapeHtml(normaliseUrl(event.website))}" target="_blank" rel="noopener">${escapeHtml(stripUrl(event.website))}</a>`]);
+  }
+  if (event.format) rows.push(["Format", escapeHtml(event.format)]);
+
+  const facts = `<dl class="fixture-facts">${rows
+    .map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`)
+    .join("")}</dl>`;
+
+  const notes = event.notes
+    ? `<div class="fixture-notes">${escapeHtml(event.notes)}</div>`
+    : "";
+
+  return facts + notes;
+}
+
+function formatCost(cost) {
+  const n = Number(cost);
+  if (!isFinite(n)) return escapeHtml(cost);
+  // Whole pounds look cleaner without trailing zeroes (£45, not £45.00)
+  return "£" + (Number.isInteger(n) ? n.toString() : n.toFixed(2));
+}
+
+// Committee members will paste "clandongolfclub.co.uk" as often as a full
+// URL, so make sure the link still works either way.
+function normaliseUrl(url) {
+  const trimmed = String(url).trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : "https://" + trimmed;
+}
+
+function stripUrl(url) {
+  return String(url).trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
 }
 
 function escapeHtml(str) {
