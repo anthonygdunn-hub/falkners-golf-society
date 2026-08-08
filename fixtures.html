@@ -34,7 +34,7 @@
   <div class="container">
     <span class="eyebrow">2026 season</span>
     <h1>Fixtures &amp; Events</h1>
-    <p class="small">Pulled live from our fixtures list — updated by the committee, no need to check a separate spreadsheet.</p>
+    <p class="small">Pulled live from our fixtures list — updated by the committee, no need to check a separate spreadsheet. Click any round for the full details and to register.</p>
     <ul class="fixture-list" id="fixture-list" style="margin-top:24px;">
       <li class="empty-state">Loading fixtures…</li>
     </ul>
@@ -55,20 +55,6 @@
 <script src="js/config.js"></script>
   <script src="js/nav.js"></script>
 <script src="js/site-data.js"></script>
-<script>
-(async function () {
-  const listEl = document.getElementById("fixture-list");
-  try {
-    const { events } = await fetchAllData();
-    const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date));
-    listEl.innerHTML = sorted.length
-      ? sorted.map(e => renderFixtureItem(e)).join("")
-      : `<li class="empty-state">No fixtures posted yet.</li>`;
-  } catch (err) {
-    console.error(err);
-    listEl.innerHTML = `<li class="empty-state">Couldn't load fixtures yet — has the Supabase connection been set up? See README.md.</li>`;
-  }
-})();
-</script>
+<script src="js/fixtures.js"></script>
 </body>
 </html>
