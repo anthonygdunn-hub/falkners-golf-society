@@ -42,7 +42,7 @@ async function refreshPendingMembers() {
   
     const { data: pending, error } = await client
           .from("memberships")
-          .select("*, profiles(display_name)")
+          .select("*, profiles(display_name), events:intended_event_id(name, event_date)")
           .eq("status", "pending")
           .order("requested_at", { ascending: true });
   
@@ -58,29 +58,36 @@ async function refreshPendingMembers() {
   
     container.innerHTML = pending.map(m => `
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
-              <span>${escapeHtml(m.profiles?.display_name || 'Unknown')}</span>
+              <span>${escapeHtml(m.profiles?.display_name || 'Unknown')}${m.events ? `<br><span class="small">Wants to play in ${escapeHtml(m.events.name)} (${m.events.event_date})</span>` : ''}</span>
                     <span>
-                            <button class="btn btn-brass" style="padding:6px 12px; font-size:0.75rem;" data-approve="${m.profile_id}">Approve</button>
+                            <button class="btn btn-brass" style="padding:6px 12px; font-size:0.75rem;" data-approve="${m.profile_id}" data-event="${m.intended_event_id || ''}">Approve</button>
                                     <button class="btn btn-outline" style="padding:6px 12px; font-size:0.75rem;" data-reject="${m.profile_id}">Reject</button>
                                           </span>
                                               </div>
                                                 `).join("");
   
     container.querySelectorAll("[data-approve]").forEach(btn => {
-          btn.addEventListener("click", () => decideMembership(btn.dataset.approve, "approved"));
+          btn.addEventListener("click", () => decideMembership(btn.dataset.approve, "approved", btn.dataset.event || null));
 });
   container.querySelectorAll("[data-reject]").forEach(btn => {
         btn.addEventListener("click", () => decideMembership(btn.dataset.reject, "rejected"));
 });
 }
 
-async function decideMembership(profileId, status) {
+async function decideMembership(profileId, status, intendedEventId) {
     const { data: { user } } = await client.auth.getUser();
     await client.from("memberships").update({
           status,
           decided_at: new Date().toISOString(),
           decided_by: user?.id || null
     }).eq("profile_id", profileId);
+
+    // Approving someone who signed up specifically to play in a fixture
+    // also registers them for it — no separate step for the new member.
+    if (status === "approved" && intendedEventId) {
+          await client.from("attendance").insert({ event_id: intendedEventId, profile_id: profileId });
+    }
+
     await refreshPendingMembers();
 }
 
@@ -119,7 +126,85 @@ async function refreshData() {
   currentEvents = events || [];
 
   populateEventSelect();
+  populateEditEventSelect();
   renderPlayerManageList();
+}
+
+// ---- Editing an existing fixture -------------------------------------
+
+function populateEditEventSelect() {
+  const select = document.getElementById("edit-event-select");
+  if (!select) return;
+
+  const previous = select.value;
+  select.innerHTML = currentEvents.map(e =>
+    `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
+  ).join("");
+
+  // Keep the committee on the fixture they were already editing after a save.
+  if (previous && currentEvents.some(e => e.id === previous)) select.value = previous;
+
+  if (currentEvents.length) loadEventIntoEditForm(select.value);
+  select.onchange = () => loadEventIntoEditForm(select.value);
+}
+
+function loadEventIntoEditForm(eventId) {
+  const event = currentEvents.find(e => e.id === eventId);
+  if (!event) return;
+  const set = (id, val) => { document.getElementById(id).value = val ?? ""; };
+  set("edit-event-name", event.name);
+  set("edit-event-date", event.event_date);
+  set("edit-event-venue", event.venue);
+  set("edit-event-cost", event.cost);
+  set("edit-event-address", event.address);
+  set("edit-event-website", event.website);
+  set("edit-event-format", event.format);
+  set("edit-event-notes", event.notes);
+  document.getElementById("edit-event-status").textContent = "";
+}
+
+async function saveEventEdits(e) {
+  e.preventDefault();
+  const eventId = document.getElementById("edit-event-select").value;
+  const statusEl = document.getElementById("edit-event-status");
+  if (!eventId) return;
+
+  const val = id => document.getElementById(id).value.trim();
+  const costRaw = val("edit-event-cost");
+
+  const patch = {
+    name: val("edit-event-name"),
+    event_date: val("edit-event-date"),
+    venue: val("edit-event-venue") || null,
+    address: val("edit-event-address") || null,
+    website: val("edit-event-website") || null,
+    format: val("edit-event-format") || null,
+    notes: val("edit-event-notes") || null,
+    cost: costRaw === "" ? null : Number(costRaw)
+  };
+
+  if (!patch.name || !patch.event_date) {
+    statusEl.textContent = "A round name and date are both required.";
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  statusEl.textContent = "Saving…";
+  statusEl.className = "status-msg";
+
+  const { error } = await client.from("events").update(patch).eq("id", eventId);
+
+  if (error) {
+    statusEl.textContent = error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  // Refresh first: reloading the form clears the status line, so the
+  // confirmation has to be written after that, or it vanishes instantly.
+  await refreshData();
+  statusEl.textContent = "Saved. This is live on the Fixtures page now.";
+  statusEl.className = "status-msg ok";
 }
 
 function populateEventSelect() {
@@ -155,6 +240,7 @@ function wireForms() {
   document.getElementById("save-results-btn").addEventListener("click", saveResults);
   document.getElementById("add-player-form").addEventListener("submit", addPlayer);
   document.getElementById("add-event-form").addEventListener("submit", addEvent);
+  document.getElementById("edit-event-form").addEventListener("submit", saveEventEdits);
 }
 
 async function saveResults() {
@@ -221,11 +307,22 @@ async function addEvent(e) {
   const name = document.getElementById("new-event-name").value.trim();
   const venue = document.getElementById("new-event-venue").value.trim();
   const address = document.getElementById("new-event-address").value.trim();
+  const website = document.getElementById("new-event-website").value.trim();
+  const notes = document.getElementById("new-event-notes").value.trim();
+  const costRaw = document.getElementById("new-event-cost").value.trim();
   const event_date = document.getElementById("new-event-date").value;
   const statusEl = document.getElementById("event-status");
   if (!name || !event_date) return;
 
-  const { error } = await client.from("events").insert({ name, venue, address, event_date });
+  const { error } = await client.from("events").insert({
+    name,
+    event_date,
+    venue: venue || null,
+    address: address || null,
+    website: website || null,
+    notes: notes || null,
+    cost: costRaw === "" ? null : Number(costRaw)
+  });
   statusEl.textContent = error ? error.message : `Added ${name}.`;
   statusEl.className = error ? "status-msg err" : "status-msg ok";
   if (!error) {
