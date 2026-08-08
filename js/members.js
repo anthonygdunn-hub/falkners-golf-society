@@ -11,6 +11,10 @@ let currentUser = null;
 let currentMembership = null;
 let currentProfile = null;
 
+// Set when this page is reached via "Register to play" on a fixture
+// (member.html?event=<id>).
+const intendedEventId = new URLSearchParams(window.location.search).get("event");
+
 document.addEventListener("DOMContentLoaded", () => {
   client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     wireAuthForms();
@@ -39,10 +43,11 @@ document.addEventListener("DOMContentLoaded", () => {
                                               currentMembership = membership;
 
                                                 if (!membership || membership.status === "pending") {
-                                                    show("pending-panel");
+                                                    show("pending-panel"); describePending(membership);
                                                       } else if (membership.status === "rejected") {
                                                           show("rejected-panel");
                                                             } else {
+                                                                if (intendedEventId) { await registerForEventAndRedirect(intendedEventId); return; }
                                                                 show("approved-panel");
                                                                     document.getElementById("display-name-input").value = profile?.display_name || "";
                                                                         document.getElementById("current-avatar").src = profile?.avatar_url || "assets/logo.jpeg";
@@ -71,7 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                             const { error } = await client.auth.signUp({
                                                                                                                                   email,
                                                                                                                                         password,
-                                                                                                                                              options: { data: { display_name: displayName } }
+                                                                                                                                              options: { data: { display_name: displayName, intended_event_id: intendedEventId || null } }
                                                                                                                                                   });
                                                                                                                                                   
                                                                                                                                                       if (error) {
@@ -242,3 +247,46 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     .replaceAll('"', "&quot;");
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     }
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+
+
+// ------------------------------------------------------------------
+// Registering for a specific fixture (added with the fixtures accordion)
+// ------------------------------------------------------------------
+
+function formatEventDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Banner reminding people which round they are registering for.
+async function showEventContext() {
+  if (!intendedEventId) return;
+  const banner = document.getElementById("event-context");
+  if (!banner) return;
+  const { data: event } = await client.from("events")
+    .select("name, venue, event_date").eq("id", intendedEventId).single();
+  banner.style.display = "block";
+  banner.textContent = event
+    ? "Registering to play: " + event.name + (event.venue ? " - " + event.venue : "") + " (" + formatEventDate(event.event_date) + ")"
+    : "Registering for a fixture - sign in or request to join below.";
+}
+
+// Tell a pending member which round they will be registered for on approval.
+async function describePending(membership) {
+  const msgEl = document.getElementById("pending-message");
+  if (!msgEl) return;
+  const eventId = (membership && membership.intended_event_id) || intendedEventId;
+  if (!eventId) return;
+  const { data: event } = await client.from("events").select("name").eq("id", eventId).single();
+  if (event) {
+    msgEl.textContent = "A committee member needs to approve your account first - the moment they do, you will be automatically registered for " + event.name + ". Check back soon.";
+  }
+}
+
+// Already approved: register for the fixture, then back to the list.
+async function registerForEventAndRedirect(eventId) {
+  await client.from("attendance").insert({ event_id: eventId, profile_id: currentUser.id });
+  window.location.href = "fixtures.html?registered=" + eventId;
+}
+
+document.addEventListener("DOMContentLoaded", () => { setTimeout(showEventContext, 0); });
