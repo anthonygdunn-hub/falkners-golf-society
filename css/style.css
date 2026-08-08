@@ -690,3 +690,34 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
     border-bottom: 1px solid rgba(255,255,255,0.10);
   }
 }
+
+/* ---------- Season tabs on the results page ---------- */
+
+.year-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+
+.year-tab {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--navy);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.year-tab:hover { background: rgba(27,58,108,0.06); }
+
+.year-tab.is-active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+/* The crest is decorative and eats most of a phone screen before you
+   reach any content, so hide it once the hero stacks. */
+@media (max-width: 800px) {
+  .hero-badge { display: none; }
+}
