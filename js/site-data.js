@@ -109,7 +109,7 @@ function renderEventResultsCard(event, resultsForEvent) {
     : `<div class="empty-state">Results coming soon.</div>`;
 
   return `
-    <div class="scorecard" style="margin-bottom:24px;">
+    <div class="scorecard" id="event-${event.id}" style="margin-bottom:24px;">
       <div class="scorecard-head">
         <h3>${escapeHtml(event.name)}</h3>
         <span class="meta">${formatDate(event.event_date)} · ${escapeHtml(event.venue || 'Venue TBC')}</span>
@@ -119,31 +119,58 @@ function renderEventResultsCard(event, resultsForEvent) {
   `;
 }
 
+// Has this round already been played?
+function isPastEvent(event) {
+  return event.event_date < new Date().toISOString().slice(0, 10);
+}
+
 // Renders one row in the fixtures list as a collapsed accordion item.
 // Clicking the header expands a panel in place — no page navigation — with
 // the full details, who's playing, and the option to register.
-function renderFixtureItem(event) {
+//
+// Pass { compact: true } on pages that don't load js/fixtures.js (the
+// homepage): there's no accordion behaviour there, so the item renders as a
+// plain link through to this fixture on the fixtures page, which opens it.
+function renderFixtureItem(event, opts = {}) {
   const { day, month } = shortDate(event.event_date);
+  const title = `${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}`;
+  const venueLine = escapeHtml(event.address || 'Venue to be confirmed');
+
+  if (opts.compact) {
+    return `
+      <li class="fixture-item fixture-item-static">
+        <a class="fixture-head" href="fixtures.html#event-${event.id}">
+          <span class="fixture-date"><strong>${day}</strong>${month}</span>
+          <span class="fixture-body">
+            <span class="fixture-title">${title}</span>
+            <span class="venue">${venueLine}</span>
+          </span>
+          <span class="fixture-chevron" aria-hidden="true">&rsaquo;</span>
+        </a>
+      </li>
+    `;
+  }
+
+  const past = isPastEvent(event);
   return `
-    <li class="fixture-item" id="event-${event.id}" data-event-id="${event.id}">
+    <li class="fixture-item" id="event-${event.id}" data-event-id="${event.id}" data-past="${past}">
       <button class="fixture-head" type="button" aria-expanded="false" aria-controls="panel-${event.id}">
         <span class="fixture-date"><strong>${day}</strong>${month}</span>
         <span class="fixture-body">
-          <span class="fixture-title">${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</span>
-          <span class="venue">${escapeHtml(event.address || 'Venue to be confirmed')}</span>
+          <span class="fixture-title">${title}</span>
+          <span class="venue">${venueLine}</span>
         </span>
         <span class="fixture-chevron" aria-hidden="true">&#9662;</span>
       </button>
       <div class="fixture-panel" id="panel-${event.id}" hidden>
         ${renderFixtureFacts(event)}
-        <div class="fixture-section-label">Who's playing</div>
+        <div class="fixture-section-label">${past ? 'Who played' : "Who's playing"}</div>
         <div class="attendee-slot" data-attendees-for="${event.id}"><p class="small">Loading…</p></div>
         <div class="register-slot" data-register-for="${event.id}"></div>
       </div>
     </li>
   `;
 }
-
 // The detail block inside an expanded fixture. Only shows rows the
 // committee has actually filled in, so a sparse fixture stays tidy.
 function renderFixtureFacts(event) {

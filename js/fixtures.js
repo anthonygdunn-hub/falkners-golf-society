@@ -14,6 +14,7 @@ let currentUser = null;
 let isApprovedMember = false;
 let membershipStatus = null;
 const loadedAttendees = new Set();
+const eventsWithResults = new Set();
 
 document.addEventListener("DOMContentLoaded", async () => {
   client = getClient();
@@ -31,9 +32,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     isApprovedMember = membershipStatus === "approved";
   }
 
-  let events;
+  let events, results;
   try {
-    ({ events } = await fetchAllData());
+    ({ events, results } = await fetchAllData());
+    // Which rounds actually have scores logged — a past fixture with none
+    // shouldn't send people to a results page that doesn't list it.
+    results.forEach(r => eventsWithResults.add(r.event_id));
   } catch (err) {
     console.error(err);
     listEl.innerHTML = `<li class="empty-state">Couldn't load fixtures yet — has the Supabase connection been set up? See README.md.</li>`;
@@ -119,6 +123,16 @@ async function refreshAttendees(eventId) {
 async function renderRegisterControl(eventId) {
   const slot = document.querySelector(`[data-register-for="${eventId}"]`);
   if (!slot) return;
+
+  // A round that's already been played can't be registered for — offer its
+  // results instead, but only if the committee has actually logged them.
+  const item = slot.closest(".fixture-item");
+  if (item && item.dataset.past === "true") {
+    slot.innerHTML = eventsWithResults.has(eventId)
+      ? `<a class="btn btn-brass" href="results.html#event-${eventId}">See results</a>`
+      : `<p class="small">This round has been played — results will appear here once the committee logs them.</p>`;
+    return;
+  }
 
   if (!currentUser) {
     slot.innerHTML = `
