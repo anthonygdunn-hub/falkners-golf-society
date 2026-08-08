@@ -759,3 +759,31 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
    a future extra column), let that one table scroll rather than
    stretching the whole page sideways. */
 .scorecard { overflow-x: auto; }
+
+/* ---------- Social links ---------- */
+
+.social-links { display: flex; align-items: center; gap: 10px; }
+
+.social-links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--white);
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.social-links a:hover { opacity: 1; background: rgba(255,255,255,0.14); }
+.social-links svg { width: 17px; height: 17px; fill: currentColor; flex-shrink: 0; }
+
+.social-footer { margin-left: 16px; }
+
+@media (max-width: 860px) {
+  /* Header is tight on a phone — the footer pair is enough there. */
+  .social-header { display: none; }
+  .footer-inner { flex-wrap: wrap; gap: 10px; }
+  .social-footer { margin-left: 0; }
+}
