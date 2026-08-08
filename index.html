@@ -133,7 +133,7 @@
     const upcoming = events.filter(e => e.event_date >= today).sort((a, b) => a.event_date.localeCompare(b.event_date));
     const list = document.getElementById("home-next-fixture");
     if (upcoming.length) {
-      list.innerHTML = renderFixtureItem(upcoming[0]);
+      list.innerHTML = renderFixtureItem(upcoming[0], { compact: true });
     } else {
       list.innerHTML = `<li class="empty-state">No upcoming fixtures posted yet.</li>`;
     }
