@@ -110,7 +110,10 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                       await refreshView();
                                                                                                                                                                                                                                                         });
                                                                                                                                                                                                                                                         
-                                                                                                                                                                                                                                                          document.querySelectorAll(".logout-btn").forEach(btn => {
+                                                                                                                                                                                                                                                          const forgot = document.getElementById("forgot-password-link");
+  if (forgot) forgot.addEventListener("click", sendPasswordReset);
+
+  document.querySelectorAll(".logout-btn").forEach(btn => {
                                                                                                                                                                                                                                                               btn.addEventListener("click", async () => {
                                                                                                                                                                                                                                                                     await client.auth.signOut();
                                                                                                                                                                                                                                                                           await refreshView();
@@ -290,3 +293,38 @@ async function registerForEventAndRedirect(eventId) {
 }
 
 document.addEventListener("DOMContentLoaded", () => { setTimeout(showEventContext, 0); });
+
+
+// ------------------------------------------------------------------
+// Forgotten password: Supabase emails a single-use link back to
+// reset-password.html, where the new password is actually set.
+// ------------------------------------------------------------------
+async function sendPasswordReset(e) {
+  e.preventDefault();
+  const statusEl = document.getElementById("login-status");
+  const email = (document.getElementById("login-email").value || "").trim();
+
+  if (!email) {
+    statusEl.textContent = "Enter your email address above first, then click this again.";
+    statusEl.className = "status-msg err";
+    document.getElementById("login-email").focus();
+    return;
+  }
+
+  statusEl.textContent = "Sending reset email\u2026";
+  statusEl.className = "status-msg";
+
+  const redirectTo = window.location.origin + window.location.pathname.replace(/member\.html$/, "") + "reset-password.html";
+  const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+
+  if (error) {
+    statusEl.textContent = error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  // Deliberately the same message whether or not the address is registered,
+  // so this can't be used to find out who has an account.
+  statusEl.textContent = "If that address has an account, a reset link is on its way. Check your inbox and spam folder.";
+  statusEl.className = "status-msg ok";
+}
