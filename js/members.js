@@ -110,8 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                       await refreshView();
                                                                                                                                                                                                                                                         });
                                                                                                                                                                                                                                                         
-                                                                                                                                                                                                                                                          const forgot = document.getElementById("forgot-password-link");
-  if (forgot) forgot.addEventListener("click", sendPasswordReset);
+                                                                                                                                                                                                                                                          wirePasswordReset();
 
   document.querySelectorAll(".logout-btn").forEach(btn => {
                                                                                                                                                                                                                                                               btn.addEventListener("click", async () => {
@@ -295,27 +294,66 @@ async function registerForEventAndRedirect(eventId) {
 document.addEventListener("DOMContentLoaded", () => { setTimeout(showEventContext, 0); });
 
 
+// Forgotten password. Its own small form rather than borrowing the
+// sign-in email box, so it's obvious what's being asked for.
+//
+// Supabase only ever sends to addresses that actually have an account,
+// but it deliberately doesn't say which — and neither do we, because a
+// form that confirms "yes, that person is a member" is a way to find
+// out who belongs to the society.
 // ------------------------------------------------------------------
-// Forgotten password: Supabase emails a single-use link back to
-// reset-password.html, where the new password is actually set.
-// ------------------------------------------------------------------
-async function sendPasswordReset(e) {
-  e.preventDefault();
-  const statusEl = document.getElementById("login-status");
-  const email = (document.getElementById("login-email").value || "").trim();
+function wirePasswordReset() {
+  const link = document.getElementById("forgot-password-link");
+  const panel = document.getElementById("reset-request-panel");
+  const emailEl = document.getElementById("reset-email");
+  const submit = document.getElementById("reset-submit");
+  const cancel = document.getElementById("reset-cancel");
+  if (!link || !panel || !emailEl || !submit) return;
 
-  if (!email) {
-    statusEl.textContent = "Enter your email address above first, then click this again.";
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    panel.style.display = "block";
+    link.style.display = "none";
+    // Save them retyping it if they already started signing in.
+    const typed = (document.getElementById("login-email") || {}).value || "";
+    if (typed && !emailEl.value) emailEl.value = typed.trim();
+    emailEl.focus();
+  });
+
+  if (cancel) cancel.addEventListener("click", () => {
+    panel.style.display = "none";
+    link.style.display = "";
+    document.getElementById("reset-request-status").textContent = "";
+  });
+
+  submit.addEventListener("click", sendPasswordReset);
+
+  // Enter inside this box should send the reset, not submit the sign-in form.
+  emailEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); sendPasswordReset(); }
+  });
+}
+
+async function sendPasswordReset() {
+  const statusEl = document.getElementById("reset-request-status");
+  const submit = document.getElementById("reset-submit");
+  const email = (document.getElementById("reset-email").value || "").trim();
+
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    statusEl.textContent = "Enter a valid email address.";
     statusEl.className = "status-msg err";
-    document.getElementById("login-email").focus();
     return;
   }
 
-  statusEl.textContent = "Sending reset email\u2026";
+  submit.disabled = true;
+  statusEl.textContent = "Sending\u2026";
   statusEl.className = "status-msg";
 
-  const redirectTo = window.location.origin + window.location.pathname.replace(/member\.html$/, "") + "reset-password.html";
+  const redirectTo = window.location.origin +
+    window.location.pathname.replace(/member\.html$/, "") + "reset-password.html";
   const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+
+  submit.disabled = false;
 
   if (error) {
     statusEl.textContent = error.message;
@@ -323,8 +361,6 @@ async function sendPasswordReset(e) {
     return;
   }
 
-  // Deliberately the same message whether or not the address is registered,
-  // so this can't be used to find out who has an account.
   statusEl.textContent = "If that address has an account, a reset link is on its way. Check your inbox and spam folder.";
   statusEl.className = "status-msg ok";
 }
