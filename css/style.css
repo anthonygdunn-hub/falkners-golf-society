@@ -29,7 +29,9 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+/* scroll-padding keeps linked-to sections clear of the fixed header
+   instead of sliding underneath it. */
+html { scroll-behavior: smooth; scroll-padding-top: 96px; }
 
 body {
     margin: 0;
@@ -88,6 +90,11 @@ p { margin: 0 0 1em; color: var(--ink-soft); font-family: var(--font-body); text
   color: var(--white);
   border-bottom: 4px solid var(--navy-dark);
   box-shadow: inset 0 -1px 0 rgba(255,255,255,0.08);
+  /* Stays put while the page scrolls, on phones and desktops alike, so
+     the menu is always a tap away rather than a scroll back to the top. */
+  position: sticky;
+  top: 0;
+  z-index: 70;
 }
 
 .nav-wrap {
@@ -181,6 +188,7 @@ p { margin: 0 0 1em; color: var(--ink-soft); font-family: var(--font-body); text
 .btn-brass:hover { background: var(--gold-light); }
 .btn-outline { background: transparent; color: var(--navy); }
 .btn-maroon { background: #7A2331; border-color: #7A2331; }
+.btn-small { padding: 6px 14px; font-size: 0.72rem; }
 
 /* ---------- Hero ---------- */
 
@@ -679,7 +687,13 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
     border-top: 1px solid rgba(255,255,255,0.16);
   }
 
-  .nav-wrap.is-nav-open .main-nav { display: flex; }
+  /* With a fixed header, a long open menu could run off the bottom of a
+     small screen — let it scroll inside itself instead. */
+  .nav-wrap.is-nav-open .main-nav {
+    display: flex;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+  }
 
   .main-nav li { width: 100%; }
 
