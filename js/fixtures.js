@@ -102,9 +102,12 @@ async function refreshAttendees(eventId) {
   const slot = document.querySelector(`[data-attendees-for="${eventId}"]`);
   if (!slot) return;
 
+  // The playing list holds two kinds of people: members who registered
+  // themselves, and anyone the committee added by hand — guests, or
+  // players who don't use the website. Both belong on the list.
   const { data: rows, error } = await client
     .from("attendance")
-    .select("profiles(display_name)")
+    .select("profile_id, player_id")
     .eq("event_id", eventId)
     .order("created_at", { ascending: true });
 
@@ -113,11 +116,39 @@ async function refreshAttendees(eventId) {
     return;
   }
 
-  slot.innerHTML = rows.length
-    ? `<div class="attendee-list">${rows
-        .map(r => `<span class="attendee-chip">${escapeHtml(r.profiles?.display_name || "Member")}</span>`)
-        .join("")}</div>`
-    : `<p class="small">Nobody's registered yet — be the first!</p>`;
+  if (!rows.length) {
+    slot.innerHTML = `<p class="small">Nobody's registered yet — be the first!</p>`;
+    return;
+  }
+
+  const names = await resolveAttendeeNames(rows);
+
+  slot.innerHTML = `<div class="attendee-list">${names
+    .map(n => `<span class="attendee-chip">${escapeHtml(n)}</span>`)
+    .join("")}</div>`;
+}
+
+// Names live in two tables, so they're looked up explicitly rather than
+// leaning on an automatic join.
+async function resolveAttendeeNames(rows) {
+  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
+  const playerIds = rows.map(r => r.player_id).filter(Boolean);
+
+  const [profs, plyrs] = await Promise.all([
+    profileIds.length
+      ? client.from("profiles").select("id, display_name").in("id", profileIds)
+      : Promise.resolve({ data: [] }),
+    playerIds.length
+      ? client.from("players").select("id, name").in("id", playerIds)
+      : Promise.resolve({ data: [] })
+  ]);
+
+  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name]));
+  const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name]));
+
+  return rows.map(r => r.player_id
+    ? (playerById.get(r.player_id) || "Player")
+    : (profById.get(r.profile_id) || "Member"));
 }
 
 async function renderRegisterControl(eventId) {
