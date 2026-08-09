@@ -149,7 +149,148 @@ async function refreshData() {
 
   populateEventSelect();
   populateEditEventSelect();
+  populatePlayingEventSelect();
   renderPlayerManageList();
+}
+
+// ---- Who's playing ---------------------------------------------------
+// Members register themselves from the fixtures page, but plenty of
+// people play without ever making an account. The committee can add
+// those by name here; the name goes into the players table, which is
+// what results and the leaderboard already run on.
+
+function populatePlayingEventSelect() {
+  const select = document.getElementById("playing-event-select");
+  if (!select) return;
+
+  const previous = select.value;
+  select.innerHTML = currentEvents.map(e =>
+    `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
+  ).join("");
+  if (previous && currentEvents.some(e => e.id === previous)) select.value = previous;
+
+  const datalist = document.getElementById("known-players");
+  if (datalist) {
+    datalist.innerHTML = currentPlayers
+      .map(p => `<option value="${escapeHtml(p.name)}"></option>`)
+      .join("");
+  }
+
+  select.onchange = () => refreshPlayingList(select.value);
+  if (currentEvents.length) refreshPlayingList(select.value);
+}
+
+async function refreshPlayingList(eventId) {
+  const el = document.getElementById("playing-list");
+  if (!el || !eventId) return;
+
+  const { data: rows, error } = await client
+    .from("attendance")
+    .select("id, profile_id, player_id, created_at")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    el.innerHTML = `<p class="status-msg err">Couldn't load the playing list: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (!rows.length) {
+    el.innerHTML = `<p class="small">Nobody on this round yet.</p>`;
+    return;
+  }
+
+  // Look the names up separately rather than letting the database join
+  // them for us — attendance points at two different name tables, and
+  // spelling the join out here keeps it unambiguous.
+  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
+  let profById = new Map();
+  if (profileIds.length) {
+    const { data: profs } = await client
+      .from("profiles").select("id, display_name").in("id", profileIds);
+    profById = new Map((profs || []).map(p => [p.id, p.display_name]));
+  }
+  const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
+
+  el.innerHTML = rows.map(r => {
+    const isGuest = !!r.player_id;
+    const name = isGuest
+      ? (playerById.get(r.player_id) || "Player")
+      : (profById.get(r.profile_id) || "Member");
+    const tag = isGuest
+      ? `<span class="small" style="color:var(--muted);">added by the committee</span>`
+      : `<span class="small" style="color:var(--muted);">registered online</span>`;
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span>${escapeHtml(name)} ${tag}</span>
+        <button class="btn btn-outline btn-small" type="button" data-remove-attendance="${r.id}">Remove</button>
+      </div>`;
+  }).join("");
+
+  el.querySelectorAll("[data-remove-attendance]").forEach(btn => {
+    btn.addEventListener("click", () => removeFromRound(btn.dataset.removeAttendance, eventId));
+  });
+}
+
+async function removeFromRound(attendanceId, eventId) {
+  const statusEl = document.getElementById("guest-status");
+  const { error } = await client.from("attendance").delete().eq("id", attendanceId);
+  if (error) {
+    statusEl.textContent = "Couldn't remove them: " + error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+  statusEl.textContent = "";
+  statusEl.className = "small";
+  await refreshPlayingList(eventId);
+}
+
+async function addGuest(e) {
+  e.preventDefault();
+  const eventId = document.getElementById("playing-event-select").value;
+  const nameInput = document.getElementById("guest-name");
+  const handicapInput = document.getElementById("guest-handicap");
+  const statusEl = document.getElementById("guest-status");
+  const name = nameInput.value.trim();
+
+  if (!eventId || !name) return;
+
+  statusEl.textContent = "Adding…";
+  statusEl.className = "small";
+
+  // Typing a name that already exists should reuse that player rather
+  // than creating a second copy of the same person.
+  let player = currentPlayers.find(p => p.name.toLowerCase() === name.toLowerCase());
+
+  if (!player) {
+    const handicap = handicapInput.value === "" ? null : Number(handicapInput.value);
+    const { data: created, error: createErr } = await client
+      .from("players").insert({ name, handicap }).select().single();
+    if (createErr) {
+      statusEl.textContent = "Couldn't add that player: " + createErr.message;
+      statusEl.className = "status-msg err";
+      return;
+    }
+    player = created;
+    currentPlayers.push(created);
+  }
+
+  const { error } = await client
+    .from("attendance").insert({ event_id: eventId, player_id: player.id });
+
+  if (error) {
+    statusEl.textContent = error.code === "23505"
+      ? `${name} is already on this round.`
+      : "Couldn't add them to the round: " + error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  nameInput.value = "";
+  handicapInput.value = "";
+  statusEl.textContent = `${name} is on this round.`;
+  statusEl.className = "status-msg ok";
+  await refreshData();
 }
 
 // ---- Editing an existing fixture -------------------------------------
@@ -267,6 +408,7 @@ function wireForms() {
   document.getElementById("add-player-form").addEventListener("submit", addPlayer);
   document.getElementById("add-event-form").addEventListener("submit", addEvent);
   document.getElementById("edit-event-form").addEventListener("submit", saveEventEdits);
+  document.getElementById("add-guest-form").addEventListener("submit", addGuest);
 }
 
 async function saveResults() {
