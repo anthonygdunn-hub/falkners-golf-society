@@ -123,7 +123,8 @@
     const { events, results } = await fetchAllData();
 
     // Leaderboard
-    const leaderboard = buildLeaderboard(results, await fetchLeagueSettings());
+    const leaderboard = buildLeaderboard(results,
+      typeof fetchLeagueSettings === "function" ? await fetchLeagueSettings() : {});
     renderLeaderboardTable(document.getElementById("home-leaderboard"), leaderboard.slice(0, 5));
     const roundsLogged = new Set(results.map(r => r.event_id)).size;
     document.getElementById("round-count-meta").textContent = `${roundsLogged} of ${events.length} rounds logged`;
