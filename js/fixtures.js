@@ -92,6 +92,7 @@ function toggleItem(item, open) {
     loadedAttendees.add(eventId);
     renderRegisterControl(eventId);
     refreshAttendees(eventId);
+    refreshGroups(eventId);
   }
 }
 
@@ -142,6 +143,43 @@ async function refreshAttendees(eventId) {
   slot.innerHTML = `<div class="attendee-list">${names
     .map(n => `<span class="attendee-chip">${escapeHtml(n)}</span>`)
     .join("")}</div>`;
+}
+
+// The tee draw, once the committee has posted it. Nothing shows at all
+// until they have, so an ungrouped round just looks like a normal one
+// rather than showing an empty "Groups" heading.
+async function refreshGroups(eventId) {
+  const slot = document.querySelector(`[data-groups-for="${eventId}"]`);
+  if (!slot) return;
+
+  const { data: rows, error } = await client
+    .from("groupings")
+    .select("profile_id, player_id, group_number, position")
+    .eq("event_id", eventId)
+    .order("group_number", { ascending: true });
+
+  if (error || !rows || !rows.length) return;
+
+  const names = await resolveAttendeeNames(rows);
+
+  const byGroup = new Map();
+  rows.forEach((r, i) => {
+    const n = r.group_number;
+    if (!byGroup.has(n)) byGroup.set(n, []);
+    byGroup.get(n).push(names[i]);
+  });
+
+  const groups = [...byGroup.entries()].sort((a, b) => a[0] - b[0]);
+
+  slot.innerHTML = `
+    <div class="fixture-section-label">Tee groups</div>
+    <div class="tee-groups">
+      ${groups.map(([number, players]) => `
+        <div class="tee-group">
+          <span class="tee-group-label">Group ${number}</span>
+          <span>${players.map(escapeHtml).join(", ")}</span>
+        </div>`).join("")}
+    </div>`;
 }
 
 // Names live in two tables, so they're looked up explicitly rather than
