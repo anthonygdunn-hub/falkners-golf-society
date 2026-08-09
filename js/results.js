@@ -8,6 +8,7 @@
 
 let scoredEvents = [];
 const resultsByEvent = new Map();
+const prizesByEvent = new Map();
 let selectedYear = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -26,6 +27,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!resultsByEvent.has(r.event_id)) resultsByEvent.set(r.event_id, []);
     resultsByEvent.get(r.event_id).push(r);
   }
+
+  // Prizes are a nice-to-have on top of the scores, so a failure here
+  // shouldn't cost anyone the results table.
+  const { data: prizes } = await getClient().from("event_prizes").select("*");
+  (prizes || []).forEach(p => prizesByEvent.set(p.event_id, p));
 
   scoredEvents = events.filter(e => resultsByEvent.has(e.id));
 
@@ -136,6 +142,7 @@ function renderResultItem(event) {
       </button>
       <div class="fixture-panel" id="rpanel-${event.id}" hidden>
         ${renderScoreTable(rows)}
+        ${renderPrizes(prizesByEvent.get(event.id))}
       </div>
     </li>
   `;
@@ -159,6 +166,34 @@ function renderScoreTable(rows) {
           </tr>`).join("")}
       </tbody>
     </table>
+  `;
+}
+
+// The scorecard says who scored what; this says who won what on the
+// day. Any prize left blank simply doesn't appear, so a round with only
+// a longest drive logged doesn't show seven empty lines.
+function renderPrizes(p) {
+  if (!p) return "";
+
+  const entries = [
+    ["1st place", p.first_place],
+    ["2nd place", p.second_place],
+    ["3rd place", p.third_place],
+    ["Winning pair", p.winning_pair],
+    ["Longest drive — front 9", p.longest_drive_front],
+    ["Longest drive — back 9", p.longest_drive_back],
+    ["Nearest the pin — front 9", p.nearest_pin_front],
+    ["Nearest the pin — back 9", p.nearest_pin_back]
+  ].filter(([, value]) => value && String(value).trim());
+
+  if (!entries.length) return "";
+
+  return `
+    <h4 class="prize-heading">On the day</h4>
+    <dl class="fixture-facts prize-list">
+      ${entries.map(([label, value]) =>
+        `<dt>${label}</dt><dd>${escapeHtml(String(value).trim())}</dd>`).join("")}
+    </dl>
   `;
 }
 
