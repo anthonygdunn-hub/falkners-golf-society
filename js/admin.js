@@ -150,7 +150,284 @@ async function refreshData() {
   populateEventSelect();
   populateEditEventSelect();
   populatePlayingEventSelect();
+  populatePrizeEventSelect();
+  populatePaymentEventSelect();
+  populatePotEventSelect();
+  refreshPot();
+  loadBankDetails();
   renderPlayerManageList();
+}
+
+// Every "pick a fixture" dropdown on this page is the same list, so
+// they're filled from one place rather than four near-identical copies.
+function fillEventSelect(id, { includeBlank = false } = {}) {
+  const select = document.getElementById(id);
+  if (!select) return null;
+  const previous = select.value;
+  select.innerHTML =
+    (includeBlank ? `<option value="">Not tied to a round</option>` : "") +
+    currentEvents.map(e =>
+      `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
+    ).join("");
+  if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
+  return select;
+}
+
+// ---- Round prizes ----------------------------------------------------
+
+const PRIZE_FIELDS = {
+  "prize-first": "first_place",
+  "prize-second": "second_place",
+  "prize-third": "third_place",
+  "prize-pair": "winning_pair",
+  "prize-ld-front": "longest_drive_front",
+  "prize-ld-back": "longest_drive_back",
+  "prize-np-front": "nearest_pin_front",
+  "prize-np-back": "nearest_pin_back"
+};
+
+function populatePrizeEventSelect() {
+  const select = fillEventSelect("prize-event-select");
+  if (!select) return;
+  select.onchange = () => loadPrizes(select.value);
+  if (currentEvents.length) loadPrizes(select.value);
+}
+
+async function loadPrizes(eventId) {
+  const statusEl = document.getElementById("prize-status");
+  Object.keys(PRIZE_FIELDS).forEach(id => { document.getElementById(id).value = ""; });
+  if (statusEl) statusEl.textContent = "";
+  if (!eventId) return;
+
+  const { data } = await client
+    .from("event_prizes").select("*").eq("event_id", eventId).maybeSingle();
+  if (!data) return;
+
+  Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
+    document.getElementById(id).value = data[col] ?? "";
+  });
+}
+
+async function savePrizes(e) {
+  e.preventDefault();
+  const eventId = document.getElementById("prize-event-select").value;
+  const statusEl = document.getElementById("prize-status");
+  if (!eventId) return;
+
+  const row = { event_id: eventId, updated_at: new Date().toISOString() };
+  Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
+    const value = document.getElementById(id).value.trim();
+    row[col] = value === "" ? null : value;
+  });
+
+  statusEl.textContent = "Saving…";
+  statusEl.className = "small";
+
+  const { error } = await client.from("event_prizes").upsert(row, { onConflict: "event_id" });
+
+  statusEl.textContent = error ? error.message : "Prizes saved — they're on the results page now.";
+  statusEl.className = error ? "status-msg err" : "status-msg ok";
+}
+
+// ---- The hole-in-one pot ---------------------------------------------
+
+function populatePotEventSelect() {
+  fillEventSelect("pot-event", { includeBlank: true });
+}
+
+async function refreshPot() {
+  const totalEl = document.getElementById("admin-pot-total");
+  const listEl = document.getElementById("pot-entries");
+  if (!totalEl) return;
+
+  const { data: rows, error } = await client
+    .from("hole_in_one_ledger")
+    .select("id, amount, note, entry_date, event_id")
+    .order("entry_date", { ascending: false });
+
+  if (error) {
+    listEl.innerHTML = `<p class="status-msg err">Couldn't load the pot: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  const total = (rows || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  totalEl.textContent = money(total);
+
+  const nameById = new Map(currentEvents.map(e => [e.id, e.name]));
+
+  listEl.innerHTML = rows.length
+    ? rows.map(r => {
+        const out = Number(r.amount) < 0;
+        const round = r.event_id ? ` · ${escapeHtml(nameById.get(r.event_id) || "Round")}` : "";
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
+            <span class="small"><strong class="${out ? "pot-payout" : ""}">${out ? "−" : "+"}${money(Math.abs(Number(r.amount)))}</strong>
+              · ${escapeHtml(r.entry_date)}${round}${r.note ? " · " + escapeHtml(r.note) : ""}</span>
+            <button class="btn btn-outline btn-small" type="button" data-remove-pot="${r.id}">Remove</button>
+          </div>`;
+      }).join("")
+    : `<p class="small">No entries yet.</p>`;
+
+  listEl.querySelectorAll("[data-remove-pot]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await client.from("hole_in_one_ledger").delete().eq("id", btn.dataset.removePot);
+      refreshPot();
+    });
+  });
+}
+
+async function addPotEntry(e) {
+  e.preventDefault();
+  const statusEl = document.getElementById("pot-status");
+  const amountRaw = document.getElementById("pot-amount").value;
+  const isPayout = document.getElementById("pot-is-payout").checked;
+  const eventId = document.getElementById("pot-event").value || null;
+  const note = document.getElementById("pot-note").value.trim();
+
+  const amount = Math.abs(Number(amountRaw));
+  if (!amount) {
+    statusEl.textContent = "Enter an amount first.";
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  // A payout leaves the pot, so it goes in as a negative entry — the
+  // running total then takes care of itself.
+  const { error } = await client.from("hole_in_one_ledger").insert({
+    event_id: eventId,
+    amount: isPayout ? -amount : amount,
+    note: note || null
+  });
+
+  if (error) {
+    statusEl.textContent = error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  document.getElementById("pot-form").reset();
+  await refreshPot();
+  statusEl.textContent = isPayout ? "Payout recorded." : "Added to the pot.";
+  statusEl.className = "status-msg ok";
+}
+
+// ---- Payments --------------------------------------------------------
+
+async function loadBankDetails() {
+  const nameEl = document.getElementById("bank-name");
+  if (!nameEl) return;
+
+  const { data } = await client.from("society_settings").select("*").maybeSingle();
+  if (!data) return;
+
+  nameEl.value = data.account_name ?? "";
+  document.getElementById("bank-sort").value = data.sort_code ?? "";
+  document.getElementById("bank-number").value = data.account_number ?? "";
+  document.getElementById("bank-note").value = data.payment_note ?? "";
+}
+
+async function saveBankDetails(e) {
+  e.preventDefault();
+  const statusEl = document.getElementById("bank-status");
+  statusEl.textContent = "Saving…";
+  statusEl.className = "small";
+
+  const { error } = await client.from("society_settings").update({
+    account_name: document.getElementById("bank-name").value.trim() || null,
+    sort_code: document.getElementById("bank-sort").value.trim() || null,
+    account_number: document.getElementById("bank-number").value.trim() || null,
+    payment_note: document.getElementById("bank-note").value.trim() || null,
+    updated_at: new Date().toISOString()
+  }).eq("id", true);
+
+  statusEl.textContent = error ? error.message : "Bank details saved. Members will see these when they register.";
+  statusEl.className = error ? "status-msg err" : "status-msg ok";
+}
+
+function populatePaymentEventSelect() {
+  const select = fillEventSelect("pay-event-select");
+  if (!select) return;
+  select.onchange = () => refreshPaymentList(select.value);
+  if (currentEvents.length) refreshPaymentList(select.value);
+}
+
+async function refreshPaymentList(eventId) {
+  const el = document.getElementById("payment-list");
+  if (!el || !eventId) return;
+
+  const event = currentEvents.find(e => e.id === eventId);
+  const cost = event?.cost;
+
+  const { data: rows, error } = await client
+    .from("attendance")
+    .select("id, profile_id, player_id, payment_status, payment_reference")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    el.innerHTML = `<p class="status-msg err">Couldn't load payments: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (!rows.length) {
+    el.innerHTML = `<p class="small">Nobody's on this round yet.</p>`;
+    return;
+  }
+
+  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
+  let profById = new Map();
+  if (profileIds.length) {
+    const { data: profs } = await client
+      .from("profiles").select("id, display_name").in("id", profileIds);
+    profById = new Map((profs || []).map(p => [p.id, p.display_name]));
+  }
+  const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
+
+  const paid = rows.filter(r => r.payment_status === "confirmed").length;
+  const owed = cost ? (rows.length - paid) * Number(cost) : null;
+
+  el.innerHTML = `
+    <p class="small">${paid} of ${rows.length} confirmed${owed ? ` · ${money(owed)} still to come in` : ""}.</p>
+    ${rows.map(r => {
+      const name = r.player_id
+        ? (playerById.get(r.player_id) || "Player")
+        : (profById.get(r.profile_id) || "Member");
+      const status = r.payment_status || "unpaid";
+      const label = status === "confirmed" ? "Confirmed" : status === "claimed" ? "Says they've paid" : "Unpaid";
+      const cls = status === "confirmed" ? "is-confirmed" : status === "claimed" ? "is-claimed" : "";
+      return `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+          <span>${escapeHtml(name)}
+            <span class="pay-status ${cls}">${label}</span>
+            ${r.payment_reference ? `<span class="small pay-ref">${escapeHtml(r.payment_reference)}</span>` : ""}
+          </span>
+          <span>
+            ${status === "confirmed"
+              ? `<button class="btn btn-outline btn-small" type="button" data-pay-set="unpaid" data-pay-id="${r.id}">Undo</button>`
+              : `<button class="btn btn-brass btn-small" type="button" data-pay-set="confirmed" data-pay-id="${r.id}">Confirm payment</button>`}
+          </span>
+        </div>`;
+    }).join("")}`;
+
+  el.querySelectorAll("[data-pay-id]").forEach(btn => {
+    btn.addEventListener("click", () => setPaymentStatus(btn.dataset.payId, btn.dataset.paySet, eventId));
+  });
+}
+
+async function setPaymentStatus(attendanceId, status, eventId) {
+  const patch = { payment_status: status };
+  if (status === "confirmed") {
+    patch.payment_confirmed_at = new Date().toISOString();
+  } else {
+    patch.payment_confirmed_at = null;
+  }
+  await client.from("attendance").update(patch).eq("id", attendanceId);
+  await refreshPaymentList(eventId);
+}
+
+function money(n) {
+  const value = Number(n) || 0;
+  return "£" + value.toFixed(2).replace(/\.00$/, "");
 }
 
 // ---- Who's playing ---------------------------------------------------
@@ -409,6 +686,9 @@ function wireForms() {
   document.getElementById("add-event-form").addEventListener("submit", addEvent);
   document.getElementById("edit-event-form").addEventListener("submit", saveEventEdits);
   document.getElementById("add-guest-form").addEventListener("submit", addGuest);
+  document.getElementById("prize-form").addEventListener("submit", savePrizes);
+  document.getElementById("pot-form").addEventListener("submit", addPotEntry);
+  document.getElementById("bank-form").addEventListener("submit", saveBankDetails);
 }
 
 async function saveResults() {
