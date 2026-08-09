@@ -68,12 +68,17 @@
 (async function () {
   try {
     const { events, results } = await fetchAllData();
-    const rules = await fetchLeagueSettings();
+    // Guarded because a browser can still be holding a cached copy of
+    // site-data.js from before this function existed. Without the check
+    // a stale cache would blank the whole table for ten minutes after a
+    // deploy; with it, the standings just show under the old rules.
+    const rules = typeof fetchLeagueSettings === "function" ? await fetchLeagueSettings() : {};
     const leaderboard = buildLeaderboard(results, rules);
     renderLeaderboardTable(document.getElementById("full-leaderboard"), leaderboard);
     const roundsLogged = new Set(results.map(r => r.event_id)).size;
     document.getElementById("lb-meta").textContent = `${roundsLogged} of ${events.length} rounds logged`;
-    const note = countingRoundsNote(rules.countingRounds, leaderboard);
+    const note = typeof countingRoundsNote === "function"
+      ? countingRoundsNote(rules.countingRounds, leaderboard) : "";
     if (note) document.getElementById("lb-rule").textContent = note;
   } catch (err) {
     console.error(err);
