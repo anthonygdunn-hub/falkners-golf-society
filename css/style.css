@@ -585,6 +585,73 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 .fixture-facts dd { margin: 0; color: var(--ink); }
 .fixture-facts dd a { color: var(--navy); }
 
+/* ---------- Prizes on the day, under a round's scorecard ---------- */
+
+.prize-heading {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.9rem;
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--navy);
+}
+
+.prize-list dd { font-weight: 600; }
+
+/* ---------- The hole-in-one pot ---------- */
+
+.pot-figure {
+  font-family: var(--font-display);
+  font-size: clamp(2.6rem, 9vw, 4rem);
+  line-height: 1;
+  color: var(--navy);
+  margin: 6px 0 4px;
+}
+
+.pot-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin: 24px 0 8px;
+  box-shadow: var(--shadow-card);
+}
+
+.pot-history { margin-top: 26px; font-size: 0.9rem; }
+.pot-history li { padding: 8px 0; border-bottom: 1px solid var(--line); list-style: none; }
+.pot-history ul { padding: 0; margin: 10px 0 0; }
+.pot-payout { color: #7A2331; font-weight: 600; }
+
+/* ---------- Payment block on a fixture ---------- */
+
+.pay-box {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: rgba(0,0,0,0.015);
+}
+
+.pay-box dl { margin: 10px 0 14px; }
+.pay-ref { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.04em; }
+
+.pay-status {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+.pay-status.is-confirmed { background: #E7F3EC; border-color: #B6DCC4; color: #1F6B3C; }
+.pay-status.is-claimed { background: #FFF6E0; border-color: #EBD69C; color: #7A5A11; }
+
 .fixture-cost { font-weight: 700; }
 
 .fixture-notes {
@@ -794,6 +861,21 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
 .social-links svg { width: 17px; height: 17px; fill: currentColor; flex-shrink: 0; }
 
 .social-footer { margin-left: 16px; }
+
+/* On a desktop the header reads as two rows: the crest with the social
+   icons and the login button opposite it, then the menu across the
+   bottom. Before this, all four fought for one line and the login
+   button was pushed onto an orphan row of its own. */
+@media (min-width: 861px) {
+  .nav-wrap { flex-wrap: wrap; row-gap: 4px; align-items: center; }
+  .nav-wrap .brand { order: 1; }
+  .nav-wrap .social-header { order: 2; margin-left: auto; }
+  .nav-wrap .nav-auth-btn { order: 3; margin-left: 16px; }
+  /* Slightly tighter so all ten links sit on one line rather than
+     spilling a lonely "Contact" onto a second row. */
+  .nav-wrap .main-nav { order: 4; width: 100%; gap: 0; margin-top: 2px; }
+  .nav-wrap .main-nav a { padding: 9px 9px; font-size: 0.78rem; }
+}
 
 @media (max-width: 860px) {
   /* Header is tight on a phone — the footer pair is enough there. */
