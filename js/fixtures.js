@@ -11,10 +11,13 @@
 
 let client;
 let currentUser = null;
+let currentDisplayName = "";
 let isApprovedMember = false;
 let membershipStatus = null;
+let bankDetails = null;
 const loadedAttendees = new Set();
 const eventsWithResults = new Set();
+const eventsById = new Map();
 
 document.addEventListener("DOMContentLoaded", async () => {
   client = getClient();
@@ -30,6 +33,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       .maybeSingle();
     membershipStatus = membership?.status || null;
     isApprovedMember = membershipStatus === "approved";
+
+    if (isApprovedMember) {
+      // Both only readable once you're an approved member, which is
+      // exactly the point — the bank details aren't public.
+      const [{ data: profile }, { data: settings }] = await Promise.all([
+        client.from("profiles").select("display_name").eq("id", currentUser.id).maybeSingle(),
+        client.from("society_settings").select("*").maybeSingle()
+      ]);
+      currentDisplayName = profile?.display_name || "";
+      bankDetails = settings || null;
+    }
   }
 
   let events, results;
@@ -43,6 +57,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     listEl.innerHTML = `<li class="empty-state">Couldn't load fixtures yet — has the Supabase connection been set up? See README.md.</li>`;
     return;
   }
+
+  events.forEach(e => eventsById.set(e.id, e));
 
   const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date));
   listEl.innerHTML = sorted.length
@@ -181,15 +197,17 @@ async function renderRegisterControl(eventId) {
 
   const { data: myRow } = await client
     .from("attendance")
-    .select("id")
+    .select("id, payment_status, payment_reference")
     .eq("event_id", eventId)
     .eq("profile_id", currentUser.id)
     .maybeSingle();
 
-  drawAttendanceButton(slot, eventId, !!myRow);
+  drawAttendanceButton(slot, eventId, myRow || null);
 }
 
-function drawAttendanceButton(slot, eventId, isRegistered) {
+function drawAttendanceButton(slot, eventId, myRow) {
+  const isRegistered = !!myRow;
+
   slot.innerHTML = isRegistered
     ? `<button class="btn btn-outline" type="button">Can't make it after all</button>`
     : `<button class="btn btn-brass" type="button">I'm playing</button>`;
@@ -198,16 +216,97 @@ function drawAttendanceButton(slot, eventId, isRegistered) {
     const btn = slot.querySelector("button");
     btn.disabled = true;
 
-    const { error } = isRegistered
-      ? await client.from("attendance").delete().eq("event_id", eventId).eq("profile_id", currentUser.id)
-      : await client.from("attendance").insert({ event_id: eventId, profile_id: currentUser.id });
+    if (isRegistered) {
+      const { error } = await client.from("attendance").delete()
+        .eq("event_id", eventId).eq("profile_id", currentUser.id);
+      if (error) return showSlotError(slot, error);
+      drawAttendanceButton(slot, eventId, null);
+    } else {
+      const { data, error } = await client.from("attendance")
+        .insert({ event_id: eventId, profile_id: currentUser.id })
+        .select("id, payment_status, payment_reference").single();
+      if (error) return showSlotError(slot, error);
+      drawAttendanceButton(slot, eventId, data);
+    }
+
+    refreshAttendees(eventId);
+  });
+
+  if (isRegistered) renderPaymentBlock(slot, eventId, myRow);
+}
+
+function showSlotError(slot, error) {
+  slot.innerHTML = `<p class="status-msg err">${escapeHtml(error.message)}</p>`;
+}
+
+// ------------------------------------------------------------------
+// Paying for a round. No card processing — the society is paid by
+// bank transfer, so nothing sensitive passes through the website and
+// there are no fees taken out of the green fee. All the site tracks is
+// whether somebody says they've paid, and whether that's been checked.
+// ------------------------------------------------------------------
+function renderPaymentBlock(slot, eventId, myRow) {
+  const event = eventsById.get(eventId);
+  const cost = event && event.cost != null ? Number(event.cost) : null;
+  if (!cost) return;
+
+  const status = myRow.payment_status || "unpaid";
+  const reference = myRow.payment_reference || buildPaymentReference(event);
+
+  const bank = bankDetails && (bankDetails.account_name || bankDetails.account_number)
+    ? `<dl class="fixture-facts">
+         ${bankDetails.account_name ? `<dt>Account</dt><dd>${escapeHtml(bankDetails.account_name)}</dd>` : ""}
+         ${bankDetails.sort_code ? `<dt>Sort code</dt><dd>${escapeHtml(bankDetails.sort_code)}</dd>` : ""}
+         ${bankDetails.account_number ? `<dt>Account no.</dt><dd>${escapeHtml(bankDetails.account_number)}</dd>` : ""}
+         <dt>Reference</dt><dd class="pay-ref">${escapeHtml(reference)}</dd>
+       </dl>
+       ${bankDetails.payment_note ? `<p class="small">${escapeHtml(bankDetails.payment_note)}</p>` : ""}`
+    : `<p class="small">The committee hasn't added the society's bank details yet — they'll appear here once they do.</p>`;
+
+  let action;
+  if (status === "confirmed") {
+    action = `<p class="small"><span class="pay-status is-confirmed">Paid</span> Thanks — the committee has this one.</p>`;
+  } else if (status === "claimed") {
+    action = `<p class="small"><span class="pay-status is-claimed">Awaiting check</span> You've flagged this as paid. A committee member will confirm it once it lands.</p>
+              <button class="btn btn-outline btn-small" type="button" data-pay="unpaid">Actually, I haven't paid yet</button>`;
+  } else {
+    action = `<button class="btn btn-brass" type="button" data-pay="claimed">I've paid</button>`;
+  }
+
+  slot.insertAdjacentHTML("beforeend", `
+    <div class="pay-box">
+      <strong>${formatCost(cost)} to play</strong>
+      ${status === "confirmed" ? "" : bank}
+      ${action}
+      <div class="small" data-pay-status></div>
+    </div>`);
+
+  const btn = slot.querySelector("[data-pay]");
+  if (!btn) return;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const next = btn.dataset.pay;
+    const { error } = await client.from("attendance").update({
+      payment_status: next,
+      payment_reference: next === "claimed" ? reference : null
+    }).eq("id", myRow.id);
 
     if (error) {
-      slot.innerHTML = `<p class="status-msg err">${escapeHtml(error.message)}</p>`;
+      slot.querySelector("[data-pay-status]").innerHTML =
+        `<span class="status-msg err">${escapeHtml(error.message)}</span>`;
+      btn.disabled = false;
       return;
     }
 
-    drawAttendanceButton(slot, eventId, !isRegistered);
-    refreshAttendees(eventId);
+    renderRegisterControl(eventId);
   });
+}
+
+// Something short that the treasurer can match against a bank line:
+// the round, then the member's surname.
+function buildPaymentReference(event) {
+  const round = (event.name.match(/\d+/) || [])[0];
+  const surname = (currentDisplayName.trim().split(/\s+/).pop() || "MEMBER").toUpperCase();
+  return `${round ? "R" + round : "FAGS"} ${surname}`.slice(0, 18);
 }
