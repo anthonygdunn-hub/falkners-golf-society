@@ -107,6 +107,29 @@
         </div>
       </div>
 
+      <div class="card" style="margin-top:32px;">
+        <h3>Who's playing</h3>
+        <p class="small">Members register themselves, but you can add anyone by hand — guests, or players who'd rather ring you than use the website. Added names go into the player list too, so you can score them afterwards.</p>
+        <div class="form-field">
+          <label for="playing-event-select">Fixture</label>
+          <select id="playing-event-select"></select>
+        </div>
+        <div id="playing-list" style="margin-top:12px;"><p class="small">Loading…</p></div>
+        <form id="add-guest-form" style="margin-top:16px;">
+          <div class="form-field">
+            <label for="guest-name">Add a player to this round</label>
+            <input id="guest-name" list="known-players" placeholder="Their name" autocomplete="off" required>
+            <datalist id="known-players"></datalist>
+          </div>
+          <div class="form-field">
+            <label for="guest-handicap">Handicap (only used if they're new)</label>
+            <input id="guest-handicap" type="number" step="0.1" placeholder="Optional">
+          </div>
+          <button class="btn btn-outline" type="submit">Add to this round</button>
+          <div id="guest-status" class="small" style="margin-top:8px;"></div>
+        </form>
+      </div>
+
       <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
         <div class="card">
           <h3>Add a fixture</h3>
