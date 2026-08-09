@@ -949,3 +949,42 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
 }
 
 .member-bio { margin: 0; font-size: 0.92rem; color: var(--ink); white-space: pre-line; }
+
+/* ---------- The tee draw on a fixture ---------- */
+
+.tee-groups { display: grid; gap: 8px; margin: 6px 0 4px; }
+
+.tee-group {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--gold);
+  border-radius: var(--radius);
+  background: var(--white);
+  font-size: 0.92rem;
+}
+
+.tee-group-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ---------- Admin on a phone ---------- */
+/* Several admin card grids carry an inline two-column style, which is
+   right on a laptop and far too tight on a phone. An inline style beats
+   a stylesheet rule, so overriding it here needs !important — the one
+   place in this file that does. */
+@media (max-width: 720px) {
+  .card-grid { grid-template-columns: 1fr !important; }
+
+  /* Number inputs have a minimum intrinsic width; below this the four
+     score boxes stop fitting side by side and push the page wide. */
+  .entry-row { grid-template-columns: 1fr 1fr; }
+  .entry-row input { min-width: 0; width: 100%; }
+}
