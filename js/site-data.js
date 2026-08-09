@@ -44,22 +44,57 @@ async function fetchAllData() {
   };
 }
 
-function buildLeaderboard(results) {
+// The season table. By default every logged round counts, but the
+// society can choose to count only a player's best few — "best 6 of 9"
+// and the like — so one washout doesn't sink somebody's season. The
+// rule comes from the database rather than being baked in here.
+function buildLeaderboard(results, options = {}) {
+  const countingRounds = Number(options.countingRounds) || null;
   const byPlayer = new Map();
 
   for (const r of results) {
     const name = r.players?.name || "Unknown";
     if (!byPlayer.has(name)) {
-      byPlayer.set(name, { name, handicap: r.players?.handicap, totalPoints: 0, rounds: 0 });
+      byPlayer.set(name, { name, handicap: r.players?.handicap, scores: [] });
     }
     const entry = byPlayer.get(name);
-    entry.totalPoints += Number(r.points) || 0;
-    entry.rounds += 1;
+    entry.scores.push(Number(r.points) || 0);
     // Keep the most recently-seen handicap
     if (r.players?.handicap != null) entry.handicap = r.players.handicap;
   }
 
+  for (const entry of byPlayer.values()) {
+    entry.rounds = entry.scores.length;
+    const counted = countingRounds && countingRounds < entry.scores.length
+      ? [...entry.scores].sort((a, b) => b - a).slice(0, countingRounds)
+      : entry.scores;
+    entry.countedRounds = counted.length;
+    entry.totalPoints = counted.reduce((sum, v) => sum + v, 0);
+  }
+
   return Array.from(byPlayer.values()).sort((a, b) => b.totalPoints - a.totalPoints);
+}
+
+// How many rounds count toward the Order of Merit. Public on purpose —
+// the leaderboard is public, so the rule behind it has to be readable
+// by everyone too. Falls back to "every round counts" if anything's
+// missing, so the table never breaks over a setting.
+async function fetchLeagueSettings() {
+  try {
+    const { data } = await getClient()
+      .from("league_settings").select("counting_rounds").maybeSingle();
+    return { countingRounds: data?.counting_rounds || null };
+  } catch (err) {
+    return { countingRounds: null };
+  }
+}
+
+// Wording for under the table, e.g. "best 6 rounds of each player's 9".
+function countingRoundsNote(countingRounds, leaderboard) {
+  if (!countingRounds) return "";
+  const most = leaderboard.reduce((m, p) => Math.max(m, p.rounds), 0);
+  if (most <= countingRounds) return "";
+  return `Best ${countingRounds} rounds count toward the Order of Merit.`;
 }
 
 function renderLeaderboardTable(container, leaderboard) {
@@ -73,7 +108,7 @@ function renderLeaderboardTable(container, leaderboard) {
       <td class="pos"><span class="pos-badge">${i + 1}</span></td>
       <td>${escapeHtml(p.name)}</td>
       <td class="num">${p.handicap ?? '—'}</td>
-      <td class="num">${p.rounds}</td>
+      <td class="num">${p.countedRounds != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
       <td class="num">${p.totalPoints}</td>
     </tr>
   `).join("");
@@ -166,6 +201,7 @@ function renderFixtureItem(event, opts = {}) {
         ${renderFixtureFacts(event)}
         <div class="fixture-section-label">${past ? 'Who played' : "Who's playing"}</div>
         <div class="attendee-slot" data-attendees-for="${event.id}"><p class="small">Loading…</p></div>
+        <div class="groups-slot" data-groups-for="${event.id}"></div>
         <div class="register-slot" data-register-for="${event.id}"></div>
       </div>
     </li>
