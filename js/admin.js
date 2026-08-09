@@ -153,9 +153,157 @@ async function refreshData() {
   populatePrizeEventSelect();
   populatePaymentEventSelect();
   populatePotEventSelect();
+  populateGroupEventSelect();
   refreshPot();
   loadBankDetails();
+  loadLeagueSettings();
   renderPlayerManageList();
+}
+
+// ---- Tee groups ------------------------------------------------------
+// Deliberately a number against each name rather than drag-and-drop:
+// the draw usually gets done on a phone the night before, and dragging
+// names around a small screen is a fiddle nobody needs.
+
+function populateGroupEventSelect() {
+  const select = fillEventSelect("group-event-select");
+  if (!select) return;
+  select.onchange = () => refreshGroupList(select.value);
+  if (currentEvents.length) refreshGroupList(select.value);
+}
+
+async function refreshGroupList(eventId) {
+  const el = document.getElementById("group-list");
+  if (!el || !eventId) return;
+
+  const [{ data: attendance, error }, { data: groups }] = await Promise.all([
+    client.from("attendance").select("profile_id, player_id")
+      .eq("event_id", eventId).order("created_at", { ascending: true }),
+    client.from("groupings").select("profile_id, player_id, group_number")
+      .eq("event_id", eventId)
+  ]);
+
+  if (error) {
+    el.innerHTML = `<p class="status-msg err">Couldn't load the round: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (!attendance.length) {
+    el.innerHTML = `<p class="small">Nobody's on this round yet, so there's nothing to draw. Add players under &ldquo;Who's playing&rdquo; first.</p>`;
+    return;
+  }
+
+  const key = r => r.player_id ? `p:${r.player_id}` : `m:${r.profile_id}`;
+  const existing = new Map((groups || []).map(g => [key(g), g.group_number]));
+
+  const profileIds = attendance.map(a => a.profile_id).filter(Boolean);
+  let profById = new Map();
+  if (profileIds.length) {
+    const { data: profs } = await client
+      .from("profiles").select("id, display_name").in("id", profileIds);
+    profById = new Map((profs || []).map(p => [p.id, p.display_name]));
+  }
+  const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
+
+  el.innerHTML = attendance.map(a => {
+    const name = a.player_id
+      ? (playerById.get(a.player_id) || "Player")
+      : (profById.get(a.profile_id) || "Member");
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span>${escapeHtml(name)}</span>
+        <input type="number" min="1" max="20" step="1" style="width:88px;"
+               class="group-input" placeholder="Group"
+               data-profile-id="${a.profile_id || ""}" data-player-id="${a.player_id || ""}"
+               value="${existing.get(key(a)) ?? ""}">
+      </div>`;
+  }).join("");
+}
+
+// One tap to lay everyone out in fours in the order they registered —
+// a starting point to nudge, rather than typing twenty numbers by hand.
+function autofillGroups() {
+  const inputs = [...document.querySelectorAll("#group-list .group-input")];
+  inputs.forEach((input, i) => { input.value = Math.floor(i / 4) + 1; });
+  const statusEl = document.getElementById("group-status");
+  statusEl.textContent = `Laid out in ${Math.ceil(inputs.length / 4)} group(s) of four — adjust as you like, then save.`;
+  statusEl.className = "small";
+}
+
+async function saveGroups() {
+  const eventId = document.getElementById("group-event-select").value;
+  const statusEl = document.getElementById("group-status");
+  if (!eventId) return;
+
+  const rows = [...document.querySelectorAll("#group-list .group-input")]
+    .filter(input => input.value !== "")
+    .map((input, i) => ({
+      event_id: eventId,
+      profile_id: input.dataset.profileId || null,
+      player_id: input.dataset.playerId || null,
+      group_number: Number(input.value),
+      position: i
+    }));
+
+  statusEl.textContent = "Saving…";
+  statusEl.className = "small";
+
+  // Rewritten wholesale rather than patched row by row: it's one draw,
+  // and clearing it out first means removing somebody from a group
+  // works the same way as moving them.
+  const { error: clearErr } = await client.from("groupings").delete().eq("event_id", eventId);
+  if (clearErr) {
+    statusEl.textContent = clearErr.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  if (rows.length) {
+    const { error } = await client.from("groupings").insert(rows);
+    if (error) {
+      statusEl.textContent = error.message;
+      statusEl.className = "status-msg err";
+      return;
+    }
+  }
+
+  statusEl.textContent = rows.length
+    ? `Draw saved — ${rows.length} player(s) grouped. It's on the fixtures page now.`
+    : "Draw cleared.";
+  statusEl.className = "status-msg ok";
+}
+
+// ---- Order of Merit rules -------------------------------------------
+
+async function loadLeagueSettings() {
+  const input = document.getElementById("counting-rounds");
+  if (!input) return;
+  const { data } = await client.from("league_settings").select("counting_rounds").maybeSingle();
+  input.value = data?.counting_rounds ?? "";
+}
+
+async function saveLeagueSettings(e) {
+  e.preventDefault();
+  const statusEl = document.getElementById("league-status");
+  const raw = document.getElementById("counting-rounds").value.trim();
+  const value = raw === "" ? null : Number(raw);
+
+  if (value !== null && (!Number.isInteger(value) || value < 1)) {
+    statusEl.textContent = "That needs to be a whole number of rounds, or blank.";
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  const { error } = await client.from("league_settings")
+    .update({ counting_rounds: value, updated_at: new Date().toISOString() })
+    .eq("id", true);
+
+  statusEl.textContent = error
+    ? error.message
+    : value === null
+      ? "Every round now counts toward the Order of Merit."
+      : `Saved — each player's best ${value} rounds now count.`;
+  statusEl.className = error ? "status-msg err" : "status-msg ok";
 }
 
 // Every "pick a fixture" dropdown on this page is the same list, so
@@ -661,13 +809,25 @@ function populateEventSelect() {
 }
 
 async function loadResultsFormFor(eventId) {
-  const { data: existing } = await client.from("results").select("*").eq("event_id", eventId);
+  const [{ data: existing }, { data: attendance }] = await Promise.all([
+    client.from("results").select("*").eq("event_id", eventId),
+    client.from("attendance").select("profile_id, player_id").eq("event_id", eventId)
+  ]);
+
   const existingByPlayer = new Map((existing || []).map(r => [r.player_id, r]));
+  const onRound = await playersOnRound(attendance || []);
+
+  // Anyone with a score already logged belongs at the top too, even if
+  // they never registered — otherwise correcting a score means hunting
+  // for them in the long list.
+  existingByPlayer.forEach((_, playerId) => onRound.add(playerId));
+
+  const active = currentPlayers.filter(p => p.active);
+  const playing = active.filter(p => onRound.has(p.id));
+  const rest = active.filter(p => !onRound.has(p.id));
 
   const container = document.getElementById("results-entry-rows");
-  const activePlayers = currentPlayers.filter(p => p.active);
-
-  container.innerHTML = activePlayers.map(p => {
+  const row = p => {
     const ex = existingByPlayer.get(p.id);
     return `
       <div class="entry-row" data-player-id="${p.id}">
@@ -677,7 +837,42 @@ async function loadResultsFormFor(eventId) {
         <input type="number" step="0.1" placeholder="Points" class="points-input" value="${ex?.points ?? ''}">
       </div>
     `;
-  }).join("");
+  };
+
+  // With thirty-odd names on the books, scrolling past everyone who
+  // wasn't there is the slow part of logging a round. Whoever actually
+  // played comes first; the rest are one click away for the times
+  // somebody turned up on the day without registering.
+  container.innerHTML = playing.length
+    ? `<p class="small">${playing.length} player${playing.length === 1 ? "" : "s"} on this round.</p>
+       ${playing.map(row).join("")}
+       ${rest.length ? `
+         <details style="margin-top:14px;">
+           <summary class="small" style="cursor:pointer;">Someone else played — show the ${rest.length} other player${rest.length === 1 ? "" : "s"}</summary>
+           <div style="margin-top:10px;">${rest.map(row).join("")}</div>
+         </details>` : ""}`
+    : `<p class="small">Nobody was registered for this round, so here's everyone. Tip: adding players under &ldquo;Who's playing&rdquo; first makes this list much shorter next time.</p>
+       ${active.map(row).join("")}`;
+}
+
+// Attendance names people two ways: guests point straight at a player,
+// while members point at a profile. Members are matched to the player
+// list by name, which is how the two lists have always lined up here.
+async function playersOnRound(attendance) {
+  const ids = new Set(attendance.map(a => a.player_id).filter(Boolean));
+
+  const profileIds = attendance.map(a => a.profile_id).filter(Boolean);
+  if (profileIds.length) {
+    const { data: profs } = await client
+      .from("profiles").select("id, display_name").in("id", profileIds);
+    const byName = new Map(currentPlayers.map(p => [p.name.trim().toLowerCase(), p.id]));
+    (profs || []).forEach(prof => {
+      const match = byName.get((prof.display_name || "").trim().toLowerCase());
+      if (match) ids.add(match);
+    });
+  }
+
+  return ids;
 }
 
 function wireForms() {
@@ -689,6 +884,9 @@ function wireForms() {
   document.getElementById("prize-form").addEventListener("submit", savePrizes);
   document.getElementById("pot-form").addEventListener("submit", addPotEntry);
   document.getElementById("bank-form").addEventListener("submit", saveBankDetails);
+  document.getElementById("league-form").addEventListener("submit", saveLeagueSettings);
+  document.getElementById("save-groups-btn").addEventListener("click", saveGroups);
+  document.getElementById("autofill-groups-btn").addEventListener("click", autofillGroups);
 }
 
 async function saveResults() {
