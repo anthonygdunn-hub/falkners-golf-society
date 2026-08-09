@@ -46,6 +46,7 @@
       </div>
       <div id="full-leaderboard"><div class="empty-state">Loading leaderboard…</div></div>
     </div>
+    <p class="small" id="lb-rule" style="margin-top:12px;"></p>
   </div>
 </section>
 
@@ -67,10 +68,13 @@
 (async function () {
   try {
     const { events, results } = await fetchAllData();
-    const leaderboard = buildLeaderboard(results);
+    const rules = await fetchLeagueSettings();
+    const leaderboard = buildLeaderboard(results, rules);
     renderLeaderboardTable(document.getElementById("full-leaderboard"), leaderboard);
     const roundsLogged = new Set(results.map(r => r.event_id)).size;
     document.getElementById("lb-meta").textContent = `${roundsLogged} of ${events.length} rounds logged`;
+    const note = countingRoundsNote(rules.countingRounds, leaderboard);
+    if (note) document.getElementById("lb-rule").textContent = note;
   } catch (err) {
     console.error(err);
     document.getElementById("full-leaderboard").innerHTML = `<div class="empty-state">Couldn't load live data yet — has the Supabase connection been set up? See README.md.</div>`;
