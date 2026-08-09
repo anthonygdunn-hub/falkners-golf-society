@@ -130,7 +130,33 @@
         </form>
       </div>
 
+      <div class="card" style="margin-top:32px;">
+        <h3>Tee groups</h3>
+        <p class="small">Put a group number against each player and save. Everyone in group 1 goes out together, and the draw appears under that round on the fixtures page. Leave someone blank to keep them out of the draw.</p>
+        <div class="form-field">
+          <label for="group-event-select">Fixture</label>
+          <select id="group-event-select"></select>
+        </div>
+        <div id="group-list"><p class="small">Loading&hellip;</p></div>
+        <button class="btn btn-brass" type="button" id="save-groups-btn" style="margin-top:14px;">Save the draw</button>
+        <button class="btn btn-outline" type="button" id="autofill-groups-btn" style="margin-top:14px;">Fill in fours</button>
+        <div id="group-status" class="small" style="margin-top:8px;"></div>
+      </div>
+
       <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
+        <div class="card">
+          <h3>Order of Merit</h3>
+          <p class="small">By default every logged round counts toward the season table. Set a number here to count only each player's best rounds instead &mdash; &ldquo;best 6 of 9&rdquo; and the like &mdash; so one wet Sunday doesn't sink a good season.</p>
+          <form id="league-form">
+            <div class="form-field">
+              <label for="counting-rounds">Rounds that count</label>
+              <input id="counting-rounds" type="number" min="1" step="1" placeholder="Leave blank to count every round">
+            </div>
+            <button class="btn btn-outline" type="submit">Save rule</button>
+            <div id="league-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
         <div class="card">
           <h3>Round prizes</h3>
           <p class="small">Who won what on the day. Anything you leave blank simply won't appear on the results page.</p>
