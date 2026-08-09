@@ -132,6 +132,80 @@
 
       <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
         <div class="card">
+          <h3>Round prizes</h3>
+          <p class="small">Who won what on the day. Anything you leave blank simply won't appear on the results page.</p>
+          <div class="form-field">
+            <label for="prize-event-select">Fixture</label>
+            <select id="prize-event-select"></select>
+          </div>
+          <form id="prize-form">
+            <div class="form-row">
+              <div class="form-field"><label for="prize-first">1st place</label><input id="prize-first"></div>
+              <div class="form-field"><label for="prize-second">2nd place</label><input id="prize-second"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="prize-third">3rd place</label><input id="prize-third"></div>
+              <div class="form-field"><label for="prize-pair">Winning pair</label><input id="prize-pair" placeholder="e.g. Tony Dunn &amp; Robin Harden"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="prize-ld-front">Longest drive &mdash; front 9</label><input id="prize-ld-front"></div>
+              <div class="form-field"><label for="prize-ld-back">Longest drive &mdash; back 9</label><input id="prize-ld-back"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="prize-np-front">Nearest the pin &mdash; front 9</label><input id="prize-np-front"></div>
+              <div class="form-field"><label for="prize-np-back">Nearest the pin &mdash; back 9</label><input id="prize-np-back"></div>
+            </div>
+            <button class="btn btn-brass" type="submit">Save prizes</button>
+            <div id="prize-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Hole in one pot</h3>
+          <p class="small">Add what came in after a round, or record a payout when somebody finally holes one. The figure on the Hole in One page is the running total.</p>
+          <p class="pot-figure" id="admin-pot-total" style="font-size:2rem;">&pound;0</p>
+          <form id="pot-form">
+            <div class="form-row">
+              <div class="form-field"><label for="pot-event">Round (optional)</label><select id="pot-event"></select></div>
+              <div class="form-field"><label for="pot-amount">Amount (&pound;)</label><input id="pot-amount" type="number" step="0.01" min="0" required placeholder="e.g. 14"></div>
+            </div>
+            <div class="form-field"><label for="pot-note">Note</label><input id="pot-note" placeholder="e.g. 14 players at &pound;1"></div>
+            <label class="small" style="display:block; margin-bottom:12px;">
+              <input type="checkbox" id="pot-is-payout"> This is a payout to a winner
+            </label>
+            <button class="btn btn-outline" type="submit">Add entry</button>
+            <div id="pot-status" class="small" style="margin-top:8px;"></div>
+          </form>
+          <div id="pot-entries" style="margin-top:16px;"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:32px;">
+        <h3>Payments</h3>
+        <p class="small">Members pay the society by bank transfer, so there are no card fees to swallow. They see these details after registering and tap &ldquo;I&rsquo;ve paid&rdquo;; you confirm here once it lands in the account. Only signed-in members can see the bank details &mdash; they're not on the public site.</p>
+        <form id="bank-form">
+          <div class="form-row">
+            <div class="form-field"><label for="bank-name">Account name</label><input id="bank-name"></div>
+            <div class="form-field"><label for="bank-sort">Sort code</label><input id="bank-sort" placeholder="00-00-00"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label for="bank-number">Account number</label><input id="bank-number" inputmode="numeric"></div>
+            <div class="form-field"><label for="bank-note">Note for members</label><input id="bank-note" placeholder="e.g. pay at least a week before the round"></div>
+          </div>
+          <button class="btn btn-outline" type="submit">Save bank details</button>
+          <div id="bank-status" class="small" style="margin-top:8px;"></div>
+        </form>
+
+        <h3 style="margin-top:26px;">Who's paid</h3>
+        <div class="form-field">
+          <label for="pay-event-select">Fixture</label>
+          <select id="pay-event-select"></select>
+        </div>
+        <div id="payment-list"><p class="small">Loading&hellip;</p></div>
+      </div>
+
+      <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
+        <div class="card">
           <h3>Add a fixture</h3>
           <form id="add-event-form">
             <div class="form-field"><label>Round name</label><input id="new-event-name" required placeholder="e.g. Round 10"></div>
