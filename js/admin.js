@@ -33,7 +33,7 @@ async function showDashboard() {
     document.getElementById("login-panel").style.display = "none";
     document.getElementById("dashboard").style.display = "block";
     await refreshData();
-    await refreshPendingMembers();
+    await refreshPendingMembers(); await refreshLinkTool();
 }
 
 async function refreshPendingMembers() {
