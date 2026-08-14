@@ -7,7 +7,7 @@
 // there's no request a curious visitor can make to get the names.
 // ------------------------------------------------------------------
 
-let client;
+(function () {let client;
 
 document.addEventListener("DOMContentLoaded", async () => {
   client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
