@@ -123,3 +123,5 @@ function escapeHtml(str) {
 function escapeAttr(str) {
   return escapeHtml(str).replaceAll("'", "&#39;");
 }
+
+             })();
