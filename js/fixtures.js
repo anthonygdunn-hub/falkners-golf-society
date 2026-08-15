@@ -260,7 +260,7 @@ function drawAttendanceButton(slot, eventId, myRow) {
       if (error) return showSlotError(slot, error);
       drawAttendanceButton(slot, eventId, null);
     } else {
-      const { data, error } = await client.from("attendance")
+      const myPlayers = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || []; if (myPlayers.length) { await client.from("attendance").delete().eq("event_id", eventId).in("player_id", myPlayers.map(p => p.id)); } const { data, error } = await client.from("attendance")
         .insert({ event_id: eventId, profile_id: currentUser.id })
         .select("id, payment_status, payment_reference").single();
       if (error) return showSlotError(slot, error);
