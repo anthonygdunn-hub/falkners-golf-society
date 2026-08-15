@@ -985,13 +985,54 @@ async function addEvent(e) {
 }
 
 function renderPlayerManageList() {
-  const el = document.getElementById("player-manage-list");
-  el.innerHTML = currentPlayers.map(p => `
-    <div class="small" style="padding:6px 0; display:flex; justify-content:space-between; border-bottom:1px solid var(--line);">
-      <span>${escapeHtml(p.name)} ${p.handicap != null ? `(hcap ${p.handicap})` : ''}</span>
-      <span>${p.active ? '' : '<em>inactive</em>'}</span>
-    </div>
-  `).join("");
+    const el = document.getElementById("player-manage-list");
+    el.innerHTML = currentPlayers.map(p => `
+        <div class="small" style="padding:8px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line);" data-player-row="${p.id}">
+              <input type="text" value="${escapeHtml(p.name)}" data-player-name="${p.id}" style="flex:1; min-width:140px;">
+                    <input type="number" step="0.1" value="${p.handicap ?? ''}" placeholder="Hcap" data-player-handicap="${p.id}" style="width:80px;">
+                          <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
+                                  <input type="checkbox" data-player-active="${p.id}" ${p.active ? "checked" : ""}> Active
+                                        </label>
+                                              <button class="btn btn-outline btn-small" type="button" data-save-player="${p.id}">Save</button>
+                                                    <span class="small status-msg" data-player-status="${p.id}"></span>
+                                                        </div>
+                                                          `).join("");
+
+    el.querySelectorAll("[data-save-player]").forEach(btn => {
+          btn.addEventListener("click", () => savePlayerEdit(btn.dataset.savePlayer));
+    });
+}
+
+async function savePlayerEdit(playerId) {
+    const nameInput = document.querySelector(`[data-player-name="${playerId}"]`);
+    const handicapInput = document.querySelector(`[data-player-handicap="${playerId}"]`);
+    const activeInput = document.querySelector(`[data-player-active="${playerId}"]`);
+    const statusEl = document.querySelector(`[data-player-status="${playerId}"]`);
+    const name = nameInput.value.trim();
+
+    if (!name) {
+          statusEl.textContent = "Name can't be blank.";
+          statusEl.className = "small status-msg err";
+          return;
+    }
+
+    statusEl.textContent = "Saving\u2026";
+    statusEl.className = "small status-msg";
+
+    const handicap = handicapInput.value === "" ? null : Number(handicapInput.value);
+    const { error } = await client.from("players")
+      .update({ name, handicap, active: activeInput.checked })
+      .eq("id", playerId);
+
+    if (error) {
+          statusEl.textContent = error.message;
+          statusEl.className = "small status-msg err";
+          return;
+    }
+
+    statusEl.textContent = "Saved.";
+    statusEl.className = "small status-msg ok";
+    await refreshData();
 }
 
 function escapeHtml(str) {
