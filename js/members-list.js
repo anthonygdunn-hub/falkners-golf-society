@@ -73,7 +73,7 @@
                    const fillEditFields = () => {
                              const chosen = rows.find(r => r.id === editSelect.value);
                              if (editName) editName.value = chosen && chosen.display_name ? chosen.display_name : ""; editHandicap.value = chosen && chosen.handicap != null ? chosen.handicap : "";
-                             editBio.value = chosen && chosen.bio ? chosen.bio : ""; const egEdit = document.getElementById("member-edit-eg-id"); if (egEdit) egEdit.value = (chosen && chosen.england_golf_id) || "";
+                             editBio.value = chosen && chosen.bio ? chosen.bio : ""; const egEdit = document.getElementById("member-edit-eg-id"); if (egEdit) { egEdit.value = ""; if (editSelect.value) client.from("profiles").select("england_golf_id").eq("id", editSelect.value).maybeSingle().then(r => { egEdit.value = (r && r.data && r.data.england_golf_id) || ""; }); }
                              editStatus.textContent = "";
                    };
                    editSelect.addEventListener("change", fillEditFields);
