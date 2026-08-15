@@ -27,7 +27,7 @@
                                                                     ];
 
                                                                       var ALIASES = {
-                                                                          "alan dunn": "Al Dunn",
+                                                                          "al dunn": "Alan Dunn",
                                                                               "charlie parfitt": "Charles Parfitt",
                                                                                   "colin macdonald": "Colin Macdonald",
                                                                                       "aurther hodges": "Arthur Hodges"
