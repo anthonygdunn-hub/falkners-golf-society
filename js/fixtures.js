@@ -193,14 +193,14 @@ function hcapSuffix(h) { return (h === null || h === undefined || h === "") ? ""
       ? client.from("profiles").select("id, display_name, handicap").in("id", profileIds)
       : Promise.resolve({ data: [] }),
     playerIds.length
-      ? client.from("players").select("id, name, handicap").in("id", playerIds)
+      ? client.from("players").select("id, name, handicap, profile_id").in("id", playerIds)
       : Promise.resolve({ data: [] })
   ]);
 
   const profById = new Map((profs.data || []).map(p => [p.id, p.display_name + hcapSuffix(p.handicap)]));
   const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name + hcapSuffix(p.handicap)]));
 
-  return rows.map(r => r.player_id
+  return rows.filter(r => { if (!r.player_id) return true; const pl = (plyrs.data || []).find(p => p.id === r.player_id); return !(pl && pl.profile_id && profileIds.indexOf(pl.profile_id) !== -1); }).map(r => r.player_id
     ? (playerById.get(r.player_id) || "Player")
     : (profById.get(r.profile_id) || "Member"));
 }
