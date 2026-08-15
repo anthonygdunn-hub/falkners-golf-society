@@ -355,7 +355,7 @@ async function loadPrizes(eventId) {
   if (!data) return;
 
   Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
-    setPrizeValue(id, data[col] ?? "");
+    setPrizeValue(id, data[col] ?? ""); if (id === "prize-first") { var pr = String(data.winning_pair || "").split(/\s*&\s*|\s+and\s+/i); setPrizeValue("prize-pair-a", (pr[0] || "").trim()); setPrizeValue("prize-pair-b", (pr[1] || "").trim()); }
   });
 }
 
