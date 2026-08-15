@@ -61,8 +61,15 @@
 
   // "2026-03-01" -> "Sun, 1 Mar 2026". Falls back to the raw value so a
   // missing or odd date never blanks a heading.
-  // Day and month only, for the round badge - the same shape the fixtures
-  // and results pages use. The year does not fit in the circle.
+  function shortDate(value) {
+    if (!value) return { day: "", month: "" };
+    const d = new Date(value + "T00:00:00");
+    if (isNaN(d.getTime())) return { day: "", month: "" };
+    return {
+      day: d.toLocaleDateString("en-GB", { day: "numeric" }),
+      month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()
+    };
+  }
   function shortDate(value) {
     if (!value) return { day: "", month: "" };
     const d = new Date(value + "T00:00:00");
@@ -120,7 +127,7 @@
               ${p.caption ? `<span>${escapeHtml(p.caption)}</span>` : ''}
               <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
             </div>
-          </div>`;
+          <span class="fixture-date"><strong>${escapeHtml(shortDate(group.event?.event_date).day)}</strong>${escapeHtml(shortDate(group.event?.event_date).month)}</span>
       }).join("");
 
       const title = (group.event?.name || "Round") + (group.event?.venue ? " - " + group.event.venue : "");
