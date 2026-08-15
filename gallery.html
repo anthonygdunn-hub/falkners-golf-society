@@ -61,6 +61,18 @@
 
   // "2026-03-01" -> "Sun, 1 Mar 2026". Falls back to the raw value so a
   // missing or odd date never blanks a heading.
+  // Day and month only, for the round badge - the same shape the fixtures
+  // and results pages use. The year does not fit in the circle.
+  function shortDate(value) {
+    if (!value) return { day: "", month: "" };
+    const d = new Date(value + "T00:00:00");
+    if (isNaN(d.getTime())) return { day: "", month: "" };
+    return {
+      day: d.toLocaleDateString("en-GB", { day: "numeric" }),
+      month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()
+    };
+  }
+
   function prettyDate(value) {
     if (!value) return "";
     const d = new Date(value + "T00:00:00");
@@ -120,7 +132,7 @@
       return `
         <li class="fixture-item">
           <button class="fixture-head" type="button" aria-expanded="${open}" aria-controls="round-${escapeHtml(String(group.event?.name || index))}">
-            <span class="fixture-date"><strong>${escapeHtml(prettyDate(group.event?.event_date).split(",")[1] || "")}</strong></span>
+            <span class="fixture-date"><strong>${escapeHtml(shortDate(group.event?.event_date).day)}</strong>${escapeHtml(shortDate(group.event?.event_date).month)}</span>
             <span class="fixture-body">
               <span class="fixture-title">${escapeHtml(title)}</span>
               <span class="venue">${escapeHtml(prettyDate(group.event?.event_date))} &middot; ${count}</span>
