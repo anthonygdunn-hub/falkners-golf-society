@@ -47,7 +47,7 @@
 
                              intro.textContent = `${rows.length} member${rows.length === 1 ? "" : "s"}. Click anyone to see their profile.`;
      list.innerHTML = rows.map(renderMember).join(""); const searchWrap = document.getElementById("members-search-wrap"); const searchInput = document.getElementById("members-search"); const searchCount = document.getElementById("members-search-count"); if (searchWrap && searchInput) { searchWrap.style.display = ""; searchInput.addEventListener("input", () => { const q = searchInput.value.trim().toLowerCase(); const items = list.querySelectorAll(".fixture-item"); let shown = 0; items.forEach(item => { const name = (item.querySelector(".fixture-title") || {}).textContent || ""; const match = !q || name.toLowerCase().includes(q); item.style.display = match ? "" : "none"; if (match) shown++; }); if (searchCount) { searchCount.style.display = q ? "" : "none"; searchCount.textContent = shown === 0 ? "No members match that name." : shown + " of " + items.length + " members"; } }); }
-     list.style.display = "";
+     list.style.display = ""; if (location.hash && location.hash.indexOf("#m-") === 0) { const target = document.getElementById(location.hash.slice(1)); if (target) { const head = target.querySelector(".fixture-head"); if (head) head.click(); target.scrollIntoView({ behavior: "smooth", block: "center" }); } }
 
                              list.addEventListener("click", (e) => {
                                    const head = e.target.closest(".fixture-head");
@@ -122,7 +122,7 @@
           : `<p class="small">This member hasn't written a bio yet.</p>`;
 
     return `
-        <li class="fixture-item" data-member-id="${escapeAttr(m.id)}">
+        <li class="fixture-item" id="m-${escapeAttr(m.id)}" data-member-id="${escapeAttr(m.id)}">
               <button class="fixture-head" type="button" aria-expanded="false" aria-controls="member-${escapeAttr(m.id)}">
                       ${avatar}
                               <span class="fixture-body">
