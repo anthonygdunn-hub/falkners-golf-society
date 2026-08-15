@@ -337,7 +337,7 @@ const PRIZE_FIELDS = {
   "prize-np-back": "nearest_pin_back"
 };
 
-const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-ld-front","prize-ld-back","prize-np-front","prize-np-back","prize-pair-a","prize-pair-b"];
+const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-ld-front","prize-ld-back","prize-np-front","prize-np-back","prize-pair-a","prize-pair-b"]; function fillPrizePlayerSelects() { const opts = '<option value="">-- none --</option>' + (currentPlayers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => '<option value="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</option>').join(""); PRIZE_SELECTS.forEach(id => { const el = document.getElementById(id); if (el && el.tagName === "SELECT") { const keep = el.value; el.innerHTML = opts; el.value = keep; } }); } function setPrizeValue(id, value) { const el = document.getElementById(id); if (!el) return; const val = String(value || "").trim(); if (val && el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === val)) { const opt = document.createElement("option"); opt.value = val; opt.textContent = val + " (not in the player list)"; el.appendChild(opt); } el.value = val; } function populatePrizeEventSelect() {
   const select = fillEventSelect("prize-event-select");
   if (!select) return;
   select.onchange = () => loadPrizes(select.value);
