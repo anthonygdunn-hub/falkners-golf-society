@@ -91,7 +91,7 @@
     if (error) throw error;
 
     if (!photos.length) {
-      listEl.innerHTML = `<div class="empty-state">No photos yet — be the first to add one from <a href="member.html">My Account</a>.</div>`;
+      listEl.innerHTML = `<div class="empty-state">No photos yet — be the first to add one from <a href="member.html">My Account</a>.`;
       return;
     }
 
@@ -118,7 +118,7 @@
               <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
             </div>
           </div>
-        </div>`;
+        `;
       }).join("");
 
       const title = (group.event?.name || "Round") + (group.event?.venue ? " - " + group.event.venue : "");
@@ -155,7 +155,7 @@
     });
     } catch (err) {
           console.error(err);
-    listEl.innerHTML = `<div class="empty-state">Couldn't load the photos just now — please try again in a moment.</div>`;
+    listEl.innerHTML = `<div class="empty-state">Couldn't load the photos just now — please try again in a moment.`;
       }
 })();
 </script>
