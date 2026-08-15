@@ -836,7 +836,7 @@ async function loadResultsFormFor(eventId) {
       <div class="entry-row" data-player-id="${p.id}">
         <div class="player-name">${escapeHtml(p.name)}</div>
         <input type="number" step="0.1" placeholder="HCap" class="hcap-input" value="${ex?.handicap ?? p.handicap ?? ''}">
-        <input type="number" step="1" placeholder="Gross" class="gross-input" value="${ex?.gross_score ?? ''}"><input type="number" step="1" placeholder="Grs pts" class="grosspts-input" value="${ex?.gross_points ?? ''}">
+        <input type="number" step="1" placeholder="Gross" class="gross-input" value="${ex?.gross_score ?? ''}">
         <input type="number" step="0.1" placeholder="Points" class="points-input" value="${ex?.points ?? ''}">
       </div>
     `;
@@ -907,7 +907,7 @@ async function saveResults() {
       event_id: eventId,
       player_id: row.dataset.playerId,
       handicap: row.querySelector(".hcap-input").value || null,
-      gross_score: row.querySelector(".gross-input").value || null, gross_points: row.querySelector(".grosspts-input").value || null,
+      gross_score: row.querySelector(".gross-input").value || null,
       points: Number(points)
     });
   });
