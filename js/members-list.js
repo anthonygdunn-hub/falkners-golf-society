@@ -73,7 +73,7 @@
                    const fillEditFields = () => {
                              const chosen = rows.find(r => r.id === editSelect.value);
                              if (editName) editName.value = chosen && chosen.display_name ? chosen.display_name : ""; editHandicap.value = chosen && chosen.handicap != null ? chosen.handicap : "";
-                             editBio.value = chosen && chosen.bio ? chosen.bio : "";
+                             editBio.value = chosen && chosen.bio ? chosen.bio : ""; const egEdit = document.getElementById("member-edit-eg-id"); if (egEdit) egEdit.value = (chosen && chosen.england_golf_id) || "";
                              editStatus.textContent = "";
                    };
                    editSelect.addEventListener("change", fillEditFields);
@@ -81,7 +81,7 @@
                    editSave.addEventListener("click", async () => {
                              editStatus.textContent = "Saving\u2026";
                              const handicapVal = editHandicap.value === "" ? null : Number(editHandicap.value);
-                             const { error: saveError } = await client.from("profiles").update({ display_name: (editName && editName.value.trim()) || null, handicap: handicapVal, bio: editBio.value || null }).eq("id", editSelect.value);
+                             const { error: saveError } = await client.from("profiles").update({ display_name: (editName && editName.value.trim()) || null, handicap: handicapVal, bio: editBio.value || null, england_golf_id: ((document.getElementById("member-edit-eg-id") || {}).value || "").trim() || null }).eq("id", editSelect.value);
                              if (saveError) {
                                          editStatus.textContent = "Couldn't save: " + saveError.message;
                                          return;
