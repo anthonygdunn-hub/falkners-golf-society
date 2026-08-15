@@ -19,7 +19,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     ({ events, results } = await fetchAllData());
   } catch (err) {
     console.error(err);
-    listEl.innerHTML = `<li class="empty-state">Couldn't load live data yet — has the Supabase connection been set up? See README.md.</li>`;
+    listEl.innerHTML = `<li class="empty-state">Couldn't load the results just now — please try again in a moment.</li>`;
     return;
   }
 
