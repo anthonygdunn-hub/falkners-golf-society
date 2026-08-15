@@ -54,7 +54,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     results.forEach(r => eventsWithResults.add(r.event_id));
   } catch (err) {
     console.error(err);
-    listEl.innerHTML = `<li class="empty-state">Couldn't load fixtures yet — has the Supabase connection been set up? See README.md.</li>`;
+    listEl.innerHTML = `<li class="empty-state">Couldn't load fixtures yet — please try again in a moment.</li>`;
     return;
   }
 
