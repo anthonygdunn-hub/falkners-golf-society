@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Falkners Arms Golf Society</title>
 <meta name="description" content="Golf society based at The Falkners Arms, Fleet. Fixtures, results, and leaderboard for our 40+ members.">
-<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg"><link rel="canonical" href="https://www.thefalknersarmsgolfsociety.co.uk/"><meta property="og:type" content="website"><meta property="og:site_name" content="The Falkners Arms Golf Society"><meta property="og:title" content="The Falkners Arms Golf Society"><meta property="og:description" content="Golf society based at The Falkners Arms, Fleet. Fixtures, results and leaderboard for our 40+ members."><meta property="og:url" content="https://www.thefalknersarmsgolfsociety.co.uk/"><meta property="og:image" content="https://www.thefalknersarmsgolfsociety.co.uk/assets/logo.jpeg"><meta name="twitter:card" content="summary"><link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
@@ -138,7 +138,7 @@
     }
   } catch (err) {
     console.error(err);
-    document.getElementById("home-leaderboard").innerHTML = `<div class="empty-state">Couldn't load live data yet - has the Supabase connection been set up? See README.md.</div>`;
+    document.getElementById("home-leaderboard").innerHTML = `<div class="empty-state">Couldn't load the leaderboard just now. Please try again in a moment.</div>`;
     document.getElementById("home-next-fixture").innerHTML = `<li class="empty-state">Couldn't load fixtures yet.</li>`;
   }
 })();
