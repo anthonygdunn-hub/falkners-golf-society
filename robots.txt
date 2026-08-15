@@ -1,0 +1,13 @@
+# The Falkners Arms Golf Society
+# Public pages are fine to index. The members area, the committee
+# admin page and the password reset flow are not - they sit behind a
+# login anyway, this just keeps them out of search results.
+
+User-agent: *
+Allow: /
+Disallow: /admin.html
+Disallow: /member.html
+Disallow: /members.html
+Disallow: /reset-password.html
+
+Sitemap: https://www.thefalknersarmsgolfsociety.co.uk/sitemap.xml
