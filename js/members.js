@@ -51,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                 show("approved-panel");
                                                                     document.getElementById("display-name-input").value = profile?.display_name || "";
                                                                     document.getElementById("handicap-input").value = profile?.handicap ?? "";
-                                                                    document.getElementById("bio-input").value = profile?.bio || "";
+                                                                    document.getElementById("bio-input").value = profile?.bio || ""; const egEl = document.getElementById("england-golf-id-input"); if (egEl) egEl.value = profile?.england_golf_id || "";
                                                                         document.getElementById("current-avatar").src = profile?.avatar_url || "assets/logo.jpeg";
                                                                             document.getElementById("welcome-name").textContent = profile?.display_name || "there";
                                                                                 loadMyPhotos(); refreshMemberDashboard();
@@ -134,7 +134,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                                                                       const { error } = await client.from("profiles").update({
       display_name: name,
       handicap: handicapRaw === "" ? null : Number(handicapRaw),
-      bio: bio || null
+      bio: bio || null, england_golf_id: ((document.getElementById("england-golf-id-input") || {}).value || "").trim() || null
     }).eq("id", currentUser.id);
                                                                                                                                                                                                                                                                                                           statusEl.textContent = error ? error.message : "Saved.";
                                                                                                                                                                                                                                                                                                               statusEl.className = error ? "status-msg err" : "status-msg ok";
