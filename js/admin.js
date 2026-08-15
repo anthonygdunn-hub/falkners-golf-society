@@ -365,7 +365,7 @@ async function savePrizes(e) {
   const statusEl = document.getElementById("prize-status");
   if (!eventId) return;
 
-  const row = { event_id: eventId, updated_at: new Date().toISOString() };  const pairA = (document.getElementById("prize-pair-a") || {}).value || "";  const pairB = (document.getElementById("prize-pair-b") || {}).value || "";  row.winning_pair = (pairA && pairB) ? (pairA + " & " + pairB) : (pairA || pairB || null);  const pairA = (document.getElementById("prize-pair-a") || {}).value || "";
+  const row = { event_id: eventId, updated_at: new Date().toISOString() };  var pairA = (document.getElementById("prize-pair-a") || {}).value || "";  var pairB = (document.getElementById("prize-pair-b") || {}).value || "";  row.winning_pair = (pairA && pairB) ? (pairA + " & " + pairB) : (pairA || pairB || null);  var pairA = (document.getElementById("prize-pair-a") || {}).value || "";
   Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
     const value = String((document.getElementById(id) || {}).value || "").trim();
     row[col] = value === "" ? null : value;
