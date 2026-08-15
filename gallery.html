@@ -117,7 +117,8 @@
               ${p.caption ? `<span>${escapeHtml(p.caption)}</span>` : ''}
               <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
             </div>
-          <span class="fixture-date"><strong>${escapeHtml(shortDate(group.event?.event_date).day)}</strong>${escapeHtml(shortDate(group.event?.event_date).month)}</span>
+          </div>
+        </div>`;
       }).join("");
 
       const title = (group.event?.name || "Round") + (group.event?.venue ? " - " + group.event.venue : "");
