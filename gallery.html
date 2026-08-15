@@ -93,7 +93,7 @@
         const { data: urlData } = client.storage.from("gallery").getPublicUrl(p.storage_path);
         return `
           <div class="gallery-item">
-                      <img src="${urlData.publicUrl}" alt="${escapeHtml(p.caption || '')}" loading="lazy">
+                      <img src="${client.storage.from('gallery').getPublicUrl('thumbs/' + p.storage_path).data.publicUrl}" data-full="${urlData.publicUrl}" onerror="if(!this.dataset.fellBack){this.dataset.fellBack=1;this.src=this.dataset.full;}" alt="${escapeHtml(p.caption || '')}" loading="lazy">
                       <div class="gallery-caption">
                         ${p.caption ? `<span>${escapeHtml(p.caption)}</span>` : ''}
                         <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
