@@ -330,14 +330,14 @@ const PRIZE_FIELDS = {
   "prize-first": "first_place",
   "prize-second": "second_place",
   "prize-third": "third_place",
-  "prize-pair": "winning_pair",
+ 
   "prize-ld-front": "longest_drive_front",
   "prize-ld-back": "longest_drive_back",
   "prize-np-front": "nearest_pin_front",
   "prize-np-back": "nearest_pin_back"
 };
 
-function populatePrizeEventSelect() {
+const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-ld-front","prize-ld-back","prize-np-front","prize-np-back","prize-pair-a","prize-pair-b"];
   const select = fillEventSelect("prize-event-select");
   if (!select) return;
   select.onchange = () => loadPrizes(select.value);
@@ -346,7 +346,7 @@ function populatePrizeEventSelect() {
 
 async function loadPrizes(eventId) {
   const statusEl = document.getElementById("prize-status");
-  Object.keys(PRIZE_FIELDS).forEach(id => { document.getElementById(id).value = ""; });
+  fillPrizePlayerSelects();  Object.keys(PRIZE_FIELDS).forEach(id => { setPrizeValue(id, ""); });
   if (statusEl) statusEl.textContent = "";
   if (!eventId) return;
 
@@ -355,7 +355,7 @@ async function loadPrizes(eventId) {
   if (!data) return;
 
   Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
-    document.getElementById(id).value = data[col] ?? "";
+    setPrizeValue(id, data[col] ?? "");
   });
 }
 
@@ -365,9 +365,9 @@ async function savePrizes(e) {
   const statusEl = document.getElementById("prize-status");
   if (!eventId) return;
 
-  const row = { event_id: eventId, updated_at: new Date().toISOString() };
+  const row = { event_id: eventId, updated_at: new Date().toISOString() };  const pairA = (document.getElementById("prize-pair-a") || {}).value || "";  const pairB = (document.getElementById("prize-pair-b") || {}).value || "";  row.winning_pair = (pairA && pairB) ? (pairA + " & " + pairB) : (pairA || pairB || null);  const pairA = (document.getElementById("prize-pair-a") || {}).value || "";
   Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
-    const value = document.getElementById(id).value.trim();
+    const value = String((document.getElementById(id) || {}).value || "").trim();
     row[col] = value === "" ? null : value;
   });
 
