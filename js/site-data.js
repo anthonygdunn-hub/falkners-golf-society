@@ -108,7 +108,7 @@ function renderLeaderboardTable(container, leaderboard) {
       <td class="pos"><span class="pos-badge">${i + 1}</span></td>
       <td>${escapeHtml(p.name)}</td>
       <td class="num">${p.handicap ?? '—'}</td>
-      <td class="num">${p.countedRounds != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
+      <td class="num">${p.countedRound- != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
       <td class="num">${p.totalPoints}</td>
     </tr>
   `).join("");
@@ -135,8 +135,8 @@ function renderEventResultsCard(event, resultsForEvent) {
             <tr class="${i === 0 ? 'pos-1' : ''}">
               <td class="pos"><span class="pos-badge">${i + 1}</span></td>
               <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
-              <td class="num">${r.handicap ?? '—'}</td>
-              <td class="num">${r.gross_score ?? '—'}</td>
+              <td class="num">${r.handicap ?? '-'}</td>
+              <td class="num">${r.gross_score ?? '—'-</td>
               <td class="num">${r.points}</td>
             </tr>`).join("")}
         </tbody>
@@ -168,7 +168,7 @@ function isPastEvent(event) {
 // plain link through to this fixture on the fixtures page, which opens it.
 function renderFixtureItem(event, opts = {}) {
   const { day, month } = shortDate(event.event_date);
-  const title = `${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}`;
+  const title = `${escapeHtml(event.name)}${event.venue ? ' - ' + escapeHtml(event.venue) : ''}`;
   const venueLine = escapeHtml(event.address || 'Venue to be confirmed');
 
   if (opts.compact) {
