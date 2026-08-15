@@ -152,7 +152,7 @@ function renderScoreTable(rows) {
   return `
     <table class="score-table">
       <thead>
-        <tr><th>Pos</th><th>Name</th><th class="num">HDCP</th><th class="num">NET PTS</th><th class="num">GRS PTS</th></tr>
+        <tr><th>Pos</th><th>Name</th><th class="num">HDCP</th><th class="num">NET PTS</th></tr>
       </thead>
       <tbody>
         ${rows.map((r, i) => `
@@ -161,7 +161,7 @@ function renderScoreTable(rows) {
             <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
             <td class="num">${r.handicap ?? '—'}</td>
             <td class="num">${r.points}</td>
-            <td class="num">${r.gross_points ?? '—'}</td>          </tr>`).join("")}
+                       </tr>`).join("")}
       </tbody>
     </table>
   `;
