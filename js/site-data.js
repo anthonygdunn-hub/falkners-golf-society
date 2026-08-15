@@ -29,7 +29,7 @@ async function fetchAllData() {
 
   const [eventsRes, resultsRes, playersRes] = await Promise.all([
     client.from("events").select("*").order("event_date", { ascending: true }),
-    client.from("results").select("*, players(name, handicap), events(name, event_date)"),
+    client.from("results").select("*, players(name, handicap, profile_id), events(name, event_date)"),
     client.from("players").select("*").eq("active", true).order("name", { ascending: true })
   ]);
 
@@ -55,7 +55,7 @@ function buildLeaderboard(results, options = {}) {
   for (const r of results) {
     const name = r.players?.name || "Unknown";
     if (!byPlayer.has(name)) {
-      byPlayer.set(name, { name, handicap: r.players?.handicap, scores: [] });
+      byPlayer.set(name, { name, handicap: r.players?.handicap, profileId: r.players?.profile_id, scores: [] });
     }
     const entry = byPlayer.get(name);
     entry.scores.push(Number(r.points) || 0);
@@ -106,7 +106,7 @@ function renderLeaderboardTable(container, leaderboard) {
   const rows = leaderboard.map((p, i) => `
     <tr class="${i === 0 ? 'pos-1' : ''}">
       <td class="pos"><span class="pos-badge">${i + 1}</span></td>
-      <td>${escapeHtml(p.name)}</td>
+      <td>${p.profileId ? '<a href="members.html#m-' + p.profileId + '">' + escapeHtml(p.name) + '</a>' : escapeHtml(p.name)}</td>
       <td class="num">${p.handicap ?? '—'}</td>
       <td class="num">${p.countedRounds != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
       <td class="num">${p.totalPoints}</td>
