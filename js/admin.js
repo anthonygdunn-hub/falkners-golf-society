@@ -994,12 +994,17 @@ function renderPlayerManageList() {
                                   <input type="checkbox" data-player-active="${p.id}" ${p.active ? "checked" : ""}> Active
                                         </label>
                                               <button class="btn btn-outline btn-small" type="button" data-save-player="${p.id}">Save</button>
+                                              <button class="btn btn-outline btn-small" type="button" data-delete-player="${p.id}">Delete</button>
                                                     <span class="small status-msg" data-player-status="${p.id}"></span>
                                                         </div>
                                                           `).join("");
 
     el.querySelectorAll("[data-save-player]").forEach(btn => {
           btn.addEventListener("click", () => savePlayerEdit(btn.dataset.savePlayer));
+    });
+
+    el.querySelectorAll("[data-delete-player]").forEach(btn => {
+          btn.addEventListener("click", () => deletePlayerWithCheck(btn.dataset.deletePlayer));
     });
 }
 
@@ -1032,6 +1037,46 @@ async function savePlayerEdit(playerId) {
 
     statusEl.textContent = "Saved.";
     statusEl.className = "small status-msg ok";
+    await refreshData();
+}
+
+async function deletePlayerWithCheck(playerId) {
+    const statusEl = document.querySelector(`[data-player-status="${playerId}"]`);
+    const row = document.querySelector(`[data-player-row="${playerId}"]`);
+    const name = row ? row.querySelector("[data-player-name]").value : "this player";
+
+    const { count, error: countErr } = await client
+      .from("results")
+      .select("id", { count: "exact", head: true })
+      .eq("player_id", playerId);
+
+    if (countErr) {
+          statusEl.textContent = countErr.message;
+          statusEl.className = "small status-msg err";
+          return;
+    }
+
+    if (count > 0) {
+          statusEl.textContent = `Can't delete \u2014 ${name} has ${count} logged result${count === 1 ? "" : "s"}. Untick "Active" instead to hide them from new rounds.`;
+          statusEl.className = "small status-msg err";
+          return;
+    }
+
+    if (!confirm(`Delete ${name}? They have no results logged, so this is safe, but it can't be undone.`)) {
+          return;
+    }
+
+    statusEl.textContent = "Deleting\u2026";
+    statusEl.className = "small status-msg";
+
+    const { error } = await client.from("players").delete().eq("id", playerId);
+
+    if (error) {
+          statusEl.textContent = error.message;
+          statusEl.className = "small status-msg err";
+          return;
+    }
+
     await refreshData();
 }
 
