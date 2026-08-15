@@ -113,8 +113,7 @@ function renderSeason() {
     ? season.map(renderResultItem).join("")
     : `<li class="empty-state">No results logged for ${escapeHtml(selectedYear)}.</li>`;
 
-  if (meta) {
-    meta.textContent = season.length
+    if (meta) {    meta.textContent = season.length
       ? `${season.length} round${season.length === 1 ? "" : "s"} logged in ${selectedYear}`
       : "";
   }
@@ -153,7 +152,7 @@ function renderScoreTable(rows) {
   return `
     <table class="score-table">
       <thead>
-        <tr><th>Pos</th><th>Name</th><th class="num">HCap</th><th class="num">Gross</th><th class="num">Points</th></tr>
+        <tr><th>Pos</th><th>Name</th><th class="num">HDCP</th><th class="num">NET PTS</th><th class="num">GRS PTS</th></tr>
       </thead>
       <tbody>
         ${rows.map((r, i) => `
@@ -161,9 +160,8 @@ function renderScoreTable(rows) {
             <td class="pos"><span class="pos-badge">${i + 1}</span></td>
             <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
             <td class="num">${r.handicap ?? '—'}</td>
-            <td class="num">${r.gross_score ?? '—'}</td>
             <td class="num">${r.points}</td>
-          </tr>`).join("")}
+            <td class="num">${r.gross_points ?? '—'}</td>          </tr>`).join("")}
       </tbody>
     </table>
   `;
