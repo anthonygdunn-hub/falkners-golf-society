@@ -46,7 +46,7 @@
                              }
 
                              intro.textContent = `${rows.length} member${rows.length === 1 ? "" : "s"}. Click anyone to see their profile.`;
-     list.innerHTML = rows.map(renderMember).join("");
+     list.innerHTML = rows.map(renderMember).join(""); const searchWrap = document.getElementById("members-search-wrap"); const searchInput = document.getElementById("members-search"); const searchCount = document.getElementById("members-search-count"); if (searchWrap && searchInput) { searchWrap.style.display = ""; searchInput.addEventListener("input", () => { const q = searchInput.value.trim().toLowerCase(); const items = list.querySelectorAll(".fixture-item"); let shown = 0; items.forEach(item => { const name = (item.querySelector(".fixture-title") || {}).textContent || ""; const match = !q || name.toLowerCase().includes(q); item.style.display = match ? "" : "none"; if (match) shown++; }); if (searchCount) { searchCount.style.display = q ? "" : "none"; searchCount.textContent = shown === 0 ? "No members match that name." : shown + " of " + items.length + " members"; } }); }
      list.style.display = "";
 
                              list.addEventListener("click", (e) => {
@@ -62,7 +62,7 @@
                              const editSelect = document.getElementById("member-edit-select");
      const editCard = document.getElementById("member-edit-card");
      if (editSelect && editCard) {
-           const editHandicap = document.getElementById("member-edit-handicap");
+           const editName = document.getElementById("member-edit-name"); const editHandicap = document.getElementById("member-edit-handicap");
            const editBio = document.getElementById("member-edit-bio");
            const editSave = document.getElementById("member-edit-save");
            const editStatus = document.getElementById("member-edit-status");
@@ -72,7 +72,7 @@
                    editSelect.innerHTML = rows.map(r => `<option value="${escapeAttr(r.id)}">${escapeHtml(r.display_name || "Member")}</option>`).join("");
                    const fillEditFields = () => {
                              const chosen = rows.find(r => r.id === editSelect.value);
-                             editHandicap.value = chosen && chosen.handicap != null ? chosen.handicap : "";
+                             if (editName) editName.value = chosen && chosen.display_name ? chosen.display_name : ""; editHandicap.value = chosen && chosen.handicap != null ? chosen.handicap : "";
                              editBio.value = chosen && chosen.bio ? chosen.bio : "";
                              editStatus.textContent = "";
                    };
@@ -81,7 +81,7 @@
                    editSave.addEventListener("click", async () => {
                              editStatus.textContent = "Saving\u2026";
                              const handicapVal = editHandicap.value === "" ? null : Number(editHandicap.value);
-                             const { error: saveError } = await client.from("profiles").update({ handicap: handicapVal, bio: editBio.value || null }).eq("id", editSelect.value);
+                             const { error: saveError } = await client.from("profiles").update({ display_name: (editName && editName.value.trim()) || null, handicap: handicapVal, bio: editBio.value || null }).eq("id", editSelect.value);
                              if (saveError) {
                                          editStatus.textContent = "Couldn't save: " + saveError.message;
                                          return;
