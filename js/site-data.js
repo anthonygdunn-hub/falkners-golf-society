@@ -108,7 +108,7 @@ function renderLeaderboardTable(container, leaderboard) {
       <td class="pos"><span class="pos-badge">${i + 1}</span></td>
       <td>${escapeHtml(p.name)}</td>
       <td class="num">${p.handicap ?? '—'}</td>
-      <td class="num">${p.countedRound- != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
+      <td class="num">${p.countedRounds != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
       <td class="num">${p.totalPoints}</td>
     </tr>
   `).join("");
@@ -136,7 +136,7 @@ function renderEventResultsCard(event, resultsForEvent) {
               <td class="pos"><span class="pos-badge">${i + 1}</span></td>
               <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
               <td class="num">${r.handicap ?? '-'}</td>
-              <td class="num">${r.gross_score ?? '—'-</td>
+              <td class="num">${r.gross_score ?? '—'}</td>
               <td class="num">${r.points}</td>
             </tr>`).join("")}
         </tbody>
