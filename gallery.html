@@ -35,9 +35,9 @@
       <h1>Gallery</h1>
       <p class="small">Photos from every round, added by members. <a href="member.html">Sign in</a> to add your own.</p>
 
-      <div id="gallery-list" style="margin-top:24px;">
-        <div class="empty-state">Loading photos…</div>
-      </div>
+      <ul class="fixture-list" id="gallery-list" style="margin-top:24px;">
+        <li class="empty-state">Loading photos…</li>
+      </ul>
     </div>
   </section>
 
@@ -59,6 +59,15 @@
   const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const listEl = document.getElementById("gallery-list");
 
+  // "2026-03-01" -> "Sun, 1 Mar 2026". Falls back to the raw value so a
+  // missing or odd date never blanks a heading.
+  function prettyDate(value) {
+    if (!value) return "";
+    const d = new Date(value + "T00:00:00");
+    if (isNaN(d.getTime())) return value;
+    return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  }
+
   function escapeHtml(str) {
         if (str == null) return "";
     return String(str).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -67,7 +76,7 @@
   try {
     const { data: photos, error } = await client
       .from("photos")
-            .select("*, events(name, event_date), profiles(display_name, avatar_url)")
+            .select("*, events(name, event_date, venue), profiles(display_name, avatar_url)")
             .order("created_at", { ascending: false });
 
     if (error) throw error;
@@ -88,25 +97,52 @@
           (b.event?.event_date || "").localeCompare(a.event?.event_date || "")
         );
 
-    listEl.innerHTML = sortedGroups.map(group => {
-            const cards = group.photos.map(p => {
+    listEl.innerHTML = sortedGroups.map((group, index) => {
+      const cards = group.photos.map(p => {
         const { data: urlData } = client.storage.from("gallery").getPublicUrl(p.storage_path);
+        const thumb = client.storage.from("gallery").getPublicUrl("thumbs/" + p.storage_path).data.publicUrl;
         return `
           <div class="gallery-item">
-                      <img src="${client.storage.from('gallery').getPublicUrl('thumbs/' + p.storage_path).data.publicUrl}" data-full="${urlData.publicUrl}" onerror="if(!this.dataset.fellBack){this.dataset.fellBack=1;this.src=this.dataset.full;}" alt="${escapeHtml(p.caption || '')}" loading="lazy">
-                      <div class="gallery-caption">
-                        ${p.caption ? `<span>${escapeHtml(p.caption)}</span>` : ''}
-                        <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
-                      </div>
-                    </div>`;
-              }).join("");
+            <img src="${thumb}" data-full="${urlData.publicUrl}" onerror="if(!this.dataset.fellBack){this.dataset.fellBack=1;this.src=this.dataset.full;}" alt="${escapeHtml(p.caption || '')}" loading="lazy">
+            <div class="gallery-caption">
+              ${p.caption ? `<span>${escapeHtml(p.caption)}</span>` : ''}
+              <small>${escapeHtml(p.profiles?.display_name || 'A member')}</small>
+            </div>
+          </div>`;
+      }).join("");
+
+      const title = (group.event?.name || "Round") + (group.event?.venue ? " - " + group.event.venue : "");
+      const count = group.photos.length + (group.photos.length === 1 ? " photo" : " photos");
+      // The newest round starts open; the rest are collapsed, so the page
+      // is a short list of rounds rather than an endless scroll of images.
+      const open = index === 0;
 
       return `
-        <div class="scorecard" style="margin-bottom:24px;">
-                  <div class="scorecard-head"><h3>${escapeHtml(group.event?.name || 'Round')}</h3><span class="meta">${escapeHtml(group.event?.event_date || '')}</span></div>
-                  <div class="gallery-grid" style="padding:20px;">${cards}</div>
-                </div>`;
-            }).join("");
+        <li class="fixture-item">
+          <button class="fixture-head" type="button" aria-expanded="${open}" aria-controls="round-${escapeHtml(String(group.event?.name || index))}">
+            <span class="fixture-date"><strong>${escapeHtml(prettyDate(group.event?.event_date).split(",")[1] || "")}</strong></span>
+            <span class="fixture-body">
+              <span class="fixture-title">${escapeHtml(title)}</span>
+              <span class="venue">${escapeHtml(prettyDate(group.event?.event_date))} &middot; ${count}</span>
+            </span>
+            <span class="fixture-chevron" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="fixture-panel" ${open ? "" : "hidden"}>
+            <div class="gallery-grid" style="padding:20px;">${cards}</div>
+          </div>
+        </li>`;
+    }).join("");
+
+    // Same click behaviour as the fixtures page: tap a round to open it.
+    listEl.addEventListener("click", (e) => {
+      const head = e.target.closest(".fixture-head");
+      if (!head) return;
+      const panel = head.nextElementSibling;
+      if (!panel) return;
+      const isOpen = head.getAttribute("aria-expanded") === "true";
+      head.setAttribute("aria-expanded", isOpen ? "false" : "true");
+      panel.hidden = isOpen;
+    });
     } catch (err) {
           console.error(err);
     listEl.innerHTML = `<div class="empty-state">Couldn't load the photos just now — please try again in a moment.</div>`;
