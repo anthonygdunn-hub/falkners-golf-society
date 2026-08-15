@@ -70,16 +70,6 @@
       month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()
     };
   }
-  function shortDate(value) {
-    if (!value) return { day: "", month: "" };
-    const d = new Date(value + "T00:00:00");
-    if (isNaN(d.getTime())) return { day: "", month: "" };
-    return {
-      day: d.toLocaleDateString("en-GB", { day: "numeric" }),
-      month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()
-    };
-  }
-
   function prettyDate(value) {
     if (!value) return "";
     const d = new Date(value + "T00:00:00");
