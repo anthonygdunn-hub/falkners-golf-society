@@ -129,14 +129,14 @@ function renderEventResultsCard(event, resultsForEvent) {
   const sorted = [...resultsForEvent].sort((a, b) => Number(b.points) - Number(a.points));
   const bodyHtml = sorted.length
     ? `<table class="score-table">
-        <thead><tr><th>Pos</th><th>Name</th><th class="num">HDCP</th><th class="num">THRU</th><th class="num">NET PTS</th><th class="num">GRS PTS</th></tr></thead>
+        <thead><tr><th>Pos</th><th>Name</th><th class="num">HDCP</th><th class="num">NET PTS</th><th class="num">GRS PTS</th></tr></thead>
         <tbody>
           ${sorted.map((r, i) => `
             <tr class="${i === 0 ? 'pos-1' : ''}">
               <td class="pos"><span class="pos-badge">${i + 1}</span></td>
               <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
               <td class="num">${r.handicap ?? '-'}</td>
-              <td class="num">${r.thru ?? '—'}</td>
+              
               <td class="num">${r.points}</td>              <td class="num">${r.gross_points ?? '—'}</td>
             </tr>`).join("")}
         </tbody>
