@@ -184,21 +184,21 @@ async function refreshGroups(eventId) {
 
 // Names live in two tables, so they're looked up explicitly rather than
 // leaning on an automatic join.
-async function resolveAttendeeNames(rows) {
+function hcapSuffix(h) { return (h === null || h === undefined || h === "") ? "" : " (" + h + ")"; } async function resolveAttendeeNames(rows) {
   const profileIds = rows.map(r => r.profile_id).filter(Boolean);
   const playerIds = rows.map(r => r.player_id).filter(Boolean);
 
   const [profs, plyrs] = await Promise.all([
     profileIds.length
-      ? client.from("profiles").select("id, display_name").in("id", profileIds)
+      ? client.from("profiles").select("id, display_name, handicap").in("id", profileIds)
       : Promise.resolve({ data: [] }),
     playerIds.length
-      ? client.from("players").select("id, name").in("id", playerIds)
+      ? client.from("players").select("id, name, handicap").in("id", playerIds)
       : Promise.resolve({ data: [] })
   ]);
 
-  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name]));
-  const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name]));
+  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name + hcapSuffix(p.handicap)]));
+  const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name + hcapSuffix(p.handicap)]));
 
   return rows.map(r => r.player_id
     ? (playerById.get(r.player_id) || "Player")
