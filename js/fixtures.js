@@ -193,11 +193,11 @@ function hcapSuffix(h) { return (h === null || h === undefined || h === "") ? ""
       ? client.from("profiles").select("id, display_name, handicap").in("id", profileIds)
       : Promise.resolve({ data: [] }),
     playerIds.length
-      ? client.from("players").select("id, name, handicap, profile_id").in("id", playerIds)
+      ? client.from("players").select("id, name, handicap, profile_id").or("id.in.(" + (playerIds.length ? playerIds.join(",") : "00000000-0000-0000-0000-000000000000") + "),profile_id.in.(" + (profileIds.length ? profileIds.join(",") : "00000000-0000-0000-0000-000000000000") + ")")
       : Promise.resolve({ data: [] })
   ]);
 
-  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name + hcapSuffix(p.handicap)]));
+  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name + hcapSuffix(p.handicap != null ? p.handicap : (((plyrs.data || []).find(pl => pl.profile_id === p.id) || {}).handicap))]));
   const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name + hcapSuffix(p.handicap)]));
 
   return rows.filter(r => { if (!r.player_id) return true; const pl = (plyrs.data || []).find(p => p.id === r.player_id); return !(pl && pl.profile_id && profileIds.indexOf(pl.profile_id) !== -1); }).map(r => r.player_id
