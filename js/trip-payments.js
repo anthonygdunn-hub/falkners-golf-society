@@ -88,7 +88,7 @@
       const { data: att } = await client.from("attendance").select("event_id, player_id, profile_id");
          const { data: plyrs } = await client.from("players").select("id, name, profile_id");
 
-      const blocks = events.map(ev => {
+      const withPayments = events.filter(ev => (payments || []).some(p => p.event_id === ev.id)); if (!withPayments.length) { host.innerHTML = ''; return; } const blocks = withPayments.map(ev => {
               const cost = Number(ev.cost) || 0;
               const mine = (payments || []).filter(p => p.event_id === ev.id);
               const paidTotal = mine.reduce((s, p) => s + (Number(p.amount_paid) || 0), 0);
