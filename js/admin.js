@@ -510,7 +510,7 @@ async function refreshPaymentList(eventId) {
   const cost = event?.cost;
 
   const { data: rows, error } = await client
-    .from("attendance")
+    .from("attendance_payments")
     .select("id, profile_id, player_id, payment_status, payment_reference")
     .eq("event_id", eventId)
     .order("created_at", { ascending: true });

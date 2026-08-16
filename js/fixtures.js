@@ -234,7 +234,7 @@ async function renderRegisterControl(eventId) {
   }
 
   const { data: myRow } = await client
-    .from("attendance")
+    .from("attendance_payments")
     .select("id, payment_status, payment_reference")
     .eq("event_id", eventId)
     .eq("profile_id", currentUser.id)
@@ -262,7 +262,8 @@ function drawAttendanceButton(slot, eventId, myRow) {
     } else {
       const myPlayers = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || []; if (myPlayers.length) { await client.from("attendance").delete().eq("event_id", eventId).in("player_id", myPlayers.map(p => p.id)); } const { data, error } = await client.from("attendance")
         .insert({ event_id: eventId, profile_id: currentUser.id })
-        .select("id, payment_status, payment_reference").single();
+        .select("id").single();
+      if (data) { data.payment_status = "unpaid"; data.payment_reference = null; }
       if (error) return showSlotError(slot, error);
       drawAttendanceButton(slot, eventId, data);
     }
