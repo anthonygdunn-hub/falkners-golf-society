@@ -22,7 +22,7 @@
    function cardForHeading(text) {
          var heads = Array.prototype.slice.call(document.querySelectorAll(".admin-shell h3"));
          for (var i = 0; i < heads.length; i++) {
-                 if (heads[i].textContent.trim().toLowerCase() === text.toLowerCase()) return heads[i].closest(".card");
+                 if (heads[i].textContent.trim().toLowerCase() === text.toLowerCase()) return heads[i].closest(".card, .scorecard");
          }
          return null;
    }
@@ -64,7 +64,7 @@
               bar.appendChild(t.button);
       });
 
-      var anchor = document.querySelector(".admin-shell .card") || dashboard.firstChild;
+      var anchor = document.querySelector(".admin-shell .card, .admin-shell .scorecard") || dashboard.firstChild;
          if (anchor && anchor.parentNode) {
                  anchor.parentNode.insertBefore(bar, anchor);
                  anchor.parentNode.insertBefore(panels, anchor);
