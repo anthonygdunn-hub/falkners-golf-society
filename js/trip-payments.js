@@ -112,12 +112,12 @@
                             return "<tr><td>" + escapeHtml(p.players?.name || "Unknown") + "</td>" +
                                           '<td class="num">' + money(paid) + "</td>" +
                                           '<td class="num">' + (cost > paid ? money(cost - paid) : "&ndash;") + "</td>" +
-                                          "<td>" + escapeHtml(s.label) + "</td>" + addCell(p.player_id, ev.id) + "</tr>";
+                                          '<td class="pay-status">' + escapeHtml(s.label) + "</td>" + addCell(p.player_id, ev.id) + "</tr>";
                 }).join("");
 
                                       const owingRows = owing.map(pl =>
                                                 "<tr><td>" + escapeHtml(pl.name) + '</td><td class="num">' + money(0) + "</td>" +
-                                                '<td class="num">' + money(cost) + "</td><td>Registered, nothing paid</td>" + addCell(pl.id, ev.id) + "</tr>").join("");
+                                                '<td class="num">' + money(cost) + "</td><td class=\"pay-status\">Registered, nothing paid</td>" + addCell(pl.id, ev.id) + "</tr>").join("");
 
                                       return '<div class="scorecard" style="margin-top:24px;">' +
                                                 '<div class="scorecard-head"><h3>' + escapeHtml(ev.name) + "</h3>" +
@@ -127,8 +127,8 @@
                                                 "Collected " + money(paidTotal) + " &middot; " + inFull + " paid in full &middot; " +
                                                 partial + " on deposit &middot; " + owing.length + " yet to pay" +
                                                 "</p>" +
-                                                '<div style="overflow-x:auto;"><table class="score-table"><thead><tr><th>Player</th>' +
-                                                '<th class="num">Paid</th><th class="num">Owing</th><th>Status</th><th>Add payment</th></tr></thead>' +
+                                                '<style>#trip-payment-breakdown table.score-table td,#trip-payment-breakdown table.score-table th{white-space:nowrap;}#trip-payment-breakdown table.score-table td:first-child{white-space:normal;min-width:110px;}#trip-payment-breakdown .pay-status{white-space:nowrap;}@media (max-width:640px){#trip-payment-breakdown .pay-status{display:none;}#trip-payment-breakdown table.score-table{font-size:13px;}#trip-payment-breakdown input[data-amt]{width:64px !important;}}</style><div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="score-table" style="min-width:100%;"><thead><tr><th>Player</th>' +
+                                                '<th class="num">Paid</th><th class="num">Owing</th><th class=\"pay-status\">Status</th><th>Add payment</th></tr></thead>' +
                                                 "<tbody>" + rows + owingRows + "</tbody></table></div></div></div>";
       }).join("");
 
