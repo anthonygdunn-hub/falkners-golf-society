@@ -154,4 +154,4 @@ function addMembersLink() {
 
 
 /* Load the back to top button on every page that has the nav. */
-document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/back-to-top.js?v=2026-08-16" }));
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/back-to-top.js?v=2026-08-16b" }));
