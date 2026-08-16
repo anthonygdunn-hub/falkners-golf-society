@@ -132,7 +132,7 @@
                                                 "<tbody>" + rows + owingRows + "</tbody></table></div></div></div>";
       }).join("");
 
-      host.innerHTML = blocks; if (!host.dataset.wired) { host.dataset.wired = "1"; host.addEventListener("click", async (e) => { const btn = e.target.closest("[data-add]"); if (!btn) return; const key = btn.getAttribute("data-add"); const parts = key.split("|"); const box = host.querySelector('[data-amt="' + key + '"]'); const amount = Number(box && box.value); if (!amount || amount <= 0) { if (box) box.focus(); return; } btn.disabled = true; btn.textContent = "Saving"; const s = await client.auth.getSession(); const uid = s && s.data && s.data.session ? s.data.session.user.id : null; const res = await client.from("payment_entries").insert({ event_id: parts[1], player_id: parts[0], amount: amount, recorded_by: uid }); if (res.error) { btn.disabled = false; btn.textContent = "Add"; alert("Could not save that payment: " + res.error.message); return; } await renderAdmin(client); }); }
+      host.innerHTML = blocks; if (!host.dataset.wired) { host.dataset.wired = "1"; host.addEventListener("click", async (e) => { const btn = e.target.closest("[data-add]"); if (!btn) return; const key = btn.getAttribute("data-add"); const parts = key.split("|"); const box = host.querySelector('[data-amt="' + key + '"]'); const amount = Number(box && box.value); if (!amount || amount <= 0) { if (box) box.focus(); return; } btn.disabled = true; btn.textContent = "Saving"; const s = await client.auth.getSession(); const uid = s && s.data && s.data.session ? s.data.session.user.id : null; const res = await client.from("payment_entries").insert({ event_id: parts[1], player_id: parts[0], amount: amount, recorded_by: uid }); if (res.error) { btn.disabled = false; btn.textContent = "Add"; alert("Could not save that payment: " + res.error.message); return; } await renderAdmin(client); setTimeout(function () { renderAdmin(client); }, 2500); setTimeout(function () { renderAdmin(client); }, 6000); }); }
    }
 
    async function start() {
@@ -141,7 +141,7 @@
          const { data: { session } } = await client.auth.getSession();
          if (!session) { window.__tpTries = (window.__tpTries || 0) + 1; if (window.__tpTries < 15) setTimeout(start, 1000); return; }
          await renderMine(client, session);
-         await renderAdmin(client);
+         await renderAdmin(client); setTimeout(function () { renderAdmin(client); }, 2500); setTimeout(function () { renderAdmin(client); }, 6000);
    }
 
    if (document.readyState === "loading") {
