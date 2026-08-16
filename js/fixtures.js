@@ -134,7 +134,11 @@ async function refreshAttendees(eventId) {
   }
 
   if (!rows.length) {
-    slot.innerHTML = `<p class="small">Nobody's registered yet — be the first!</p>`;
+    const item = slot.closest(".fixture-item");
+    const isPast = item && item.dataset.past === "true";
+    slot.innerHTML = isPast
+      ? `<p class="small">This round has been completed.</p>`
+      : `<p class="small">Nobody's registered yet — be the first!</p>`;
     return;
   }
 
