@@ -182,7 +182,7 @@ async function refreshGroupList(eventId) {
   const [{ data: attendance, error }, { data: groups }] = await Promise.all([
     client.from("attendance").select("profile_id, player_id")
       .eq("event_id", eventId).order("created_at", { ascending: true }),
-    client.from("groupings").select("profile_id, player_id, group_number")
+    client.from("groupings").select("profile_id, player_id, group_number").eq("group_type", "fours")
       .eq("event_id", eventId)
   ]);
 
@@ -244,7 +244,7 @@ async function saveGroups() {
       event_id: eventId,
       profile_id: input.dataset.profileId || null,
       player_id: input.dataset.playerId || null,
-      group_number: Number(input.value),
+      group_number: Number(input.value), group_type: "fours",
       position: i
     }));
 
@@ -254,7 +254,7 @@ async function saveGroups() {
   // Rewritten wholesale rather than patched row by row: it's one draw,
   // and clearing it out first means removing somebody from a group
   // works the same way as moving them.
-  const { error: clearErr } = await client.from("groupings").delete().eq("event_id", eventId);
+  const { error: clearErr } = await client.from("groupings").delete().eq("event_id", eventId).eq("group_type", "fours");
   if (clearErr) {
     statusEl.textContent = clearErr.message;
     statusEl.className = "status-msg err";
