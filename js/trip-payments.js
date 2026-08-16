@@ -139,7 +139,7 @@
          if (!window.supabase || typeof SUPABASE_URL === "undefined") return;
          const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
          const { data: { session } } = await client.auth.getSession();
-         if (!session) return;
+         if (!session) { window.__tpTries = (window.__tpTries || 0) + 1; if (window.__tpTries < 15) setTimeout(start, 1000); return; }
          await renderMine(client, session);
          await renderAdmin(client);
    }
