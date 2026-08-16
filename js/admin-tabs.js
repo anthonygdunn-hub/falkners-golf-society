@@ -22,7 +22,7 @@
    function cardForHeading(text) {
          var heads = Array.prototype.slice.call(document.querySelectorAll(".admin-shell h3"));
          for (var i = 0; i < heads.length; i++) {
-                 if (heads[i].textContent.trim().toLowerCase() === text.toLowerCase()) return heads[i].closest(".card, .scorecard");
+                 if (heads[i].textContent.trim().toLowerCase() === text.toLowerCase()) var scoped = heads[i].closest("#trip-payment-breakdown"); return scoped || heads[i].closest(".card, .scorecard");
          }
          return null;
    }
