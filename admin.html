@@ -227,8 +227,12 @@
           <label for="pay-event-select">Fixture</label>
           <select id="pay-event-select"></select>
         </div>
-        <div id="trip-payment-breakdown"></div><div id="trip-payment-breakdown"></div><div id="payment-list"><p class="small">Loading&hellip;</p></div>
+        <div id="payment-list"><p class="small">Loading&hellip;</p></div>
       </div>
+
+      <!-- Trip payments render here. Kept outside the Money card so the tab bar
+           can show and hide the Ryder Cup section independently. -->
+      <div id="trip-payment-breakdown"></div>
 
       <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
         <div class="card">
