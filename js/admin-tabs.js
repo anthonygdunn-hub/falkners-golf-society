@@ -106,7 +106,7 @@
          show(valid ? saved : "results");
 
       var ticks = 0;
-         var timer = setInterval(function () { relabel(); if (++ticks > 20) clearInterval(timer); }, 1000);
+         var timer = setInterval(function () { var missing = false; TABS.forEach(function (t) { t.headings.forEach(function (h) { var c = cardForHeading(h); if (c && !t.panel.contains(c)) missing = true; }); }); if (missing) { TABS.forEach(function (t) { t.cards = []; t.headings.forEach(function (h) { var c = cardForHeading(h); if (c) { t.panel.appendChild(c); t.cards.push(c); } }); }); TABS.forEach(function (t) { if (t.button.getAttribute("aria-pressed") !== "true") t.panel.style.display = "none"; }); } relabel(); if (++ticks > 20) clearInterval(timer); }, 1000);
          return true;
    }
 
