@@ -13,10 +13,10 @@
     window.__fgsAdminTabs = true;
     var STORE_KEY = "fgs-admin-tab";
     var TABS = [
-      { id: "results", label: "Results", headings: ["Enter results", "Round prizes", "Order of Merit"] },
+      { id: "requests", label: "Requests", headings: ["Pending member requests"] }, { id: "results", label: "Results", headings: ["Enter results", "Round prizes", "Order of Merit"] },
       { id: "fixtures", label: "Fixtures", headings: ["Edit a fixture", "Add a fixture", "Who's playing", "Tee groups", "Pairs"] },
       { id: "money", label: "Money", headings: ["Payments", "Hole in one pot"] },
-      { id: "people", label: "People", headings: ["Pending member requests", "Add a player", "Link member accounts to players", "Photos awaiting approval"] }
+      { id: "people", label: "People", headings: ["Add a player", "Link member accounts to players", "Photos awaiting approval"] }
         ];
 
    function cardForHeading(text) {
