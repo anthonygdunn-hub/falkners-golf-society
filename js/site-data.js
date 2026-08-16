@@ -178,7 +178,7 @@ function renderFixtureItem(event, opts = {}) {
           <span class="fixture-date"><strong>${day}</strong>${month}</span>
           <span class="fixture-body">
             <span class="fixture-title">${title}</span>
-            <span class="venue">${venueLine}</span>
+            <span class="venue">${venueLine}${event.playerCount != null ? ' &middot; ' + event.playerCount + (event.playerCount === 1 ? ' player' : ' players') : ''}</span>
           </span>
           <span class="fixture-chevron" aria-hidden="true">&rsaquo;</span>
         </a>
@@ -193,7 +193,7 @@ function renderFixtureItem(event, opts = {}) {
         <span class="fixture-date"><strong>${day}</strong>${month}</span>
         <span class="fixture-body">
           <span class="fixture-title">${title}</span>
-          <span class="venue">${venueLine}</span>
+          <span class="venue">${venueLine}${event.playerCount != null ? ' &middot; ' + event.playerCount + (event.playerCount === 1 ? ' player' : ' players') : ''}</span>
         </span>
         <span class="fixture-chevron" aria-hidden="true">&#9662;</span>
       </button>
