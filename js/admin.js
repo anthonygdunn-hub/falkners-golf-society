@@ -148,7 +148,7 @@ async function refreshData() {
     client.from("events").select("*").order("event_date", { ascending: false })
   ]);
   currentPlayers = players || [];
-  currentEvents = events || []; eventList = currentEvents;
+  currentEvents = events || []; eventList = currentEvents; eventList = currentEvents;
 
   populateEventSelect();
   populateEditEventSelect();
