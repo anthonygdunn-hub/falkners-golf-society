@@ -151,3 +151,7 @@ function addMembersLink() {
   const profile = document.getElementById("nav-my-profile");
   nav.insertBefore(li, profile || null);
 }
+
+
+/* Load the back to top button on every page that has the nav. */
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/back-to-top.js" }));
