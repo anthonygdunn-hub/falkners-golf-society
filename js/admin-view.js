@@ -37,12 +37,24 @@
    }
 
    function tagSections() {
-         TABS.forEach(function (t) {
-                 t.headings.forEach(function (h) {
-                           var el = sectionFor(h);
-                           if (el && el.getAttribute("data-admin-tab") !== t.id) el.setAttribute("data-admin-tab", t.id);
-                 });
-         });
+   	TABS.forEach(function (t) {
+   		t.headings.forEach(function (h) {
+   			var el = sectionFor(h);
+   			if (el && el.getAttribute("data-admin-tab") !== t.id) el.setAttribute("data-admin-tab", t.id);
+   		});
+   	});
+
+   	// A tagged section nested inside a section belonging to a different tab can
+   	// never be shown - its parent gets display:none and takes the child with it.
+   	// Lift any such section up to the dashboard so the tab bar controls it directly.
+   	var dash = document.getElementById("dashboard");
+   	if (!dash) return;
+   	Array.prototype.slice.call(document.querySelectorAll("[data-admin-tab]")).forEach(function (el) {
+   		var owner = el.parentElement && el.parentElement.closest("[data-admin-tab]");
+   		if (owner && owner.getAttribute("data-admin-tab") !== el.getAttribute("data-admin-tab")) {
+   			dash.appendChild(el);
+   		}
+   	});
    }
 
    function apply() {

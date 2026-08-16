@@ -33,6 +33,14 @@
          return { label: money(paid) + " paid - " + money(cost - paid) + " remaining", tone: "" };
    }
 
+    // Short form for the admin table, where the Owing column already shows the detail.
+    function shortStatus(paid, cost) {
+         if (!cost) return "Paid " + money(paid);
+         if (paid <= 0) return "Not paid";
+         if (paid >= cost) return "Paid in full";
+         return "Deposit";
+    }
+
    // ---- My Account: the member's own balance --------------------------
    async function renderMine(client, session) {
          const host = document.getElementById("my-trip-payments");
@@ -112,14 +120,14 @@
                             return "<tr><td>" + escapeHtml(p.players?.name || "Unknown") + "</td>" +
                                           '<td class="num">' + money(paid) + "</td>" +
                                           '<td class="num">' + (cost > paid ? money(cost - paid) : "&ndash;") + "</td>" +
-                                          '<td class="pay-status">' + escapeHtml(s.label) + "</td>" + addCell(p.player_id, ev.id) + "</tr>";
+                                          '<td class="pay-cell"><span class="pay-status' + (s.tone === "ok" ? " is-confirmed" : s.tone === "err" ? " is-claimed" : "") + '">' + escapeHtml(shortStatus(paid, cost)) + "</span></td>" + addCell(p.player_id, ev.id) + "</tr>";
                 }).join("");
 
                                       const owingRows = owing.map(pl =>
                                                 "<tr><td>" + escapeHtml(pl.name) + '</td><td class="num">' + money(0) + "</td>" +
-                                                '<td class="num">' + money(cost) + "</td><td class=\"pay-status\">Registered, nothing paid</td>" + addCell(pl.id, ev.id) + "</tr>").join("");
+                                                '<td class="num">' + money(cost) + "</td><td class=\"pay-cell\"><span class=\"pay-status is-claimed\">Not paid</span></td>" + addCell(pl.id, ev.id) + "</tr>").join("");
 
-                                      return '<div class="scorecard" style="margin-top:24px;">' +
+                                      return '<div class="scorecard trip-card" style="margin-top:24px;">' +
                                                 '<div class="scorecard-head"><h3>' + escapeHtml(ev.name) + "</h3>" +
                                                 '<span class="meta">' + money(cost) + " per player</span></div>" +
                                                 '<div style="padding:16px;">' +
@@ -127,8 +135,8 @@
                                                 "Collected " + money(paidTotal) + " &middot; " + inFull + " paid in full &middot; " +
                                                 partial + " on deposit &middot; " + owing.length + " yet to pay" +
                                                 "</p>" +
-                                                '<style>#trip-payment-breakdown table.score-table td,#trip-payment-breakdown table.score-table th{white-space:nowrap;}#trip-payment-breakdown table.score-table td:first-child{white-space:normal;min-width:110px;}#trip-payment-breakdown .pay-status{display:none;}#trip-payment-breakdown table.score-table td:first-child{min-width:0;}#trip-payment-breakdown table.score-table th,#trip-payment-breakdown table.score-table td{padding:8px 10px;}@media (max-width:640px){#trip-payment-breakdown .pay-status{display:none;}#trip-payment-breakdown table.score-table{font-size:12px;}#trip-payment-breakdown table.score-table th,#trip-payment-breakdown table.score-table td{padding:6px 4px;}#trip-payment-breakdown table.score-table td:first-child{min-width:0;font-size:12px;}#trip-payment-breakdown input[data-amt]{width:52px !important;padding:3px 4px;font-size:12px;}#trip-payment-breakdown button[data-add]{padding:3px 7px !important;font-size:11px;}}</style><div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="score-table" style="min-width:100%;"><thead><tr><th>Player</th>' +
-                                                '<th class="num">Paid</th><th class="num">Owing</th><th class=\"pay-status\">Status</th><th>Add payment</th></tr></thead>' +
+                                                '<style>' + '.trip-card table.score-table th,.trip-card table.score-table td{padding:8px 12px;white-space:nowrap;}' + '.trip-card table.score-table th:first-child,.trip-card table.score-table td:first-child{white-space:normal;}' + '.trip-card td.pay-cell .pay-status{white-space:nowrap;}' + '@media (max-width:700px){' + '.trip-card th.pay-cell,.trip-card td.pay-cell{display:none;}' + '.trip-card table.score-table{font-size:12px;}' + '.trip-card table.score-table th,.trip-card table.score-table td{padding:6px 6px;}' + '.trip-card input[data-amt]{width:56px !important;padding:3px 4px;font-size:12px;}' + '.trip-card button[data-add]{padding:3px 7px !important;font-size:11px;}' + '}</style><div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table class="score-table" style="min-width:100%;"><thead><tr><th>Player</th>' +
+                                                '<th class="num">Paid</th><th class="num">Owing</th><th class=\"pay-cell\">Status</th><th>Add payment</th></tr></thead>' +
                                                 "<tbody>" + rows + owingRows + "</tbody></table></div></div></div>";
       }).join("");
 
