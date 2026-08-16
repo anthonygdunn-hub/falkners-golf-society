@@ -25,7 +25,7 @@
          return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
    }
 
-   // One line describing where a person stands.
+   // An amount box and Add button, so the committee can log an instalment. function addCell(playerId, eventId) { const key = playerId + "|" + eventId; return '<td style="white-space:nowrap;"><input type="number" min="0" step="1" placeholder="0" aria-label="Amount paid" data-amt="' + key + '" style="width:80px; padding:4px 6px;"> <button type="button" class="btn btn-outline" data-add="' + key + '" style="padding:4px 10px;">Add</button></td>'; } // One line describing where a person stands.
    function statusFor(paid, cost) {
          if (!cost) return { label: "Paid " + money(paid), tone: "" };
          if (paid <= 0) return { label: "Nothing paid yet - " + money(cost) + " due", tone: "err" };
@@ -112,12 +112,12 @@
                             return "<tr><td>" + escapeHtml(p.players?.name || "Unknown") + "</td>" +
                                           '<td class="num">' + money(paid) + "</td>" +
                                           '<td class="num">' + (cost > paid ? money(cost - paid) : "&ndash;") + "</td>" +
-                                          "<td>" + escapeHtml(s.label) + "</td></tr>";
+                                          "<td>" + escapeHtml(s.label) + "</td>" + addCell(p.player_id, ev.id) + "</tr>";
                 }).join("");
 
                                       const owingRows = owing.map(pl =>
                                                 "<tr><td>" + escapeHtml(pl.name) + '</td><td class="num">' + money(0) + "</td>" +
-                                                '<td class="num">' + money(cost) + "</td><td>Registered, nothing paid</td></tr>").join("");
+                                                '<td class="num">' + money(cost) + "</td><td>Registered, nothing paid</td>" + addCell(pl.id, ev.id) + "</tr>").join("");
 
                                       return '<div class="scorecard" style="margin-top:24px;">' +
                                                 '<div class="scorecard-head"><h3>' + escapeHtml(ev.name) + "</h3>" +
@@ -128,11 +128,11 @@
                                                 partial + " on deposit &middot; " + owing.length + " yet to pay" +
                                                 "</p>" +
                                                 '<div style="overflow-x:auto;"><table class="score-table"><thead><tr><th>Player</th>' +
-                                                '<th class="num">Paid</th><th class="num">Owing</th><th>Status</th></tr></thead>' +
+                                                '<th class="num">Paid</th><th class="num">Owing</th><th>Status</th><th>Add payment</th></tr></thead>' +
                                                 "<tbody>" + rows + owingRows + "</tbody></table></div></div></div>";
       }).join("");
 
-      host.innerHTML = blocks;
+      host.innerHTML = blocks; if (!host.dataset.wired) { host.dataset.wired = "1"; host.addEventListener("click", async (e) => { const btn = e.target.closest("[data-add]"); if (!btn) return; const key = btn.getAttribute("data-add"); const parts = key.split("|"); const box = host.querySelector('[data-amt="' + key + '"]'); const amount = Number(box && box.value); if (!amount || amount <= 0) { if (box) box.focus(); return; } btn.disabled = true; btn.textContent = "Saving"; const s = await client.auth.getSession(); const uid = s && s.data && s.data.session ? s.data.session.user.id : null; const res = await client.from("payment_entries").insert({ event_id: parts[1], player_id: parts[0], amount: amount, recorded_by: uid }); if (res.error) { btn.disabled = false; btn.textContent = "Add"; alert("Could not save that payment: " + res.error.message); return; } await renderAdmin(client); }); }
    }
 
    async function start() {
