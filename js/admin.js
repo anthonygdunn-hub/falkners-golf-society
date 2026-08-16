@@ -311,13 +311,13 @@ async function saveLeagueSettings(e) {
 
 // Every "pick a fixture" dropdown on this page is the same list, so
 // they're filled from one place rather than four near-identical copies.
-function fillEventSelect(id, { includeBlank = false } = {}) {
+function fillEventSelect(id, { includeBlank = false, onlyRounds = false } = {}) { const eventList = onlyRounds ? currentEvents.filter(e => !e.is_trip) : currentEvents;
   const select = document.getElementById(id);
   if (!select) return null;
   const previous = select.value;
   select.innerHTML =
     (includeBlank ? `<option value="">Not tied to a round</option>` : "") +
-    currentEvents.map(e =>
+    eventList.map(e =>
       `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
     ).join("");
   if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
@@ -404,7 +404,7 @@ async function refreshPot() {
   const total = (rows || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
   totalEl.textContent = money(total);
 
-  const nameById = new Map(currentEvents.map(e => [e.id, e.name]));
+  const nameById = new Map(eventList.map(e => [e.id, e.name]));
 
   listEl.innerHTML = rows.length
     ? rows.map(r => {
@@ -496,7 +496,7 @@ async function saveBankDetails(e) {
 }
 
 function populatePaymentEventSelect() {
-  const select = fillEventSelect("pay-event-select");
+  const select = fillEventSelect("pay-event-select", { onlyRounds: true });
   if (!select) return;
   select.onchange = () => refreshPaymentList(select.value);
   if (currentEvents.length) refreshPaymentList(select.value);
@@ -592,7 +592,7 @@ function populatePlayingEventSelect() {
   if (!select) return;
 
   const previous = select.value;
-  select.innerHTML = currentEvents.map(e =>
+  select.innerHTML = eventList.map(e =>
     `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
   ).join("");
   if (previous && currentEvents.some(e => e.id === previous)) select.value = previous;
@@ -728,7 +728,7 @@ function populateEditEventSelect() {
   if (!select) return;
 
   const previous = select.value;
-  select.innerHTML = currentEvents.map(e =>
+  select.innerHTML = eventList.map(e =>
     `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
   ).join("");
 
@@ -804,7 +804,7 @@ async function saveEventEdits(e) {
 
 function populateEventSelect() {
   const select = document.getElementById("event-select");
-  select.innerHTML = currentEvents.map(e =>
+  select.innerHTML = eventList.map(e =>
     `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date} — ${escapeHtml(e.venue || 'Venue TBC')}</option>`
   ).join("");
   if (currentEvents.length) loadResultsFormFor(currentEvents[0].id);
