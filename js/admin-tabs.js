@@ -83,7 +83,7 @@
               try { localStorage.setItem(STORE_KEY, id); } catch (e) {}
       }
 
-      function relabel() {
+      function relabel() { var rc = document.getElementById("trip-payment-breakdown"); var rp = document.getElementById("admin-panel-ryder"); if (rc && rp && !rp.contains(rc)) rp.appendChild(rc);
               TABS.forEach(function (t) {
                         var waiting = t.cards.reduce(function (n, c) { return n + pendingCount(c); }, 0);
                         t.button.textContent = waiting ? t.label + " (" + waiting + ")" : t.label;
@@ -106,7 +106,7 @@
          show(valid ? saved : "results");
 
       var ticks = 0;
-         var timer = setInterval(function () { var missing = false; TABS.forEach(function (t) { t.headings.forEach(function (h) { var c = cardForHeading(h); if (c && !t.panel.contains(c)) missing = true; }); }); if (missing) { TABS.forEach(function (t) { t.cards = []; t.headings.forEach(function (h) { var c = cardForHeading(h); if (c) { t.panel.appendChild(c); t.cards.push(c); } }); }); TABS.forEach(function (t) { if (t.button.getAttribute("aria-pressed") !== "true") t.panel.style.display = "none"; }); } relabel(); if (++ticks > 20) clearInterval(timer); }, 1000);
+         var timer = setInterval(function () { var missing = false; TABS.forEach(function (t) { t.headings.forEach(function (h) { var c = cardForHeading(h); if (c && !t.panel.contains(c)) missing = true; }); }); if (missing) { TABS.forEach(function (t) { t.cards = []; t.headings.forEach(function (h) { var c = cardForHeading(h); if (c) { t.panel.appendChild(c); t.cards.push(c); } }); }); TABS.forEach(function (t) { if (t.button.getAttribute("aria-pressed") !== "true") t.panel.style.display = "none"; }); } relabel(); if (++ticks > 60) clearInterval(timer); }, 1000);
          return true;
    }
 
