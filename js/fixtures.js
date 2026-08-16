@@ -58,7 +58,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
-  events.forEach(e => eventsById.set(e.id, e)); try { const att = (await client.from("attendance").select("event_id, player_id, profile_id")).data || []; const plyrs = (await client.from("players").select("id, profile_id")).data || []; events.forEach(e => { const seen = new Set(); att.filter(a => a.event_id === e.id).forEach(a => { let key = a.profile_id; if (!key && a.player_id) { const pl = plyrs.find(p => p.id === a.player_id); key = (pl && pl.profile_id) ? pl.profile_id : "p:" + a.player_id; } if (key) seen.add(key); }); e.playerCount = seen.size; }); } catch (countErr) { console.error(countErr); }
+  events.forEach(e => eventsById.set(e.id, e)); try { const att = (await client.from("attendance").select("event_id, player_id, profile_id")).data || []; const plyrs = (await client.from("players").select("id, profile_id")).data || []; events.forEach(e => { const seen = new Set(); att.filter(a => a.event_id === e.id).forEach(a => { let key = a.profile_id; if (!key && a.player_id) { const pl = plyrs.find(p => p.id === a.player_id); key = (pl && pl.profile_id) ? pl.profile_id : "p:" + a.player_id; } if (key) seen.add(key); }); const played = results.filter(r => r.event_id === e.id).length; e.playerCount = played > 0 ? played : seen.size; }); } catch (countErr) { console.error(countErr); }
 
   const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date));
   listEl.innerHTML = sorted.length
