@@ -154,7 +154,7 @@ async function refreshGroups(eventId) {
 
   const { data: rows, error } = await client
     .from("groupings")
-    .select("profile_id, player_id, group_number, position")
+    .select("profile_id, player_id, group_number, position, group_type")
     .eq("event_id", eventId)
     .order("group_number", { ascending: true });
 
@@ -163,13 +163,13 @@ async function refreshGroups(eventId) {
   const names = await resolveAttendeeNames(rows);
 
   const byGroup = new Map();
-  rows.forEach((r, i) => {
+  rows.forEach((r, i) => { if ((r.group_type || "fours") !== "fours") return;
     const n = r.group_number;
     if (!byGroup.has(n)) byGroup.set(n, []);
     byGroup.get(n).push(names[i]);
   });
 
-  const groups = [...byGroup.entries()].sort((a, b) => a[0] - b[0]);
+  const groups = [...byGroup.entries()].sort((a, b) => a[0] - b[0]); const byPair = new Map(); rows.forEach((r, i) => { if (r.group_type !== "pairs") return; if (!byPair.has(r.group_number)) byPair.set(r.group_number, []); byPair.get(r.group_number).push(names[i]); }); const pairs = [...byPair.entries()].sort((a, b) => a[0] - b[0]); const pairsHtml = pairs.length ? '<div class="fixture-section-label" style="margin-top:16px;">Pairs</div><div class="tee-groups">' + pairs.map(function (p) { return '<div class="tee-group"><span class="tee-group-label">Pair ' + p[0] + '</span><span>' + p[1].map(escapeHtml).join(", ") + '</span></div>'; }).join("") + '</div>' : "";
 
   slot.innerHTML = `
     <div class="fixture-section-label">Tee groups</div>
@@ -179,7 +179,7 @@ async function refreshGroups(eventId) {
           <span class="tee-group-label">Group ${number}</span>
           <span>${players.map(escapeHtml).join(", ")}</span>
         </div>`).join("")}
-    </div>`;
+    </div>${pairsHtml}`;
 }
 
 // Names live in two tables, so they're looked up explicitly rather than
