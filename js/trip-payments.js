@@ -25,7 +25,7 @@
          return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
    }
 
-   // An amount box and Add button, so the committee can log an instalment. function addCell(playerId, eventId) { const key = playerId + "|" + eventId; return '<td style="white-space:nowrap;"><input type="number" min="0" step="1" placeholder="0" aria-label="Amount paid" data-amt="' + key + '" style="width:80px; padding:4px 6px;"> <button type="button" class="btn btn-outline" data-add="' + key + '" style="padding:4px 10px;">Add</button></td>'; } // One line describing where a person stands.
+   function addCell(playerId, eventId) { const key = playerId + "|" + eventId; return '<td style="white-space:nowrap;"><input type="number" min="0" step="1" placeholder="0" aria-label="Amount paid" data-amt="' + key + '" style="width:80px; padding:4px 6px;"> <button type="button" class="btn btn-outline" data-add="' + key + '" style="padding:4px 10px;">Add</button></td>'; } // One line describing where a person stands.
    function statusFor(paid, cost) {
          if (!cost) return { label: "Paid " + money(paid), tone: "" };
          if (paid <= 0) return { label: "Nothing paid yet - " + money(cost) + " due", tone: "err" };
