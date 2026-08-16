@@ -547,12 +547,12 @@ async function refreshPaymentList(eventId) {
       const label = status === "confirmed" ? "Confirmed" : status === "claimed" ? "Says they've paid" : "Unpaid";
       const cls = status === "confirmed" ? "is-confirmed" : status === "claimed" ? "is-claimed" : "";
       return `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
-          <span>${escapeHtml(name)}
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line);">
+          <span style="flex:1 1 auto; min-width:0;">${escapeHtml(name)}
             <span class="pay-status ${cls}">${label}</span>
-            ${r.payment_reference ? `<span class="small pay-ref">${escapeHtml(r.payment_reference)}</span>` : ""}
+            ${r.payment_reference ? `<span class="small pay-ref" style="display:block; margin-top:2px;">${escapeHtml(r.payment_reference)}</span>` : ""}
           </span>
-          <span>
+          <span style="flex:0 0 auto;">
             ${status === "confirmed"
               ? `<button class="btn btn-outline btn-small" type="button" data-pay-set="unpaid" data-pay-id="${r.id}">Undo</button>`
               : `<button class="btn btn-brass btn-small" type="button" data-pay-set="confirmed" data-pay-id="${r.id}">Confirm payment</button>`}
