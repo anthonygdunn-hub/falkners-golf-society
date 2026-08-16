@@ -39,18 +39,18 @@
          if (!host || !session) return;
 
       const { data: rows, error } = await client
-           .from("event_payments")
-           .select("amount_paid, events(name, event_date, cost)");
+           .from("payment_entries")
+           .select("amount, paid_on, note, events(name, event_date, cost)");
 
       if (error) { host.innerHTML = ""; return; }
          if (!rows || !rows.length) { host.innerHTML = ""; return; }
 
-      const cards = rows
-           .filter(r => r.events)
+      const byTrip = {}; rows .forEach(r => { const k = r.events.name; if (!byTrip[k]) byTrip[k] = { events: r.events, amount_paid: 0, history: [] }; byTrip[k].amount_paid += Number(r.amount) || 0; byTrip[k].history.push(r); }); const cards = Object.values(byTrip)
+            
            .sort((a, b) => (a.events.event_date || "").localeCompare(b.events.event_date || ""))
            .map(r => {
                      const cost = Number(r.events.cost) || 0;
-                     const paid = Number(r.amount_paid) || 0;
+                     const paid = Number(r.amount_paid) || 0; const hist = (r.history || []).length > 1 ? '<br><span class="small" style="opacity:.7;">' + r.history.length + ' payments' + '</span>' : '';
                      const s = statusFor(paid, cost);
                      return '<li class="fixture-item"><div style="padding:14px 16px;"><strong>' +
                                  escapeHtml(r.events.name) + '</strong><br><span class="small">' +
@@ -78,7 +78,7 @@
       }
 
       const { data: payments, error } = await client
-           .from("event_payments").select("event_id, player_id, amount_paid, players(name)");
+           .from("payment_entries").select("event_id, player_id, amount, paid_on, note, players(name)");
 
       if (error) {
               host.innerHTML = '<div class="empty-state">Could not load payments just now.</div>';
@@ -90,7 +90,7 @@
 
       const withPayments = events.filter(ev => (payments || []).some(p => p.event_id === ev.id)); if (!withPayments.length) { host.innerHTML = ''; return; } const blocks = withPayments.map(ev => {
               const cost = Number(ev.cost) || 0;
-              const mine = (payments || []).filter(p => p.event_id === ev.id);
+              const grouped = {}; (payments || []).filter(p => p.event_id === ev.id).forEach(p => { const k = p.player_id; if (!grouped[k]) grouped[k] = { player_id: k, players: p.players, amount_paid: 0, entries: [] }; grouped[k].amount_paid += Number(p.amount) || 0; grouped[k].entries.push(p); }); const mine = Object.values(grouped);
               const paidTotal = mine.reduce((s, p) => s + (Number(p.amount_paid) || 0), 0);
               const inFull = mine.filter(p => Number(p.amount_paid) >= cost).length;
               const partial = mine.filter(p => Number(p.amount_paid) > 0 && Number(p.amount_paid) < cost).length;
