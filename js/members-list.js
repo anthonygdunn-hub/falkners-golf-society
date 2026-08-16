@@ -113,7 +113,7 @@
           : "";
 
     const facts = [];
-     facts.push(["Handicap", m.handicap != null ? String(m.handicap) : "Not set"]);
+     facts.push(["Handicap", m.handicap != null ? String(m.handicap) : "Not set"]); if (m.england_golf_id) facts.push(["England Golf ID", String(m.england_golf_id)]);
      if (m.role === "committee") facts.push(["Role", "Committee member"]);
      if (m.member_since) facts.push(["Member since", formatJoined(m.member_since)]);
 
