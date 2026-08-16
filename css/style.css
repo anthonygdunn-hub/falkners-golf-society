@@ -823,14 +823,14 @@ tr.pos-1 .pos-badge { background: var(--gold); border-color: var(--gold); color:
 
 @media (max-width: 470px) {
   /* Drop Rounds / Gross first — it's the most expendable of the five. */
-  table.score-table th:nth-child(4),
-  table.score-table td:nth-child(4) { display: none; }
+  table.score-table th:nth-child(99),
+  table.score-table td:nth-child(99) { display: none; }
 }
 
 @media (max-width: 380px) {
   /* Very narrow: handicap goes too, leaving Pos / Name / Points. */
-  table.score-table th:nth-child(3),
-  table.score-table td:nth-child(3) { display: none; }
+  table.score-table th:nth-child(98),
+  table.score-table td:nth-child(98) { display: none; }
 }
 
 /* Long names shouldn't force the table wider than the screen. */
