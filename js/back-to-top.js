@@ -30,7 +30,9 @@
                                                                  + "#back-to-top:hover{background:var(--navy-dark, #10233F);}"
                                                                        + "#back-to-top:focus-visible{outline:2px solid var(--gold, #B8923C);outline-offset:3px;}"
                                                                              + "@media (max-width:640px){#back-to-top{font-size:12px;padding:9px 16px;bottom:calc(12px + env(safe-area-inset-bottom, 0px));}}"
-                                                                                   + "@media (prefers-reduced-motion:reduce){#back-to-top{transition:none;}}";
+                                                                                   + ".site-footer{padding-bottom:calc(90px + env(safe-area-inset-bottom, 0px));}"
++ "@media (max-width:640px){.site-footer{padding-bottom:calc(82px + env(safe-area-inset-bottom, 0px));}}"
++ "@media (prefers-reduced-motion:reduce){#back-to-top{transition:none;}}";
                                                                                        document.head.appendChild(css);
 
                                                                                            var btn = document.createElement("button");
