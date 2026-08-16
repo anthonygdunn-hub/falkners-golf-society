@@ -8,7 +8,7 @@
 
 let client;
 let currentPlayers = [];
-let currentEvents = [];
+let currentEvents = []; let eventList = [];
 
 document.addEventListener("DOMContentLoaded", () => {
   client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -148,7 +148,7 @@ async function refreshData() {
     client.from("events").select("*").order("event_date", { ascending: false })
   ]);
   currentPlayers = players || [];
-  currentEvents = events || [];
+  currentEvents = events || []; eventList = currentEvents;
 
   populateEventSelect();
   populateEditEventSelect();
