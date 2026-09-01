@@ -149,9 +149,17 @@ async function refreshAttendees(eventId) {
     .join("")}</div>`;
 }
 
-// The tee draw, once the committee has posted it. Nothing shows at all
-// until they have, so an ungrouped round just looks like a normal one
-// rather than showing an empty "Groups" heading.
+/* The tee draw and the pairs draw, both read from the same groupings
+   table and told apart by group_type. Nothing shows at all until the
+   committee has posted a draw, so an ungrouped round just looks like a
+   normal one rather than carrying an empty heading, and a round with
+   pairs but no tee draw shows only the pairs.
+
+   Each group is a card with the names stacked underneath, and the cards
+   sit side by side across the fixture, so a four is read down a column
+   rather than along a line. A player may appear in two pairs on an odd
+   turnout, which needs nothing special here: rows are grouped by number
+   and whoever is in a group is listed. */
 async function refreshGroups(eventId) {
   const slot = document.querySelector(`[data-groups-for="${eventId}"]`);
   if (!slot) return;
@@ -166,24 +174,30 @@ async function refreshGroups(eventId) {
 
   const names = await resolveAttendeeNames(rows);
 
-  const byGroup = new Map();
-  rows.forEach((r, i) => { if ((r.group_type || "fours") !== "fours") return;
-    const n = r.group_number;
-    if (!byGroup.has(n)) byGroup.set(n, []);
-    byGroup.get(n).push(names[i]);
-  });
+  const collect = (type) => {
+    const byNumber = new Map();
+    rows.forEach((r, i) => {
+      if ((r.group_type || "fours") !== type) return;
+      if (!byNumber.has(r.group_number)) byNumber.set(r.group_number, []);
+      byNumber.get(r.group_number).push(names[i]);
+    });
+    return [...byNumber.entries()].sort((a, b) => a[0] - b[0]);
+  };
 
-  const groups = [...byGroup.entries()].sort((a, b) => a[0] - b[0]); const byPair = new Map(); rows.forEach((r, i) => { if (r.group_type !== "pairs") return; if (!byPair.has(r.group_number)) byPair.set(r.group_number, []); byPair.get(r.group_number).push(names[i]); }); const pairs = [...byPair.entries()].sort((a, b) => a[0] - b[0]); const pairsHtml = pairs.length ? '<div class="fixture-section-label" style="margin-top:16px;">Pairs</div><div class="tee-groups">' + pairs.map(function (p) { return '<div class="tee-group"><span class="tee-group-label">Pair ' + p[0] + '</span><span>' + p[1].map(escapeHtml).join(", ") + '</span></div>'; }).join("") + '</div>' : "";
-
-  slot.innerHTML = `
-    <div class="fixture-section-label">Tee groups</div>
+  const block = (label, word, entries) => entries.length ? `
+    <div class="fixture-section-label">${label}</div>
     <div class="tee-groups">
-      ${groups.map(([number, players]) => `
+      ${entries.map(([number, players]) => `
         <div class="tee-group">
-          <span class="tee-group-label">Group ${number}</span>
-          <span>${players.map(escapeHtml).join(", ")}</span>
+          <span class="tee-group-label">${word} ${number}</span>
+          <ul class="tee-group-names">
+            ${players.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}
+          </ul>
         </div>`).join("")}
-    </div>${pairsHtml}`;
+    </div>` : "";
+
+  slot.innerHTML = block("Tee groups", "Group", collect("fours")) +
+    block("Pairs", "Pair", collect("pairs"));
 }
 
 // Names live in two tables, so they're looked up explicitly rather than
