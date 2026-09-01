@@ -40,6 +40,7 @@ All of it lives on `admin.html`, behind a Supabase login:
 - Add and edit fixtures — date, venue, address, cost, meet time, first tee time, website, notes
 - Manage who's playing, including adding guests by name who have no website account
 - Set the tee draw, which then shows publicly under that round
+- Set the pairs draw, separately from the tee draw. On an odd turnout a player can be given two pair numbers, so nobody is left out and that player gets two chances at the pairs prize
 - Log results, with whoever was actually on the round listed first
 - Record each round's prizes: 1st/2nd/3rd, winning pair, longest drive and nearest the pin on both nines
 - Keep the hole-in-one pot up to date, including paying it out
@@ -66,6 +67,8 @@ it again.
 12. `sql/round-prizes.sql` — the prizes for each round
 13. `sql/hole-in-one-pot.sql` — the rolling pot
 14. `sql/league-settings.sql` — how many rounds count
+15. `sql/pairs-groupings.sql` — the pairs draw, alongside the tee draw
+16. `sql/pairs-double-up.sql` — lets one player hold two pair numbers on an odd turnout
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain
