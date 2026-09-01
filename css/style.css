@@ -952,13 +952,20 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
 
 /* ---------- The tee draw on a fixture ---------- */
 
-.tee-groups { display: grid; gap: 8px; margin: 6px 0 4px; }
+/* Groups run across the page as columns, each headed by its number
+   with the players stacked underneath, so a four reads top to bottom.
+   auto-fill means the row packs as many cards as will fit and drops to
+   one column on a phone without a breakpoint. Pairs use the same grid,
+   so they line up under the tee draw. */
+.tee-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 6px 0 4px;
+}
 
 .tee-group {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 8px 12px;
+  padding: 10px 12px 11px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--gold);
   border-radius: var(--radius);
@@ -967,13 +974,22 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
 }
 
 .tee-group-label {
+  display: block;
   font-family: var(--font-mono);
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--ink-soft);
   white-space: nowrap;
+  margin-bottom: 7px;
 }
+
+.tee-group-names { list-style: none; margin: 0; padding: 0; }
+
+.tee-group-names li { padding: 2px 0; line-height: 1.35; }
+
+/* Pairs follow the tee draw, so its heading needs air above it. */
+.tee-groups + .fixture-section-label { margin-top: 18px; }
 
 /* ---------- Admin on a phone ---------- */
 /* Several admin card grids carry an inline two-column style, which is
