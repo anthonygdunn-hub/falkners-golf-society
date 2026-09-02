@@ -25,6 +25,7 @@
      { id: "fixtures", label: "Fixtures", headings: ["Edit a fixture", "Add a fixture", "Who's playing", "Tee groups", "Pairs"] },
      { id: "ryder", label: "Ryder Cup", headings: ["Ryder Cup 2027"] },
      { id: "money", label: "Money", headings: ["Payments", "Who's paid", "Hole in one pot"] },
+     { id: "pages", label: "Pages", headings: ["Pages"] },
      { id: "people", label: "People", headings: ["Add a player", "Current members", "Link member accounts to players", "Photos awaiting approval"] }
        ];
 
