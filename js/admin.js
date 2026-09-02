@@ -208,10 +208,17 @@ async function refreshGroupList(eventId) {
   }
   const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
 
-  el.innerHTML = attendance.map(a => {
-    const name = a.player_id
+  /* Alphabetical so a name can be found in a list of twenty-odd. The
+     draw buttons no longer walk this order, they shuffle, so sorting
+     the screen does not make the draw itself alphabetical. */
+  const sorted = attendance.slice().map(a => Object.assign({}, a, {
+    name: a.player_id
       ? (playerById.get(a.player_id) || "Player")
-      : (profById.get(a.profile_id) || "Member");
+      : (profById.get(a.profile_id) || "Member")
+  })).sort((a, b) => a.name.localeCompare(b.name));
+
+  el.innerHTML = sorted.map(a => {
+    const name = a.name;
     return `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
         <span>${escapeHtml(name)}</span>
@@ -226,11 +233,24 @@ async function refreshGroupList(eventId) {
 // One tap to lay everyone out in fours in the order they registered —
 // a starting point to nudge, rather than typing twenty numbers by hand.
 function autofillGroups() {
+  /* The list on screen is alphabetical, so numbering straight down it
+     would send the same four out together every round. Shuffle a copy
+     first and the draw is a real draw; the boxes on screen stay where
+     they are, only the numbers written into them move. */
   const inputs = [...document.querySelectorAll("#group-list .group-input")];
-  inputs.forEach((input, i) => { input.value = Math.floor(i / 4) + 1; });
+  shuffle(inputs.slice()).forEach((input, i) => { input.value = Math.floor(i / 4) + 1; });
   const statusEl = document.getElementById("group-status");
-  statusEl.textContent = `Laid out in ${Math.ceil(inputs.length / 4)} group(s) of four — adjust as you like, then save.`;
+  statusEl.textContent = `Drawn at random into ${Math.ceil(inputs.length / 4)} group(s) of four — adjust as you like, then save.`;
   statusEl.className = "small";
+}
+
+/* Fisher-Yates, in place on the copy it is handed. */
+function shuffle(list) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = list[i]; list[i] = list[j]; list[j] = t;
+  }
+  return list;
 }
 
 async function saveGroups() {
@@ -814,18 +834,30 @@ async function refreshPlayingList(eventId) {
   }
   const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
 
-  el.innerHTML = rows.map(r => {
+  /* Sorted by name rather than by when they were added, because the
+     list is read to answer "is so-and-so playing?", and a headcount at
+     the top because that is the other thing always being counted. */
+  const listed = rows.map(r => {
     const isGuest = !!r.player_id;
-    const name = isGuest
-      ? (playerById.get(r.player_id) || "Player")
-      : (profById.get(r.profile_id) || "Member");
-    const tag = isGuest
+    return {
+      id: r.id,
+      isGuest,
+      name: isGuest
+        ? (playerById.get(r.player_id) || "Player")
+        : (profById.get(r.profile_id) || "Member")
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+
+  const total = `<p class="small" style="margin:0 0 4px;"><strong>${listed.length}</strong> ${listed.length === 1 ? "player" : "players"} on this round</p>`;
+
+  el.innerHTML = total + listed.map(p => {
+    const tag = p.isGuest
       ? `<span class="small" style="color:var(--muted);">added by the committee</span>`
       : `<span class="small" style="color:var(--muted);">registered online</span>`;
     return `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${escapeHtml(name)} ${tag}</span>
-        <button class="btn btn-outline btn-small" type="button" data-remove-attendance="${r.id}">Remove</button>
+        <span>${escapeHtml(p.name)} ${tag}</span>
+        <button class="btn btn-outline btn-small" type="button" data-remove-attendance="${p.id}">Remove</button>
       </div>`;
   }).join("");
 

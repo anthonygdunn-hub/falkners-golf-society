@@ -120,8 +120,16 @@
     var playerById = {};
     if (playerIds.length) { var plRes = await client.from("players").select("id, name").in("id", playerIds); (plRes.data || []).forEach(function (p) { playerById[p.id] = p.name; }); }
 
-    el.innerHTML = attendance.map(function (a) {
-      var name = a.player_id ? (playerById[a.player_id] || "Player") : (profById[a.profile_id] || "Member");
+    /* Alphabetical, so a name can be found quickly. The draw button
+       shuffles rather than walking this order, so sorting the screen
+       does not make the pairs themselves alphabetical. */
+    var listed = attendance.slice().map(function (a) {
+      return { profile_id: a.profile_id, player_id: a.player_id,
+        name: a.player_id ? (playerById[a.player_id] || "Player") : (profById[a.profile_id] || "Member") };
+    }).sort(function (x, y) { return x.name.localeCompare(y.name); });
+
+    el.innerHTML = listed.map(function (a) {
+      var name = a.name;
       var value = (existing[rowKey(a)] || []).join(", ");
       return '<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">' +
         '<span>' + escapeHtml(name) + '</span>' +
@@ -131,26 +139,42 @@
     summarise();
   }
 
-  /* Pairs everyone in list order. With an odd turnout the last player
-     would have nobody, so they get a pair of their own and one player
-     drawn at random from the pairs already made joins them - that
-     player is then in two pairs and has two chances at the prize. */
+  /* Fisher-Yates, in place on the copy it is handed. */
+  function shuffle(list) {
+    for (var i = list.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = list[i]; list[i] = list[j]; list[j] = t;
+    }
+    return list;
+  }
+
+  /* Draws the pairs at random. The list on screen is alphabetical, so
+     numbering straight down it would pair the same two people every
+     round; the draw shuffles a copy instead and writes the numbers back
+     into whichever boxes those players occupy.
+
+     With an odd turnout one player would have nobody, so they get a
+     pair of their own and somebody already paired joins them. That
+     player is then in two pairs with two chances at the prize, which
+     is the whole point of allowing a second pairing. */
   function autofillPairs() {
     var all = inputs();
-    var assigned = all.map(function () { return []; });
-    var wholePairs = Math.floor(all.length / 2);
+    var order = shuffle(all.slice());
+    var assigned = new Map();
+    all.forEach(function (input) { assigned.set(input, []); });
+    var wholePairs = Math.floor(order.length / 2);
 
-    for (var i = 0; i < wholePairs * 2; i++) assigned[i].push(Math.floor(i / 2) + 1);
+    for (var i = 0; i < wholePairs * 2; i++) assigned.get(order[i]).push(Math.floor(i / 2) + 1);
 
-    if (all.length % 2 === 1 && wholePairs > 0) {
-      var oddOne = all.length - 1;
+    if (order.length % 2 === 1 && wholePairs > 0) {
+      var oddOne = order[order.length - 1];
       var extra = wholePairs + 1;
-      var lucky = Math.floor(Math.random() * (wholePairs * 2));
-      assigned[oddOne].push(extra);
-      assigned[lucky].push(extra);
+      var lucky = order[Math.floor(Math.random() * (wholePairs * 2))];
+      assigned.get(oddOne).push(extra);
+      assigned.get(lucky).push(extra);
     }
 
-    all.forEach(function (input, i) { setInputValue(input, assigned[i]); });
+    all.forEach(function (input) { setInputValue(input, assigned.get(input)); });
     summarise();
   }
 

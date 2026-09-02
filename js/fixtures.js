@@ -144,9 +144,19 @@ async function refreshAttendees(eventId) {
 
   const names = await resolveAttendeeNames(rows);
 
+  /* Alphabetical rather than the order people registered, so the list
+     reads like a team sheet. Each name carries its handicap in
+     brackets, so the sort ignores that and compares the name itself. */
   slot.innerHTML = `<div class="attendee-list">${names
+    .slice()
+    .sort((a, b) => bareName(a).localeCompare(bareName(b)))
     .map(n => `<span class="attendee-chip">${escapeHtml(n)}</span>`)
     .join("")}</div>`;
+}
+
+/* "Alan Dunn (13.2)" sorts as "Alan Dunn". */
+function bareName(s) {
+  return String(s).replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
 /* The tee draw and the pairs draw, both read from the same groupings
@@ -181,6 +191,9 @@ async function refreshGroups(eventId) {
       if (!byNumber.has(r.group_number)) byNumber.set(r.group_number, []);
       byNumber.get(r.group_number).push(names[i]);
     });
+    /* Groups in number order, and the names inside each group
+       alphabetical, since who is listed first in a four means nothing. */
+    byNumber.forEach(list => list.sort((a, b) => bareName(a).localeCompare(bareName(b))));
     return [...byNumber.entries()].sort((a, b) => a[0] - b[0]);
   };
 
