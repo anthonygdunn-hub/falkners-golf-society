@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monthly newsletter — The Falkners Arms Golf Society</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg">
+<link rel="stylesheet" href="css/style.css?v=2026-09-02a">
+<style>
+  .news-grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .news-grid { grid-template-columns: minmax(0, 380px) minmax(0, 1fr); align-items: start; } }
+  .news-panel { padding: 20px; }
+  .news-panel textarea { width: 100%; min-height: 110px; font-family: var(--font-body); font-size: 14px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+  .news-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .news-preview { border: 1px solid var(--line); background: var(--paper); min-height: 520px; }
+  .news-preview iframe { width: 100%; height: 720px; border: 0; display: block; background: var(--paper); }
+  .news-note { font-size: 13px; color: var(--ink-soft); margin: 8px 0 0; }
+  .news-danger { border-color: #A33131 !important; color: #A33131; }
+  .news-issues td { padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="admin.html">Admin</a></li>
+      <li><a href="index.html">Back to site</a></li>
+    </ul>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container admin-shell">
+
+    <div id="gate">
+      <span class="eyebrow">Committee only</span>
+      <h1>Sign in</h1>
+      <div id="gate-status"></div>
+      <form id="gate-form">
+        <div class="form-field">
+          <label for="gate-email">Email</label>
+          <input id="gate-email" type="email" required>
+        </div>
+        <div class="form-field">
+          <label for="gate-password">Password</label>
+          <input id="gate-password" type="password" required>
+        </div>
+        <button class="btn btn-brass" type="submit">Sign in</button>
+      </form>
+    </div>
+
+    <div id="workspace" style="display:none;">
+      <span class="eyebrow">Committee</span>
+      <h1 class="mt-0">Monthly newsletter</h1>
+      <p class="small">Results, the Order of Merit, the next fixtures and the pot come from the rounds you have logged. You only write the message and the pub news, and they appear on the Newsletters page as soon as you save.</p>
+
+      <div class="news-grid">
+
+        <div class="scorecard">
+          <div class="scorecard-head"><h3>This issue</h3></div>
+          <div class="news-panel">
+
+            <div class="form-field">
+              <label for="period">Month it covers</label>
+              <input id="period" type="month">
+            </div>
+
+            <div class="form-field">
+              <label for="subject">Subject line</label>
+              <input id="subject" type="text" placeholder="Left blank, one is written for you">
+            </div>
+
+            <div class="form-field">
+              <label for="intro">Message from the committee</label>
+              <textarea id="intro" placeholder="A few lines to open with. Blank line between paragraphs."></textarea>
+            </div>
+
+            <div class="form-field">
+              <label for="pub-news">At The Falkners Arms</label>
+              <textarea id="pub-news" placeholder="Quiz nights, live music, the darts final. Copy across whatever is on the pub's Facebook page this month."></textarea>
+            </div>
+
+            <div class="news-actions">
+              <button class="btn btn-brass" id="save-btn" type="button">Save</button>
+              <button class="btn btn-outline" id="preview-btn" type="button">Build email preview</button>
+            </div>
+            <div class="news-actions">
+              <button class="btn btn-outline" id="test-btn" type="button">Send a test to me</button>
+              <button class="btn btn-outline news-danger" id="send-btn" type="button">Send to all members</button>
+            </div>
+            <p class="news-note">Saving is all that is needed for the website. The three email buttons only work once the mailer is set up.</p>
+            <p class="news-note" id="issue-date"></p>
+            <p class="news-note" id="status"></p>
+          </div>
+        </div>
+
+        <div>
+          <div class="scorecard">
+            <div class="scorecard-head">
+              <h3>Preview</h3>
+              <span class="meta" id="recipients"></span>
+            </div>
+            <div class="news-preview" id="preview">
+              <p class="small" style="padding:20px;">Build a preview to see exactly what will land in the inbox.</p>
+            </div>
+          </div>
+
+          <div class="scorecard" style="margin-top:20px;">
+            <div class="scorecard-head"><h3>Sent issues</h3></div>
+            <div style="padding:8px 12px;">
+              <table style="width:100%; border-collapse:collapse;" class="news-issues"><tbody id="issues">
+                <tr><td class="small">Loading…</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js?v=2026-08-16c"></script>
+<script>
+(function () {
+  var client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var FN = SUPABASE_URL.replace(/\/$/, "") + "/functions/v1/newsletter";
+
+  var el = function (id) { return document.getElementById(id); };
+  var status = el("status");
+  var session = null;
+
+  function say(msg, bad) {
+    status.textContent = msg || "";
+    status.style.color = bad ? "#A33131" : "var(--ink-soft)";
+  }
+
+  // An issue comes out on the Monday of the week containing the last Sunday
+  // of the month, the same rule newsletters.html uses.
+  function publishDate(period) {
+    var d = new Date(period + "-01T00:00:00Z");
+    var last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+    var lastSunday = new Date(last.getTime() - last.getUTCDay() * 86400000);
+    return new Date(lastSunday.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+  }
+
+  function longDate(iso) {
+    return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB",
+      { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
+  }
+
+  // Work on the issue that has not gone out yet: this month's if its Monday is
+  // still ahead, otherwise next month's.
+  function workingMonth() {
+    var d = new Date(), today = d.toISOString().slice(0, 10);
+    var m = d.toISOString().slice(0, 7);
+    if (publishDate(m) >= today) return m;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString().slice(0, 7);
+  }
+
+  function periodDate() { return el("period").value + "-01"; }
+
+  // ---------------- sign in ----------------
+
+  async function committeeCheck(userId) {
+    var res = await client.from("memberships").select("role, status").eq("profile_id", userId).maybeSingle();
+    return res.data && res.data.role === "committee" && res.data.status === "approved";
+  }
+
+  async function boot() {
+    var got = await client.auth.getSession();
+    session = got.data.session;
+    if (!session) return;
+    if (!(await committeeCheck(session.user.id))) {
+      el("gate-status").innerHTML = '<p class="small" style="color:#A33131;">That account is not a committee account.</p>';
+      return;
+    }
+    el("gate").style.display = "none";
+    el("workspace").style.display = "block";
+    el("period").value = workingMonth();
+    await loadIssue();
+    await loadSent();
+  }
+
+  el("gate-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var res = await client.auth.signInWithPassword({
+      email: el("gate-email").value.trim(),
+      password: el("gate-password").value,
+    });
+    if (res.error) {
+      el("gate-status").innerHTML = '<p class="small" style="color:#A33131;">' + res.error.message + "</p>";
+      return;
+    }
+    boot();
+  });
+
+  // ---------------- the draft ----------------
+
+  async function loadIssue() {
+    var res = await client.from("newsletters").select("*").eq("period", periodDate()).maybeSingle();
+    var row = res.data || {};
+    el("subject").value = row.subject || "";
+    el("intro").value = row.intro || "";
+    el("pub-news").value = row.pub_news || "";
+
+    var out = publishDate(el("period").value);
+    var today = new Date().toISOString().slice(0, 10);
+    el("issue-date").innerHTML = "Goes live on the Newsletters page on " + longDate(out) +
+      (out > today ? "." : " (already out).") +
+      ' <a href="newsletters.html#' + el("period").value + '-01">View it</a>';
+
+    say(row.status === "sent" ? "This issue has already gone out by email." : row.period ? "Draft loaded." : "New issue.");
+  }
+
+  el("period").addEventListener("change", loadIssue);
+
+  async function saveDraft(quiet) {
+    var res = await client.from("newsletters").upsert({
+      period: periodDate(),
+      subject: el("subject").value.trim() || null,
+      intro: el("intro").value.trim() || null,
+      pub_news: el("pub-news").value.trim() || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "period" });
+    if (res.error) { say(res.error.message, true); return false; }
+    if (!quiet) say("Draft saved.");
+    return true;
+  }
+
+  el("save-btn").addEventListener("click", function () { saveDraft(false); });
+
+  // ---------------- the edge function ----------------
+
+  async function call(action, extra) {
+    var body = Object.assign({ action: action, period: periodDate() }, extra || {});
+    var res = await fetch(FN, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+      body: JSON.stringify(body),
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    return data;
+  }
+
+  el("preview-btn").addEventListener("click", async function () {
+    if (!(await saveDraft(true))) return;
+    say("Building…");
+    try {
+      var data = await call("preview");
+      el("preview").innerHTML = '<iframe title="Newsletter preview"></iframe>';
+      el("preview").querySelector("iframe").srcdoc = data.html;
+      el("recipients").textContent = data.recipients + " subscribed";
+      say(data.hasRound
+        ? (data.roundInPeriod ? "Ready. Subject: " + data.subject : "Ready, but no round was played in that month, so the most recent one is shown instead.")
+        : "Ready, though no round has results logged yet.", !data.hasRound);
+    } catch (err) { say(String(err.message || err), true); }
+  });
+
+  el("test-btn").addEventListener("click", async function () {
+    if (!(await saveDraft(true))) return;
+    var to = prompt("Send a test copy to:", session.user.email);
+    if (!to) return;
+    say("Sending test…");
+    try {
+      await call("test", { to: to });
+      say("Test sent to " + to + ".");
+    } catch (err) { say(String(err.message || err), true); }
+  });
+
+  el("send-btn").addEventListener("click", async function () {
+    if (!(await saveDraft(true))) return;
+    var count = (el("recipients").textContent || "").replace(" subscribed", "") || "all";
+    if (!confirm("Send the " + el("period").value + " issue to " + count + " members? This cannot be taken back.")) return;
+    say("Sending. Leave this page open, it paces itself at about two a second…");
+    try {
+      var data = await call("send");
+      say("Sent to " + data.sent + " members." + (data.failed && data.failed.length ? " Failed: " + data.failed.join("; ") : ""));
+      await loadSent();
+      await loadIssue();
+    } catch (err) { say(String(err.message || err), true); }
+  });
+
+  // ---------------- archive ----------------
+
+  async function loadSent() {
+    var res = await client.from("newsletters").select("period, subject, recipients, sent_at, status")
+      .eq("status", "sent").order("period", { ascending: false }).limit(12);
+    var rows = res.data || [];
+    el("issues").innerHTML = rows.length
+      ? rows.map(function (r) {
+          var when = new Date(r.period + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+          return "<tr><td><strong>" + when + "</strong><br><span style='color:var(--ink-soft)'>" +
+            (r.subject || "") + "</span></td><td style='text-align:right;white-space:nowrap;'>" +
+            (r.recipients || 0) + " sent</td></tr>";
+        }).join("")
+      : '<tr><td class="small">Nothing sent yet.</td></tr>';
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
