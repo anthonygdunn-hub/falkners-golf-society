@@ -40,7 +40,27 @@ function setupMobileNav() {
   wrap.insertBefore(btn, nav);
 }
 
-function initChrome() { setupMobileNav(); setupSocialLinks(); setupWhatsApp(); }
+
+// The Newsletters page is added from here rather than being pasted into
+// every page's markup, so the menu stays in one place and can't drift.
+function addNewslettersLink() {
+  if (document.getElementById("nav-newsletters-link")) return;
+  const nav = document.querySelector(".main-nav");
+  if (!nav) return;
+  const li = document.createElement("li");
+  li.id = "nav-newsletters-link";
+  li.innerHTML = '<a href="newsletters.html">Newsletters</a>';
+  // Sits after Results, which is where people look for the round-ups.
+  const results = nav.querySelector('a[href="results.html"]');
+  if (results && results.parentElement) {
+    results.parentElement.insertAdjacentElement("afterend", li);
+  } else {
+    const gallery = nav.querySelector('a[href="gallery.html"]');
+    nav.insertBefore(li, gallery && gallery.parentElement ? gallery.parentElement : null);
+  }
+}
+
+function initChrome() { setupMobileNav(); addNewslettersLink(); setupSocialLinks(); setupWhatsApp(); }
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initChrome);
