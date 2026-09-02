@@ -188,3 +188,6 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 
 /* Structured data, so a search result can carry dates and courses. */
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/schema.js?v=2026-09-03a" }));
+
+/* Share buttons, round photos, season stats and calendar files. */
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/extras.js?v=2026-09-03a" }));
