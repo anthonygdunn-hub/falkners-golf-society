@@ -1,1 +1,306 @@
-undefined
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Committee Admin — The Falkners Arms Golf Society</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg">
+<link rel="stylesheet" href="css/style.css?v=2026-09-02a">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html">Back to site</a></li>
+    </ul>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container admin-shell">
+
+    <div id="login-panel">
+      <span class="eyebrow">Committee only</span>
+      <h1>Sign in</h1>
+      <p class="small">Use the email &amp; password set up for you in Supabase. Not got one yet? See README.md for how to create committee accounts.</p>
+      <div id="login-status"></div>
+      <form id="login-form">
+        <div class="form-field">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" required>
+        </div>
+        <div class="form-field">
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" required>
+        </div>
+        <button class="btn btn-brass" type="submit">Sign in</button>
+      </form>
+    </div>
+
+    <div id="dashboard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="eyebrow">Committee dashboard</span>
+          <h1 class="mt-0">Log a round's results</h1>
+        </div>
+        <button class="btn btn-outline" id="logout-btn">Sign out</button>
+      </div>
+
+              <div class="scorecard" style="margin-top:20px;">
+                <div class="scorecard-head">
+                  <h3>Pending member requests</h3>
+                </div>
+                <div id="pending-members-list" style="padding:20px;"><p class="small">Loading…</p></div>
+              </div>
+        
+<div class="scorecard" style="margin-top:20px;">
+        <div class="scorecard-head">
+          <h3>Enter results</h3>
+        </div>
+        <div style="padding:20px;">
+          <div class="form-field">
+            <label for="event-select">Which round?</label>
+            <select id="event-select"></select>
+          </div>
+          <p class="small">Leave "Points" blank for anyone who didn't play — they'll simply be skipped. Points is whatever number should count toward the season leaderboard (Stableford points, converted ranking points, whatever this event used).</p>
+          <div id="results-entry-rows"></div>
+          <div id="results-status"></div>
+          <button class="btn btn-brass" id="save-results-btn" type="button">Save results</button>
+        </div>
+      </div>
+
+      <div class="scorecard" style="margin-top:32px;">
+        <div class="scorecard-head">
+          <h3>Edit a fixture</h3>
+        </div>
+        <div style="padding:20px;">
+          <p class="small">Everything here shows on the fixture when someone opens it on the Fixtures page. Leave anything blank to hide that row.</p>
+          <div class="form-field">
+            <label for="edit-event-select">Which fixture?</label>
+            <select id="edit-event-select"></select>
+          </div>
+          <form id="edit-event-form">
+            <div class="form-row">
+              <div class="form-field"><label>Round name</label><input id="edit-event-name" required></div>
+              <div class="form-field"><label>Date</label><input id="edit-event-date" type="date" required></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label>Meet time</label><input id="edit-event-meet-time" type="time"></div>
+              <div class="form-field"><label>First tee time</label><input id="edit-event-tee-time" type="time"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label>Venue</label><input id="edit-event-venue" placeholder="e.g. Hurtmore Golf Club"></div>
+              <div class="form-field"><label>Cost per player (&pound;)</label><input id="edit-event-cost" type="number" step="0.01" min="0" placeholder="e.g. 45"></div>
+            </div>
+            <div class="form-field"><label>Address</label><input id="edit-event-address" placeholder="Full address, used for the map link"></div>
+            <div class="form-field"><label>Website</label><input id="edit-event-website" placeholder="e.g. clandongolfclub.co.uk"></div>
+            <div class="form-field"><label>Format</label><input id="edit-event-format" placeholder="e.g. stableford"></div>
+            <h4 style="margin:22px 0 4px;">Competitions on the day</h4>
+            <p class="small">Type the hole each one is played on and it runs this round, showing on the fixture and waiting for a winner under Round prizes. Leave one blank to leave it out altogether.</p>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-ld-front">Longest drive &mdash; front 9</label><input id="edit-hole-ld-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-ld-back">Longest drive &mdash; back 9</label><input id="edit-hole-ld-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-np-front">Nearest the pin &mdash; front 9</label><input id="edit-hole-np-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-np-back">Nearest the pin &mdash; back 9</label><input id="edit-hole-np-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-np2-front">Nearest the pin in 2 &mdash; front 9</label><input id="edit-hole-np2-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-np2-back">Nearest the pin in 2 &mdash; back 9</label><input id="edit-hole-np2-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
+            <div class="form-field"><label>Notes</label><textarea id="edit-event-notes" rows="3" placeholder="Meet time, dress code, food afterwards..."></textarea></div>
+            <button class="btn btn-brass" type="submit">Save changes</button>
+            <div id="edit-event-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:32px;">
+        <h3>Who's playing</h3>
+        <p class="small">Members register themselves, but you can add anyone by hand — guests, or players who'd rather ring you than use the website. Added names go into the player list too, so you can score them afterwards.</p>
+        <div class="form-field">
+          <label for="playing-event-select">Fixture</label>
+          <select id="playing-event-select"></select>
+        </div>
+        <div id="playing-list" style="margin-top:12px;"><p class="small">Loading…</p></div>
+        <div style="margin-top:20px;">
+          <h4 style="margin:0 0 4px;">Add players who are already in the list</h4>
+          <p class="small">Tick everyone who is playing and add them in one go. Anybody already on the round is not listed, so what you see is what you can still add.</p>
+          <div class="form-field">
+            <label for="bulk-add-filter">Narrow the list</label>
+            <input id="bulk-add-filter" type="search" placeholder="Start typing a name" autocomplete="off">
+          </div>
+          <div id="bulk-add-list"><p class="small">Loading&hellip;</p></div>
+          <p class="small" id="bulk-add-none" hidden>No names match what you typed.</p>
+          <button class="btn btn-brass" type="button" id="bulk-add-btn" style="margin-top:12px;" disabled>Add ticked players</button>
+          <div id="bulk-add-status" class="small" style="margin-top:8px;"></div>
+        </div>
+
+        <form id="add-guest-form" style="margin-top:24px;">
+          <h4 style="margin:0 0 4px;">Add somebody new to the society</h4>
+          <p class="small">Only for a name that is not in the list above. They go into the player list too, so next time you can just tick them.</p>
+          <div class="form-field">
+            <label for="guest-name">Their name</label>
+            <input id="guest-name" list="known-players" placeholder="Their name" autocomplete="off" required>
+            <datalist id="known-players"></datalist>
+          </div>
+          <div class="form-field">
+            <label for="guest-handicap">Handicap (only used if they're new)</label>
+            <input id="guest-handicap" type="number" step="0.1" placeholder="Optional">
+          </div>
+          <button class="btn btn-outline" type="submit">Add to this round</button>
+          <div id="guest-status" class="small" style="margin-top:8px;"></div>
+        </form>
+      </div>
+
+      <div class="card" style="margin-top:32px;">
+        <h3>Tee groups</h3>
+        <p class="small">Put a group number against each player and save. Everyone in group 1 goes out together, and the draw appears under that round on the fixtures page. Draw the fours shuffles everybody and lays them out four at a time. Leave someone blank to keep them out of the draw.</p>
+        <div class="form-field">
+          <label for="group-event-select">Fixture</label>
+          <select id="group-event-select"></select>
+        </div>
+        <div id="group-list"><p class="small">Loading&hellip;</p></div>
+        <button class="btn btn-brass" type="button" id="save-groups-btn" style="margin-top:14px;">Save the draw</button>
+        <button class="btn btn-outline" type="button" id="autofill-groups-btn" style="margin-top:14px;">Draw the fours</button>
+        <div id="group-status" class="small" style="margin-top:8px;"></div></div><div class="card" style="margin-top:32px;"><h3>Pairs</h3><p class="small">A separate draw for the pairs competition. Put the same number against two players and they are a pair &mdash; nothing to do with the tee groups, so someone in group 1 can be paired with someone in group 4. Leave a player blank to keep them out. With an odd turnout somebody has to play twice, or one player is left out altogether: give that player two numbers separated by a comma, such as 3, 7, and they are in both pairs with two chances at the prize. Pair at random does this for you.</p><div class="form-field"><label for="pair-event-select">Fixture</label><select id="pair-event-select"></select></div><div id="pair-list"><p class="small">Loading&hellip;</p></div><button class="btn btn-brass" type="button" id="save-pairs-btn" style="margin-top:14px;">Save the pairs</button> <button class="btn btn-outline" type="button" id="autofill-pairs-btn" style="margin-top:14px;">Pair at random</button> <button class="btn btn-outline" type="button" id="clear-pairs-btn" style="margin-top:14px;">Clear</button><div id="pair-status" class="small" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
+        <div class="card">
+          <h3>Order of Merit</h3>
+          <p class="small">By default every logged round counts toward the season table. Set a number here to count only each player's best rounds instead &mdash; &ldquo;best 6 of 9&rdquo; and the like &mdash; so one wet Sunday doesn't sink a good season.</p>
+          <form id="league-form">
+            <div class="form-field">
+              <label for="counting-rounds">Rounds that count</label>
+              <input id="counting-rounds" type="number" min="1" step="1" placeholder="Leave blank to count every round">
+            </div>
+            <button class="btn btn-outline" type="submit">Save rule</button>
+            <div id="league-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Round prizes</h3>
+          <p class="small">Who won what on the day. Anything you leave blank simply won't appear on the results page. The side competitions listed here are the ones set up against this fixture above, with the hole they were played on.</p>
+          <div class="form-field">
+            <label for="prize-event-select">Fixture</label>
+            <select id="prize-event-select"></select>
+          </div>
+          <form id="prize-form">
+            <div class="form-row">
+              <div class="form-field"><label for="prize-first">1st place</label><select id="prize-first"></select></div>
+              <div class="form-field"><label for="prize-second">2nd place</label><select id="prize-second"></select></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="prize-third">3rd place</label><select id="prize-third"></select></div>
+              <div class="form-field"><label for="prize-pair-a">Winning pair</label><select id="prize-pair-a"></select><select id="prize-pair-b" style="margin-top:8px;"></select></div>
+            </div>
+            <div id="prize-competitions"></div>
+            <button class="btn btn-brass" type="submit">Save prizes</button>
+            <div id="prize-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Hole in one pot</h3>
+          <p class="small">Add what came in after a round, or record a payout when somebody finally holes one. The figure on the Hole in One page is the running total.</p>
+          <p class="pot-figure" id="admin-pot-total" style="font-size:2rem;">&pound;0</p>
+          <form id="pot-form">
+            <div class="form-row">
+              <div class="form-field"><label for="pot-event">Round (optional)</label><select id="pot-event"></select></div>
+              <div class="form-field"><label for="pot-amount">Amount (&pound;)</label><input id="pot-amount" type="number" step="0.01" min="0" required placeholder="e.g. 14"></div>
+            </div>
+            <div class="form-field"><label for="pot-note">Note</label><input id="pot-note" placeholder="e.g. 14 players at &pound;1"></div>
+            <label class="small" style="display:block; margin-bottom:12px;">
+              <input type="checkbox" id="pot-is-payout"> This is a payout to a winner
+            </label>
+            <button class="btn btn-outline" type="submit">Add entry</button>
+            <div id="pot-status" class="small" style="margin-top:8px;"></div>
+          </form>
+          <div id="pot-entries" style="margin-top:16px;"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:32px;">
+        <h3>Payments</h3>
+        <p class="small">Members pay the society by bank transfer, so there are no card fees to swallow. They see these details after registering and tap &ldquo;I&rsquo;ve paid&rdquo;; you confirm here once it lands in the account. Only signed-in members can see the bank details &mdash; they're not on the public site.</p>
+        <form id="bank-form">
+          <div class="form-row">
+            <div class="form-field"><label for="bank-name">Account name</label><input id="bank-name"></div>
+            <div class="form-field"><label for="bank-sort">Sort code</label><input id="bank-sort" placeholder="00-00-00"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label for="bank-number">Account number</label><input id="bank-number" inputmode="numeric"></div>
+            <div class="form-field"><label for="bank-note">Note for members</label><input id="bank-note" placeholder="e.g. pay at least a week before the round"></div>
+          </div>
+          <button class="btn btn-outline" type="submit">Save bank details</button>
+          <div id="bank-status" class="small" style="margin-top:8px;"></div>
+        </form>
+
+        <h3 style="margin-top:26px;">Who's paid</h3>
+        <div class="form-field">
+          <label for="pay-event-select">Fixture</label>
+          <select id="pay-event-select"></select>
+        </div>
+        <div id="payment-list"><p class="small">Loading&hellip;</p></div>
+      </div>
+
+      <!-- Trip payments render here. Kept outside the Money card so the tab bar
+           can show and hide the Ryder Cup section independently. -->
+      <div id="trip-payment-breakdown"></div>
+
+      <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
+        <div class="card">
+          <h3>Add a fixture</h3>
+          <form id="add-event-form">
+            <div class="form-field"><label>Round name</label><input id="new-event-name" required placeholder="e.g. Round 10"></div>
+            <div class="form-field"><label>Date</label><input id="new-event-date" type="date" required></div>
+            <div class="form-field"><label>Venue</label><input id="new-event-venue" placeholder="e.g. Hurtmore Golf Club"></div>
+            <div class="form-field"><label>Address</label><input id="new-event-address" placeholder="Optional"></div>
+            <div class="form-field"><label>Meet time</label><input id="new-event-meet-time" type="time"></div>
+            <div class="form-field"><label>First tee time</label><input id="new-event-tee-time" type="time"></div>
+            <div class="form-field"><label>Cost per player (&pound;)</label><input id="new-event-cost" type="number" step="0.01" min="0" placeholder="Optional"></div>
+            <div class="form-field"><label>Website</label><input id="new-event-website" placeholder="Optional"></div>
+            <div class="form-field"><label>Notes</label><textarea id="new-event-notes" rows="2" placeholder="Optional"></textarea></div>
+            <button class="btn btn-outline" type="submit">Add fixture</button>
+            <div id="event-status" class="small" style="margin-top:8px;"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Add a player</h3>
+          <form id="add-player-form">
+            <div class="form-field"><label>Name</label><input id="new-player-name" required></div>
+            <div class="form-field"><label>Handicap</label><input id="new-player-handicap" type="number" step="0.1" placeholder="Optional"></div>
+            <button class="btn btn-outline" type="submit">Add player</button>
+            <div id="player-status" class="small" style="margin-top:8px;"></div>
+          </form>
+          <h3 style="margin-top:20px;">Current members</h3>
+          <div id="player-manage-list"></div><div class="card" style="margin-top:32px;"><h3>Link member accounts to players</h3><p class="small">Match a signed-up member to their existing name in results and the leaderboard.</p><div class="form-row"><div class="form-field"><label for="link-profile-select">Member</label><select id="link-profile-select"></select></div><div class="form-field"><label for="link-player-select">Existing player</label><select id="link-player-select"></select></div></div><button class="btn btn-outline" type="button" id="link-player-btn">Link</button><div id="link-status" class="small" style="margin-top:8px;"></div><div id="linked-members-list" style="margin-top:16px;"></div><div class="card" style="margin-top:32px;"><h3>Photos awaiting approval</h3><p class="small">Uploaded photos won't appear in the public gallery until approved here.</p><div id="photo-approval-list"></div></div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>&copy; 2026 The Falkners Arms Golf Society</span>
+    <ul class="footer-links"><li><a href="index.html">Back to site</a></li></ul>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js?v=2026-08-16c"></script>
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/admin.js?v=2026-09-02b"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-09-02b"></script><script src="js/admin-view.js?v=2026-08-16c"></script><script src="js/pages-admin.js?v=2026-09-03a"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
+</body>
+</html>
