@@ -177,4 +177,4 @@ function addMembersLink() {
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/back-to-top.js?v=2026-08-16b" }));
 
 /* Which pages are live. Loaded from here so no page needs its own tag. */
-document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/site-pages.js?v=2026-09-03a" }));
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/site-pages.js?v=2026-09-03b" }));
