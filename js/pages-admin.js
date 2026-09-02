@@ -53,7 +53,7 @@
   }
 
   async function load() {
-    var res = await client.from("site_pages").select("*").order("title");
+    var res = await client.from("site_pages").select("*").order("sort", { ascending: true, nullsFirst: false }).order("title");
     var rows = res.data || [];
     var list = document.getElementById("pages-list");
     if (!list) return;
@@ -69,7 +69,7 @@
         return '<tr>' +
           '<td style="padding:10px 0;border-bottom:1px solid var(--line);">' +
           '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;">' +
-          '<input type="checkbox" data-slug="' + esc(p.slug) + '"' + (p.published ? " checked" : "") + ">" +
+          '<input type="checkbox" data-slug="' + esc(p.slug) + '"' + (p.published ? " checked" : "") + (p.can_hide === false ? " disabled" : "") + ">" +
           "<span>" +
           "<strong>" + esc(p.title) + "</strong>" +
           '<br><span class="small" style="color:var(--ink-soft);">' + esc(p.slug) + ".html" +
@@ -77,7 +77,7 @@
           "</span></label></td>" +
           '<td align="right" style="padding:10px 0;border-bottom:1px solid var(--line);white-space:nowrap;">' +
           '<span class="small" data-state="' + esc(p.slug) + '" style="color:' + (p.published ? "#1D7A46" : "var(--ink-soft)") + ';">' +
-          (p.published ? "In the menu" : "Hidden") + "</span></td></tr>";
+          (p.can_hide === false ? "Always live" : p.published ? "In the menu" : "Hidden") + "</span></td></tr>";
       }).join("") +
       "</table>";
 

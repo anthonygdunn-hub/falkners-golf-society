@@ -90,7 +90,9 @@
       return;   // If this cannot load, the site behaves exactly as before.
     }
 
-    var hidden = pages.filter(function (p) { return !p.published; });
+    // The home page is never hidden, however the row is set. A coming soon
+    // notice on the front of the site would be nobody's intention.
+    var hidden = pages.filter(function (p) { return !p.published && p.slug !== "index"; });
     if (!hidden.length) return;
 
     var committee = false;
