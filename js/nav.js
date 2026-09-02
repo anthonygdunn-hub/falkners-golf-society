@@ -60,7 +60,14 @@ function addNewslettersLink() {
   }
 }
 
-function initChrome() { setupMobileNav(); addNewslettersLink(); setupSocialLinks(); setupWhatsApp(); }
+// The footer year was typed in, so it would have gone stale on 1 January.
+function setFooterYear() {
+  var el = document.querySelector(".site-footer span");
+  if (!el) return;
+  el.textContent = el.textContent.replace(/\b20\d{2}\b/, new Date().getFullYear());
+}
+
+function initChrome() { setupMobileNav(); addNewslettersLink(); setFooterYear(); setupSocialLinks(); setupWhatsApp(); }
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initChrome);
@@ -178,3 +185,6 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 
 /* Which pages are live. Loaded from here so no page needs its own tag. */
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/site-pages.js?v=2026-09-03b" }));
+
+/* Structured data, so a search result can carry dates and courses. */
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/schema.js?v=2026-09-03a" }));
