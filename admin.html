@@ -162,15 +162,15 @@
 
       <div class="card" style="margin-top:32px;">
         <h3>Tee groups</h3>
-        <p class="small">Put a group number against each player and save. Everyone in group 1 goes out together, and the draw appears under that round on the fixtures page. Leave someone blank to keep them out of the draw.</p>
+        <p class="small">Put a group number against each player and save. Everyone in group 1 goes out together, and the draw appears under that round on the fixtures page. Draw the fours shuffles everybody and lays them out four at a time. Leave someone blank to keep them out of the draw.</p>
         <div class="form-field">
           <label for="group-event-select">Fixture</label>
           <select id="group-event-select"></select>
         </div>
         <div id="group-list"><p class="small">Loading&hellip;</p></div>
         <button class="btn btn-brass" type="button" id="save-groups-btn" style="margin-top:14px;">Save the draw</button>
-        <button class="btn btn-outline" type="button" id="autofill-groups-btn" style="margin-top:14px;">Fill in fours</button>
-        <div id="group-status" class="small" style="margin-top:8px;"></div></div><div class="card" style="margin-top:32px;"><h3>Pairs</h3><p class="small">A separate draw for the pairs competition. Put the same number against two players and they are a pair &mdash; nothing to do with the tee groups, so someone in group 1 can be paired with someone in group 4. Leave a player blank to keep them out. With an odd turnout somebody has to play twice, or one player is left out altogether: give that player two numbers separated by a comma, such as 3, 7, and they are in both pairs with two chances at the prize. Pair in order does this for you.</p><div class="form-field"><label for="pair-event-select">Fixture</label><select id="pair-event-select"></select></div><div id="pair-list"><p class="small">Loading&hellip;</p></div><button class="btn btn-brass" type="button" id="save-pairs-btn" style="margin-top:14px;">Save the pairs</button> <button class="btn btn-outline" type="button" id="autofill-pairs-btn" style="margin-top:14px;">Pair in order</button> <button class="btn btn-outline" type="button" id="clear-pairs-btn" style="margin-top:14px;">Clear</button><div id="pair-status" class="small" style="margin-top:8px;"></div>
+        <button class="btn btn-outline" type="button" id="autofill-groups-btn" style="margin-top:14px;">Draw the fours</button>
+        <div id="group-status" class="small" style="margin-top:8px;"></div></div><div class="card" style="margin-top:32px;"><h3>Pairs</h3><p class="small">A separate draw for the pairs competition. Put the same number against two players and they are a pair &mdash; nothing to do with the tee groups, so someone in group 1 can be paired with someone in group 4. Leave a player blank to keep them out. With an odd turnout somebody has to play twice, or one player is left out altogether: give that player two numbers separated by a comma, such as 3, 7, and they are in both pairs with two chances at the prize. Pair at random does this for you.</p><div class="form-field"><label for="pair-event-select">Fixture</label><select id="pair-event-select"></select></div><div id="pair-list"><p class="small">Loading&hellip;</p></div><button class="btn btn-brass" type="button" id="save-pairs-btn" style="margin-top:14px;">Save the pairs</button> <button class="btn btn-outline" type="button" id="autofill-pairs-btn" style="margin-top:14px;">Pair at random</button> <button class="btn btn-outline" type="button" id="clear-pairs-btn" style="margin-top:14px;">Clear</button><div id="pair-status" class="small" style="margin-top:8px;"></div>
       </div>
 
       <div class="card-grid" style="margin-top:32px; grid-template-columns: 1fr 1fr;">
@@ -301,6 +301,6 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
-<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/admin.js?v=2026-09-02a"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-09-01a"></script><script src="js/admin-view.js?v=2026-08-16c"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/admin.js?v=2026-09-02b"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-09-02b"></script><script src="js/admin-view.js?v=2026-08-16c"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
 </body>
 </html>
