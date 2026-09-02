@@ -219,6 +219,8 @@
     // The issue is a record of where things stood on its publish Monday, so
     // everything is cut off there rather than at the end of the month.
     var cutoff = publishDate(period);
+    var prevMonth = new Date(Date.UTC(new Date(period + "T00:00:00Z").getUTCFullYear(), new Date(period + "T00:00:00Z").getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+    var prevCutoff = publishDate(prevMonth);
 
     // A round counts as played once it has scores against it, which is more
     // reliable than the results_entered flag.
@@ -239,7 +241,7 @@
 
     var dateOf = function (r) { return (r.events && r.events.event_date) || ""; };
     var now = buildLeaderboard(data.results.filter(function (r) { return dateOf(r) <= cutoff; }), data.countingRounds);
-    var before = buildLeaderboard(data.results.filter(function (r) { return dateOf(r) < period; }), data.countingRounds);
+    var before = buildLeaderboard(data.results.filter(function (r) { return dateOf(r) <= prevCutoff; }), data.countingRounds);
     var wasAt = {};
     before.forEach(function (p, i) { wasAt[p.name] = i + 1; });
     var leaderboard = now.map(function (p, i) {
@@ -367,7 +369,7 @@
             '<td align="right" style="padding:9px 4px 9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:14px;font-weight:600;color:' + C.ink + ';">' + p.totalPoints + "</td></tr>";
         }).join("") + "</table>" +
         '<div style="font-family:' + BODY + ';font-size:12px;color:' + C.inkSoft + ';padding-top:10px;">' +
-        (note ? esc(note) + " " : "") + d.players + " players have a card in this season.</div>" +
+        (note ? esc(note) + " " : "") + "Movement since the last issue. " + d.players + " players have a card in this season.</div>" +
         '<div style="padding-top:14px;">' + button("leaderboard.html", "Full leaderboard") + "</div></td></tr>"
       ) : "") +
 
