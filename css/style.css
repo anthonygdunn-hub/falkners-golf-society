@@ -991,6 +991,44 @@ table.score-table td:nth-child(2) { overflow-wrap: anywhere; }
 /* Pairs follow the tee draw, so its heading needs air above it. */
 .tee-groups + .fixture-section-label { margin-top: 18px; }
 
+/* ---------- Ticking several players onto a round ---------- */
+
+/* A tick list rather than one name at a time. It packs into as many
+   columns as fit and scrolls once it is taller than a screenful, so a
+   list of forty names does not push the button out of reach. */
+.tick-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 16px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--white);
+}
+
+.tick-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+/* The stylesheet stretches inputs to full width for forms, which would
+   blow a checkbox up to the width of the column. */
+.tick-list input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  flex: none;
+}
+
+.tick-list .tick-hcap { color: var(--ink-soft); font-size: 0.85rem; }
+
 /* ---------- Admin on a phone ---------- */
 /* Several admin card grids carry an inline two-column style, which is
    right on a laptop and far too tight on a phone. An inline style beats
