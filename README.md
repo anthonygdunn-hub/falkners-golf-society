@@ -38,7 +38,7 @@ All of it lives on `admin.html`, behind a Supabase login:
 
 - Approve or reject new member requests
 - Add and edit fixtures — date, venue, address, cost, meet time, first tee time, website, notes
-- Manage who's playing, including adding guests by name who have no website account
+- Manage who's playing: tick several players from the list and add them in one go, or add somebody new to the society by name. The tick list leaves out anybody already on the round, so what is shown is what can still be added
 - Set the tee draw, which then shows publicly under that round
 - Set the pairs draw, separately from the tee draw. On an odd turnout a player can be given two pair numbers, so nobody is left out and that player gets two chances at the pairs prize
 - Log results, with whoever was actually on the round listed first
