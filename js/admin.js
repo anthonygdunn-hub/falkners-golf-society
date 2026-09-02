@@ -666,8 +666,120 @@ function populatePlayingEventSelect() {
       .join("");
   }
 
-  select.onchange = () => refreshPlayingList(select.value);
-  if (currentEvents.length) refreshPlayingList(select.value);
+  select.onchange = () => refreshPlayingPanels(select.value);
+  if (currentEvents.length) refreshPlayingPanels(select.value);
+}
+
+/* Who is on the round, and the tick list of who could be added, always
+   move together: adding somebody has to disappear them from the tick
+   list, and removing them has to bring them back. */
+async function refreshPlayingPanels(eventId) {
+  await refreshPlayingList(eventId);
+  await refreshBulkAddList(eventId);
+}
+
+/* Everyone in the player list who is NOT already on this round, as a
+   tick list, so a whole turnout goes on in one go instead of one name
+   at a time. Anybody already playing is left out rather than shown
+   ticked and disabled, so the list shrinks as the round fills up and
+   what is left is always exactly what you can still add.
+
+   A member who registered themselves online is on the round under
+   their profile, not a player row, so the players table is filtered by
+   both: the player ids on the round, and the player rows linked to a
+   profile that is on the round. Miss the second and a member who
+   signed up online would be offered again and added twice. */
+async function refreshBulkAddList(eventId) {
+  const host = document.getElementById("bulk-add-list");
+  if (!host) return;
+  if (!eventId) { host.innerHTML = '<p class="small">Pick a fixture first.</p>'; return; }
+
+  const { data: rows, error } = await client
+    .from("attendance").select("profile_id, player_id").eq("event_id", eventId);
+  if (error) {
+    host.innerHTML = `<p class="status-msg err">Couldn't work out who is already on: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  const onRoundPlayers = new Set((rows || []).map(r => r.player_id).filter(Boolean));
+  const onRoundProfiles = new Set((rows || []).map(r => r.profile_id).filter(Boolean));
+
+  const available = (currentPlayers || [])
+    .filter(p => !onRoundPlayers.has(p.id) && !(p.profile_id && onRoundProfiles.has(p.profile_id)))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!available.length) {
+    host.innerHTML = '<p class="small">Everybody in the player list is already on this round.</p>';
+    updateBulkAddButton();
+    return;
+  }
+
+  host.innerHTML = '<div class="tick-list">' + available.map(p =>
+    '<label data-name="' + escapeHtml(p.name.toLowerCase()) + '">' +
+      '<input type="checkbox" class="bulk-add-tick" value="' + p.id + '">' +
+      '<span>' + escapeHtml(p.name) + '</span>' +
+      (p.handicap != null && p.handicap !== "" ? '<span class="tick-hcap">(' + escapeHtml(String(p.handicap)) + ')</span>' : "") +
+    '</label>').join("") + '</div>';
+
+  applyBulkAddFilter();
+  updateBulkAddButton();
+}
+
+/* Typing in the filter box hides the names that do not match, rather
+   than rebuilding the list, so anything already ticked stays ticked
+   even while it is hidden. */
+function applyBulkAddFilter() {
+  const box = document.getElementById("bulk-add-filter");
+  const term = box ? box.value.trim().toLowerCase() : "";
+  let shown = 0;
+  document.querySelectorAll("#bulk-add-list .tick-list label").forEach(l => {
+    const match = !term || (l.dataset.name || "").indexOf(term) !== -1;
+    l.hidden = !match;
+    if (match) shown++;
+  });
+  const empty = document.getElementById("bulk-add-none");
+  if (empty) empty.hidden = shown > 0;
+}
+
+function bulkAddTicked() {
+  return Array.prototype.slice.call(document.querySelectorAll(".bulk-add-tick")).filter(i => i.checked);
+}
+
+function updateBulkAddButton() {
+  const btn = document.getElementById("bulk-add-btn");
+  if (!btn) return;
+  const n = bulkAddTicked().length;
+  btn.disabled = n === 0;
+  btn.textContent = n === 0 ? "Add ticked players" : (n === 1 ? "Add 1 player" : "Add " + n + " players");
+}
+
+/* One insert for the whole ticked set, so it either all goes on or
+   none of it does and nobody is left half added. */
+async function bulkAddPlayers() {
+  const eventId = document.getElementById("playing-event-select").value;
+  const statusEl = document.getElementById("bulk-add-status");
+  const ticked = bulkAddTicked();
+  if (!eventId || !ticked.length) return;
+
+  const rows = ticked.map(i => ({ event_id: eventId, player_id: i.value }));
+  statusEl.textContent = "Adding…";
+  statusEl.className = "small";
+
+  const { error } = await client.from("attendance").insert(rows);
+  if (error) {
+    statusEl.textContent = error.code === "23505"
+      ? "One of those is already on this round. Reload and try again."
+      : "Couldn't add them: " + error.message;
+    statusEl.className = "status-msg err";
+    return;
+  }
+
+  statusEl.textContent = rows.length === 1 ? "1 player added." : rows.length + " players added.";
+  statusEl.className = "status-msg ok";
+  const filter = document.getElementById("bulk-add-filter");
+  if (filter) filter.value = "";
+  await refreshPlayingPanels(eventId);
 }
 
 async function refreshPlayingList(eventId) {
@@ -732,7 +844,7 @@ async function removeFromRound(attendanceId, eventId) {
   }
   statusEl.textContent = "";
   statusEl.className = "small";
-  await refreshPlayingList(eventId);
+  await refreshPlayingPanels(eventId);
 }
 
 async function addGuest(e) {
@@ -973,6 +1085,12 @@ function wireForms() {
   document.getElementById("add-event-form").addEventListener("submit", addEvent);
   document.getElementById("edit-event-form").addEventListener("submit", saveEventEdits);
   document.getElementById("add-guest-form").addEventListener("submit", addGuest);
+  const bulkBtn = document.getElementById("bulk-add-btn");
+  if (bulkBtn) bulkBtn.addEventListener("click", bulkAddPlayers);
+  const bulkFilter = document.getElementById("bulk-add-filter");
+  if (bulkFilter) bulkFilter.addEventListener("input", applyBulkAddFilter);
+  const bulkHost = document.getElementById("bulk-add-list");
+  if (bulkHost) bulkHost.addEventListener("change", e => { if (e.target && e.target.classList && e.target.classList.contains("bulk-add-tick")) updateBulkAddButton(); });
   document.getElementById("prize-form").addEventListener("submit", savePrizes);
   document.getElementById("pot-form").addEventListener("submit", addPotEntry);
   document.getElementById("bank-form").addEventListener("submit", saveBankDetails);
