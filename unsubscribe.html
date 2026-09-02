@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Newsletter — The Falkners Arms Golf Society</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg">
+<link rel="stylesheet" href="css/style.css?v=2026-09-02a">
+</head>
+<body>
+
+<section class="section">
+  <div class="container" style="max-width:520px;">
+    <div class="scorecard">
+      <div class="scorecard-head"><h3>Newsletter</h3></div>
+      <div style="padding:24px;">
+        <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest" width="56" height="56" style="display:block;margin-bottom:16px;">
+        <p id="message" class="small">One moment…</p>
+        <a class="btn btn-outline" href="index.html">Back to the site</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js?v=2026-08-16c"></script>
+<script>
+(function () {
+  var msg = document.getElementById("message");
+  var token = new URLSearchParams(location.search).get("t") || "";
+
+  function say(text) { msg.textContent = text; }
+
+  if (!/^[0-9a-f-]{36}$/i.test(token)) {
+    say("That link is not valid, so nothing has changed. If you meant to come off the newsletter, use the link at the bottom of the email.");
+    return;
+  }
+
+  var client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // Row level security blocks anonymous writes to the subscriber list, so the
+  // work is done by newsletter_unsubscribe in the database. It takes nothing
+  // but this token and cannot be used to read or change anything else.
+  client.rpc("newsletter_unsubscribe", { t: token }).then(function (res) {
+    if (res.error) {
+      say("Something went wrong at our end, so you may still be on the list. Reply to the newsletter and we will take you off by hand.");
+      return;
+    }
+    if (res.data === true) {
+      say("You are off the newsletter list. Fixtures, results and the monthly round-up all stay on the website whenever you want them.");
+    } else {
+      say("That link is not valid, so nothing has changed. It may have already been used.");
+    }
+  });
+})();
+</script>
+</body>
+</html>
