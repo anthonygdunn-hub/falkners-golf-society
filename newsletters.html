@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Newsletters — The Falkners Arms Golf Society</title>
+<link rel="canonical" href="https://www.thefalknersarmsgolfsociety.co.uk/newsletters.html">
+<meta name="description" content="Monthly round-ups: results, the Order of Merit and the fixtures still to come.">
+<meta property="og:title" content="Newsletters — The Falkners Arms Golf Society">
+<meta property="og:description" content="Monthly round-ups: results, the Order of Merit and the fixtures still to come.">
+<meta property="og:image" content="https://www.thefalknersarmsgolfsociety.co.uk/assets/logo.jpeg">
+<meta property="og:url" content="https://www.thefalknersarmsgolfsociety.co.uk/newsletters.html">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg">
+<link rel="stylesheet" href="css/style.css?v=2026-09-02a">
+<style>
+  .nl-layout { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .nl-layout { grid-template-columns: 220px minmax(0, 1fr); align-items: start; } }
+  .nl-months { list-style: none; margin: 0; padding: 0; }
+  .nl-months li { border-bottom: 1px solid var(--line); }
+  .nl-months button { width: 100%; text-align: left; padding: 11px 12px; background: none; border: 0; cursor: pointer;
+    font-family: var(--font-display); font-size: 15px; letter-spacing: .04em; text-transform: uppercase; color: var(--navy); }
+  .nl-months button:hover { background: var(--paper); }
+  .nl-months button[aria-current="true"] { background: var(--navy); color: #fff; }
+  .nl-issue { border: 1px solid var(--line); background: var(--paper); }
+  .nl-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .nl-status { font-size: 13px; color: var(--ink-soft); }
+  @media print { .site-header, .site-footer, .nl-months, .nl-actions, .eyebrow, h1, .nl-status, .whatsapp-fab { display: none !important; } .nl-issue { border: 0; background: #fff; } }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html">The Society</a></li>
+      <li><a href="committee.html">Committee</a></li>
+      <li><a href="hole-in-one.html">Hole in One Club</a></li>
+      <li><a href="leaderboard.html">Leaderboard</a></li>
+      <li><a href="fixtures.html">Fixtures</a></li>
+      <li><a href="results.html">Results</a></li>
+      <li><a href="gallery.html">Gallery</a></li>
+      <li id="nav-my-profile"><a href="member.html">My Profile</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+    <a class="btn btn-outline" id="nav-auth-btn" href="member.html">Login</a>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <span class="eyebrow">Month by month</span>
+    <h1 class="mt-0">Newsletters</h1>
+    <p class="small">Each issue comes out on the Monday of the week of the last Sunday in the month, and holds the results, the Order of Merit and the fixtures as they stood that morning.</p>
+
+    <div class="nl-layout">
+      <div class="scorecard">
+        <div class="scorecard-head"><h3>Issues</h3></div>
+        <ul class="nl-months" id="months"><li><button type="button">Loading…</button></li></ul>
+      </div>
+
+      <div>
+        <div class="nl-actions">
+          <button class="btn btn-outline" id="share-btn" type="button">Copy link to this issue</button>
+          <button class="btn btn-outline" id="print-btn" type="button">Print or save as PDF</button>
+        </div>
+        <p class="nl-status" id="status">Reading the fixtures and results…</p>
+        <div class="nl-issue" id="issue"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <p class="small">© 2026 The Falkners Arms Golf Society</p>
+    <ul>
+      <li><a href="contact.html">Contact</a></li>
+      <li><a href="admin.html">Committee login</a></li>
+    </ul>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js?v=2026-08-16c"></script>
+<script src="js/nav.js?v=2026-09-03a"></script>
+<script>
+(function () {
+  var client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var SITE = location.origin;
+  var FACEBOOK = "https://www.facebook.com/thefalknersarms";
+  var FIRST_ISSUE = "2026-03-01";   // no issues before this month
+
+  // An issue comes out on the Monday of the week containing the last Sunday
+  // of the month, because that is the week the last round is usually played.
+  // September 2026: last Sunday is the 27th, so the issue is Monday the 21st.
+  function publishDate(period) {
+    var d = new Date(period + "T00:00:00Z");
+    var last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+    var lastSunday = new Date(last.getTime() - last.getUTCDay() * 86400000);
+    return new Date(lastSunday.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+  }
+
+  var C = { navy: "#1B3A6C", navyDark: "#10233F", gold: "#B8923C", goldLight: "#D9BE7C",
+    paper: "#F3F5F9", white: "#FFFFFF", ink: "#171F30", inkSoft: "#57617A", line: "#DCE2EC" };
+  var DISPLAY = "'Oswald','Arial Narrow',Arial,Helvetica,sans-serif";
+  var BODY = "'Inter',-apple-system,'Segoe UI',Arial,Helvetica,sans-serif";
+
+  var el = function (id) { return document.getElementById(id); };
+  var data = null, issues = {}, current = null;
+
+  function esc(v) {
+    return String(v === null || v === undefined ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function longDate(iso) {
+    return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB",
+      { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
+  }
+  function monthName(iso) {
+    return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB",
+      { month: "long", year: "numeric", timeZone: "Europe/London" });
+  }
+  function clockTime(t) {
+    if (!t) return null;
+    var p = t.split(":"), h = Number(p[0]), m = Number(p[1]);
+    var s = h < 12 ? "am" : "pm", hour = h % 12 === 0 ? 12 : h % 12;
+    return m ? hour + ":" + String(m).padStart(2, "0") + s : hour + s;
+  }
+  function money(n) { return "£" + Number(n).toFixed(2).replace(/\.00$/, ""); }
+  function monthEnd(period) {
+    var d = new Date(period + "T00:00:00Z");
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+  }
+  function thisMonth() {
+    var d = new Date();
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 10);
+  }
+  function paras(text) {
+    if (!text || !text.trim()) return "";
+    return text.trim().split(/\n\s*\n/).map(function (p) {
+      return '<p style="margin:0 0 12px;font-family:' + BODY + ';font-size:15px;line-height:1.6;color:' + C.ink + ';">' +
+        esc(p).replace(/\n/g, "<br>") + "</p>";
+    }).join("");
+  }
+
+  // The season table, same rule as js/site-data.js.
+  function buildLeaderboard(results, countingRounds) {
+    var byPlayer = {};
+    results.forEach(function (r) {
+      var name = (r.players && r.players.name) || "Unknown";
+      if (!byPlayer[name]) byPlayer[name] = { name: name, scores: [] };
+      byPlayer[name].scores.push(Number(r.points) || 0);
+    });
+    return Object.keys(byPlayer).map(function (k) {
+      var p = byPlayer[k];
+      p.rounds = p.scores.length;
+      var counted = countingRounds && countingRounds < p.scores.length
+        ? p.scores.slice().sort(function (a, b) { return b - a; }).slice(0, countingRounds)
+        : p.scores;
+      p.countedRounds = counted.length;
+      p.totalPoints = counted.reduce(function (s, v) { return s + v; }, 0);
+      return p;
+    }).sort(function (a, b) { return b.totalPoints - a.totalPoints; });
+  }
+
+  async function load() {
+    var soft = function (p) { return p.then(function (r) { return r.data || []; }).catch(function () { return []; }); };
+    var events = await soft(client.from("events").select("*").order("event_date"));
+    var results = await soft(client.from("results").select("*, players(name), events(event_date)"));
+    var prizes = await soft(client.from("event_prizes").select("*"));
+    var ledger = await soft(client.from("hole_in_one_ledger").select("amount, entry_date"));
+    var written = await soft(client.from("newsletters").select("period, intro, pub_news"));
+    var league = null;
+    try { league = (await client.from("league_settings").select("counting_rounds").maybeSingle()).data; } catch (e) {}
+
+    written.forEach(function (n) { issues[n.period] = n; });
+    data = { events: events, results: results, prizes: prizes, ledger: ledger,
+      countingRounds: (league && league.counting_rounds) || null };
+
+    renderMonths();
+    var wanted = (location.hash || "").replace("#", "");
+    show(/^\d{4}-\d{2}-01$/.test(wanted) ? wanted : latestIssue());
+  }
+
+  // Every month from the first issue whose publish Monday has arrived, newest
+  // first. A new issue therefore appears on its own on that Monday.
+  function months() {
+    var out = [], today = new Date().toISOString().slice(0, 10), p = thisMonth();
+    while (p >= FIRST_ISSUE) {
+      if (publishDate(p) <= today) out.push(p);
+      var d = new Date(p + "T00:00:00Z");
+      p = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+    }
+    return out;
+  }
+
+  function latestIssue() {
+    var list = months();
+    return list.length ? list[0] : thisMonth();
+  }
+
+  function renderMonths() {
+    el("months").innerHTML = months().map(function (p) {
+      return '<li><button type="button" data-period="' + p + '">' + monthName(p) + "</button></li>";
+    }).join("");
+    el("months").addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-period]");
+      if (b) show(b.getAttribute("data-period"));
+    });
+  }
+
+  function gather(period) {
+    // The issue is a record of where things stood on its publish Monday, so
+    // everything is cut off there rather than at the end of the month.
+    var cutoff = publishDate(period);
+
+    // A round counts as played once it has scores against it, which is more
+    // reliable than the results_entered flag.
+    var scored = {};
+    data.results.forEach(function (r) { scored[r.event_id] = true; });
+
+    var played = data.events.filter(function (e) { return scored[e.id] && e.event_date <= cutoff; })
+      .sort(function (a, b) { return a.event_date < b.event_date ? 1 : -1; });
+    var lastRound = played[0] || null;
+
+    var roundResults = lastRound
+      ? data.results.filter(function (r) { return r.event_id === lastRound.id; })
+          .sort(function (a, b) { return Number(b.points) - Number(a.points); })
+      : [];
+    var roundPrizes = lastRound
+      ? data.prizes.filter(function (p) { return p.event_id === lastRound.id; })[0] || null
+      : null;
+
+    var dateOf = function (r) { return (r.events && r.events.event_date) || ""; };
+    var now = buildLeaderboard(data.results.filter(function (r) { return dateOf(r) <= cutoff; }), data.countingRounds);
+    var before = buildLeaderboard(data.results.filter(function (r) { return dateOf(r) < period; }), data.countingRounds);
+    var wasAt = {};
+    before.forEach(function (p, i) { wasAt[p.name] = i + 1; });
+    var leaderboard = now.map(function (p, i) {
+      var was = wasAt[p.name];
+      return Object.assign({}, p, { position: i + 1, move: was ? was - (i + 1) : null });
+    });
+
+    var pot = data.ledger.filter(function (l) { return l.entry_date <= cutoff; })
+      .reduce(function (s, l) { return s + Number(l.amount); }, 0);
+
+    return {
+      period: period, cutoff: cutoff, lastRound: lastRound,
+      inPeriod: lastRound ? lastRound.event_date >= period : false,
+      roundResults: roundResults, roundPrizes: roundPrizes, leaderboard: leaderboard,
+      countingRounds: data.countingRounds, pot: pot, players: now.length,
+      fixtures: data.events.filter(function (e) { return e.event_date >= cutoff; }).slice(0, 3),
+      issue: issues[period] || {}
+    };
+  }
+
+  function sectionHead(label) {
+    return '<tr><td style="padding:26px 24px 0;">' +
+      '<div style="font-family:' + DISPLAY + ';font-size:19px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.navy + ';">' + esc(label) + "</div>" +
+      '<div style="height:3px;width:44px;background:' + C.gold + ';margin-top:8px;"></div></td></tr>';
+  }
+
+  // A prize shows whenever a winner is named. The hole is added only when the
+  // committee has set one, because the hole columns arrived mid-season.
+  function prizeRows(event, p) {
+    if (!p) return "";
+    var items = [];
+    var add = function (label, hole, winner) {
+      if (winner) items.push([label + (hole ? " (hole " + hole + ")" : ""), winner]);
+    };
+    if (p.winning_pair) items.push(["Winning pair", p.winning_pair]);
+    add("Longest drive, front", event.ld_front_hole, p.longest_drive_front);
+    add("Longest drive, back", event.ld_back_hole, p.longest_drive_back);
+    add("Nearest the pin, front", event.ntp_front_hole, p.nearest_pin_front);
+    add("Nearest the pin, back", event.ntp_back_hole, p.nearest_pin_back);
+    add("Nearest the pin in 2, front", event.ntp2_front_hole, p.nearest_pin2_front);
+    add("Nearest the pin in 2, back", event.ntp2_back_hole, p.nearest_pin2_back);
+    if (!items.length) return "";
+    return '<tr><td style="padding:16px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' +
+      items.map(function (it) {
+        return '<tr><td style="padding:7px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:13px;color:' + C.inkSoft + ';">' + esc(it[0]) + "</td>" +
+          '<td align="right" style="padding:7px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:13px;font-weight:600;color:' + C.ink + ';">' + esc(it[1]) + "</td></tr>";
+      }).join("") + "</table></td></tr>";
+  }
+
+  function moveCell(move) {
+    if (move === null) return '<span style="color:' + C.gold + ';font-size:11px;">new</span>';
+    if (move > 0) return '<span style="color:#1D7A46;font-size:12px;">&#9650; ' + move + "</span>";
+    if (move < 0) return '<span style="color:#A33131;font-size:12px;">&#9660; ' + Math.abs(move) + "</span>";
+    return '<span style="color:' + C.inkSoft + ';font-size:12px;">&ndash;</span>';
+  }
+
+  function fixtureBlock(e) {
+    var bits = [
+      e.meet_time ? "Meet " + clockTime(e.meet_time) : null,
+      e.tee_time ? "First tee " + clockTime(e.tee_time) : null,
+      e.cost ? money(e.cost) + " a head" : null
+    ].filter(Boolean).join(" &nbsp;·&nbsp; ");
+    return '<tr><td style="padding:14px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:' + C.paper + ';border-left:3px solid ' + C.navy + ';">' +
+      '<tr><td style="padding:14px 16px;">' +
+      '<div style="font-family:' + DISPLAY + ';font-size:17px;color:' + C.navy + ';text-transform:uppercase;letter-spacing:0.04em;">' + esc(e.name) + "</div>" +
+      '<div style="font-family:' + BODY + ';font-size:14px;color:' + C.ink + ';padding-top:4px;">' + esc(e.venue || "Venue to be confirmed") + "</div>" +
+      '<div style="font-family:' + BODY + ';font-size:13px;color:' + C.inkSoft + ';padding-top:2px;">' + esc(longDate(e.event_date)) + "</div>" +
+      (bits ? '<div style="font-family:' + BODY + ';font-size:13px;color:' + C.inkSoft + ';padding-top:6px;">' + bits + "</div>" : "") +
+      "</td></tr></table></td></tr>";
+  }
+
+  function button(href, label) {
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:' + C.navy + ';border:1.5px solid ' + C.gold + ';">' +
+      '<a href="' + href + '" style="display:inline-block;padding:11px 20px;font-family:' + DISPLAY + ';font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:' + C.white + ';text-decoration:none;">' + esc(label) + "</a></td></tr></table>";
+  }
+
+  function buildHtml(d) {
+    var top = d.roundResults.slice(0, 3);
+    var table = d.leaderboard.slice(0, 10);
+    var note = d.countingRounds && d.leaderboard.some(function (p) { return p.rounds > d.countingRounds; })
+      ? "Best " + d.countingRounds + " rounds count toward the Order of Merit." : "";
+
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:' + C.paper + ';"><tr><td align="center" style="padding:0;">' +
+      '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:' + C.white + ';border-collapse:collapse;">' +
+
+      '<tr><td style="background:' + C.navy + ';padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>' +
+      '<td width="52" valign="middle" style="padding-right:12px;"><img src="assets/logo.jpeg" width="52" height="52" alt="The Falkners Arms Golf Society crest" style="display:block;width:52px;height:52px;border:0;"></td>' +
+      '<td valign="middle"><div style="font-family:' + DISPLAY + ';font-size:20px;line-height:1.1;letter-spacing:0.03em;text-transform:uppercase;color:' + C.white + ';">The Falkners Arms Golf Society</div>' +
+      '<div style="font-family:' + BODY + ';font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:' + C.goldLight + ';padding-top:4px;">Fleet, Hampshire &nbsp;·&nbsp; ' + esc(longDate(d.cutoff)) + "</div></td>" +
+      "</tr></table></td></tr>" +
+      '<tr><td style="height:4px;background:' + C.gold + ';font-size:0;line-height:0;">&nbsp;</td></tr>' +
+
+      (d.issue.intro ? '<tr><td style="padding:24px 24px 0;">' + paras(d.issue.intro) + "</td></tr>" : "") +
+
+      (d.lastRound ? (
+        sectionHead(d.inPeriod ? "This month's round" : "Most recent round") +
+        '<tr><td style="padding:14px 24px 0;">' +
+        '<div style="font-family:' + DISPLAY + ';font-size:22px;color:' + C.navy + ';text-transform:uppercase;letter-spacing:0.03em;">' + esc(d.lastRound.name) + "</div>" +
+        '<div style="font-family:' + BODY + ';font-size:15px;color:' + C.ink + ';padding-top:4px;">' + esc(d.lastRound.venue || "") + "</div>" +
+        '<div style="font-family:' + BODY + ';font-size:13px;color:' + C.inkSoft + ';padding-top:2px;">' + esc(longDate(d.lastRound.event_date)) + " &nbsp;·&nbsp; " + d.roundResults.length + " played</div></td></tr>" +
+        (top.length ? '<tr><td style="padding:14px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' +
+          top.map(function (r, i) {
+            return '<tr><td width="30" style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + DISPLAY + ';font-size:16px;color:' + (i === 0 ? C.gold : C.inkSoft) + ';">' + (i + 1) + "</td>" +
+              '<td style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:15px;font-weight:' + (i === 0 ? 700 : 600) + ";color:" + C.ink + ';">' + esc((r.players && r.players.name) || "Unknown") + "</td>" +
+              '<td align="right" style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:15px;color:' + C.ink + ';">' + esc(r.points) + " pts</td></tr>";
+          }).join("") + "</table></td></tr>" : "") +
+        prizeRows(d.lastRound, d.roundPrizes) +
+        '<tr><td style="padding:16px 24px 0;">' + button("results.html", "Full scorecard") + "</td></tr>"
+      ) : "") +
+
+      (table.length ? (
+        sectionHead("Order of Merit " + d.period.slice(0, 4)) +
+        '<tr><td style="padding:14px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' +
+        '<tr><td width="34" style="padding:0 0 6px;font-family:' + BODY + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.inkSoft + ';">Pos</td>' +
+        '<td style="padding:0 0 6px;font-family:' + BODY + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.inkSoft + ';">Player</td>' +
+        '<td width="52" align="right" style="padding:0 0 6px;font-family:' + BODY + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.inkSoft + ';">Move</td>' +
+        '<td width="46" align="right" style="padding:0 0 6px;font-family:' + BODY + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.inkSoft + ';">Rnds</td>' +
+        '<td width="52" align="right" style="padding:0 0 6px;font-family:' + BODY + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.inkSoft + ';">Pts</td></tr>' +
+        table.map(function (p) {
+          return '<tr style="background:' + (p.position === 1 ? "#FBF6E9" : C.white) + ';">' +
+            '<td style="padding:9px 0 9px 4px;border-bottom:1px solid ' + C.line + ';font-family:' + DISPLAY + ';font-size:15px;color:' + (p.position === 1 ? C.gold : C.navy) + ';">' + p.position + "</td>" +
+            '<td style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:14px;font-weight:' + (p.position === 1 ? 700 : 500) + ";color:" + C.ink + ';">' + esc(p.name) + "</td>" +
+            '<td align="right" style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';">' + moveCell(p.move) + "</td>" +
+            '<td align="right" style="padding:9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:13px;color:' + C.inkSoft + ';">' + (p.countedRounds !== p.rounds ? p.countedRounds + "/" + p.rounds : p.rounds) + "</td>" +
+            '<td align="right" style="padding:9px 4px 9px 0;border-bottom:1px solid ' + C.line + ';font-family:' + BODY + ';font-size:14px;font-weight:600;color:' + C.ink + ';">' + p.totalPoints + "</td></tr>";
+        }).join("") + "</table>" +
+        '<div style="font-family:' + BODY + ';font-size:12px;color:' + C.inkSoft + ';padding-top:10px;">' +
+        (note ? esc(note) + " " : "") + d.players + " players have a card in this season.</div>" +
+        '<div style="padding-top:14px;">' + button("leaderboard.html", "Full leaderboard") + "</div></td></tr>"
+      ) : "") +
+
+      (d.fixtures.length ? sectionHead("Coming up") + d.fixtures.map(fixtureBlock).join("") +
+        '<tr><td style="padding:16px 24px 0;">' + button("fixtures.html", "Put your name down") + "</td></tr>" : "") +
+
+      (d.pot > 0 ? sectionHead("Hole in one pot") +
+        '<tr><td style="padding:14px 24px 0;"><div style="font-family:' + DISPLAY + ';font-size:34px;color:' + C.gold + ';line-height:1;">' + money(d.pot) + "</div>" +
+        '<div style="font-family:' + BODY + ';font-size:14px;color:' + C.inkSoft + ';padding-top:6px;">Rolling over until somebody finally holes one.</div></td></tr>' : "") +
+
+      (d.issue.pub_news ? sectionHead("At The Falkners Arms") +
+        '<tr><td style="padding:14px 24px 0;">' + paras(d.issue.pub_news) +
+        '<div style="font-family:' + BODY + ';font-size:13px;"><a href="' + FACEBOOK + '" style="color:' + C.navy + ';">See the pub\'s Facebook page</a></div></td></tr>' : "") +
+
+      '<tr><td style="padding:28px 24px 0;"><div style="height:1px;background:' + C.line + ';font-size:0;line-height:0;">&nbsp;</div></td></tr>' +
+      '<tr><td style="background:' + C.navyDark + ';padding:20px 24px;">' +
+      '<div style="font-family:' + DISPLAY + ';font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:' + C.white + ';">The Falkners Arms Golf Society</div>' +
+      '<div style="font-family:' + BODY + ';font-size:12px;color:#A9B6CE;padding-top:6px;line-height:1.6;">Fleet, Hampshire. Founded 2023.<br>' +
+      '<a href="' + SITE + '" style="color:' + C.goldLight + ';">thefalknersarmsgolfsociety.co.uk</a></div></td></tr>' +
+
+      "</table></td></tr></table>";
+  }
+
+  function show(period) {
+    if (!data) return;
+    current = period;
+    var d = gather(period);
+    el("issue").innerHTML = buildHtml(d);
+    history.replaceState(null, "", location.pathname + "#" + period);
+    document.title = monthName(period) + " round-up — The Falkners Arms Golf Society";
+
+    Array.prototype.forEach.call(el("months").querySelectorAll("button"), function (b) {
+      if (b.getAttribute("data-period") === period) b.setAttribute("aria-current", "true");
+      else b.removeAttribute("aria-current");
+    });
+
+    var today = new Date().toISOString().slice(0, 10);
+    if (d.cutoff > today) {
+      el("status").textContent = "Not out yet. This issue goes live on " + longDate(d.cutoff) + ", and the figures will move until then.";
+    } else if (!d.lastRound) {
+      el("status").textContent = "No rounds had been scored by then.";
+    } else {
+      el("status").textContent = d.inPeriod ? "" : "No round was played that month, so " + d.lastRound.name + " is the last card in.";
+    }
+  }
+
+  el("print-btn").addEventListener("click", function () { window.print(); });
+  el("share-btn").addEventListener("click", function () {
+    var url = location.origin + location.pathname + "#" + current;
+    if (navigator.share) { navigator.share({ title: monthName(current) + " round-up", url: url }); return; }
+    navigator.clipboard.writeText(url).then(function () { el("status").textContent = "Link copied."; });
+  });
+
+  load().catch(function (err) { el("status").textContent = "Could not load the issues: " + err.message; });
+})();
+</script>
+</body>
+</html>
