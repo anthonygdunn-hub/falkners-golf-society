@@ -235,7 +235,23 @@ function renderFixtureFacts(event) {
     ? `<div class="fixture-notes">${escapeHtml(event.notes)}</div>`
     : "";
 
-  return facts + notes;
+  return facts + renderCompetitions(event) + notes;
+}
+
+/* The side competitions this round is running, with the hole each is
+   played on, so players know what is on before they tee off. A round
+   with none set up shows nothing at all rather than an empty heading.
+   Winners appear later on the results page, not here. */
+function renderCompetitions(event) {
+  if (!window.competitionsOn) return "";
+  const comps = window.competitionsOn(event);
+  if (!comps.length) return "";
+
+  return `
+    <div class="fixture-section-label" style="margin-top:16px;">Competitions on the day</div>
+    <dl class="fixture-facts">
+      ${comps.map(c => `<dt>${escapeHtml(window.competitionName(c))}</dt><dd>Hole ${window.competitionHole(event, c)}</dd>`).join("")}
+    </dl>`;
 }
 
 // Postgres hands back "08:30:00"; nobody says "oh eight thirty hundred".

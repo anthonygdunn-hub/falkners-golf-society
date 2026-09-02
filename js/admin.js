@@ -326,37 +326,84 @@ function fillEventSelect(id, { includeBlank = false, onlyRounds = false } = {}) 
 
 // ---- Round prizes ----------------------------------------------------
 
+/* The placings are on every round, so they are always in the form. The
+   six side competitions are not: they are built into the form from
+   whichever ones this fixture is running, so the ids for those are
+   worked out at render time rather than listed here. */
 const PRIZE_FIELDS = {
   "prize-first": "first_place",
   "prize-second": "second_place",
-  "prize-third": "third_place",
- 
-  "prize-ld-front": "longest_drive_front",
-  "prize-ld-back": "longest_drive_back",
-  "prize-np-front": "nearest_pin_front",
-  "prize-np-back": "nearest_pin_back"
+  "prize-third": "third_place"
 };
 
-const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-ld-front","prize-ld-back","prize-np-front","prize-np-back","prize-pair-a","prize-pair-b"]; function fillPrizePlayerSelects() { const opts = '<option value="">-- none --</option>' + (currentPlayers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => '<option value="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</option>').join(""); PRIZE_SELECTS.forEach(id => { const el = document.getElementById(id); if (el && el.tagName === "SELECT") { const keep = el.value; el.innerHTML = opts; el.value = keep; } }); } function setPrizeValue(id, value) { const el = document.getElementById(id); if (!el) return; const val = String(value || "").trim(); if (val && el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === val)) { const opt = document.createElement("option"); opt.value = val; opt.textContent = val + " (not in the player list)"; el.appendChild(opt); } el.value = val; } function populatePrizeEventSelect() {
+const compFieldId = comp => "prize-" + comp.id;
+
+/* Which competitions to show a winner box for. Normally the ones this
+   round is running, but a competition with a winner already recorded
+   stays visible even if its hole was never filled in, so nothing
+   logged in the past can be stranded where it cannot be edited. */
+function prizeCompetitions(event, data) {
+  return window.ROUND_COMPETITIONS.filter(comp =>
+    window.competitionHole(event, comp) !== null ||
+    (data && String(data[comp.winner] || "").trim()));
+}
+
+/* Rebuilds the competition half of the prizes form, two to a row. */
+function renderPrizeCompetitions(event, data) {
+  const host = document.getElementById("prize-competitions");
+  if (!host) return [];
+  const comps = prizeCompetitions(event, data);
+
+  if (!comps.length) {
+    host.innerHTML = '<p class="small">No side competitions are set up for this round yet. Add a hole number against one under Edit a fixture and it will appear here.</p>';
+    return [];
+  }
+
+  let html = "";
+  comps.forEach((comp, i) => {
+    if (i % 2 === 0) html += '<div class="form-row">';
+    const hole = window.competitionHole(event, comp);
+    const id = compFieldId(comp);
+    html += '<div class="form-field"><label for="' + id + '">' +
+      escapeHtml(window.competitionName(comp)) +
+      (hole ? ' <span class="small">(hole ' + hole + ')</span>' : "") +
+      '</label><select id="' + id + '"></select></div>';
+    if (i % 2 === 1 || i === comps.length - 1) html += '</div>';
+  });
+  host.innerHTML = html;
+  return comps;
+}
+
+const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-pair-a","prize-pair-b"]; function prizeSelectIds() { return PRIZE_SELECTS.concat(window.ROUND_COMPETITIONS.map(compFieldId)); } function fillPrizePlayerSelects() { const opts = '<option value="">-- none --</option>' + (currentPlayers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => '<option value="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</option>').join(""); prizeSelectIds().forEach(id => { const el = document.getElementById(id); if (el && el.tagName === "SELECT") { const keep = el.value; el.innerHTML = opts; el.value = keep; } }); } function setPrizeValue(id, value) { const el = document.getElementById(id); if (!el) return; const val = String(value || "").trim(); if (val && el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === val)) { const opt = document.createElement("option"); opt.value = val; opt.textContent = val + " (not in the player list)"; el.appendChild(opt); } el.value = val; } function populatePrizeEventSelect() {
   const select = fillEventSelect("prize-event-select");
   if (!select) return;
   select.onchange = () => loadPrizes(select.value);
   if (currentEvents.length) loadPrizes(select.value);
 }
 
+/* The winner boxes for the side competitions are built from the
+   fixture, so this reads the round and its prizes together, lays the
+   form out to match, and only then fills the values in. */
 async function loadPrizes(eventId) {
   const statusEl = document.getElementById("prize-status");
-  fillPrizePlayerSelects();  Object.keys(PRIZE_FIELDS).forEach(id => { setPrizeValue(id, ""); });
   if (statusEl) statusEl.textContent = "";
-  if (!eventId) return;
+  if (!eventId) { renderPrizeCompetitions(null, null); fillPrizePlayerSelects(); return; }
 
   const { data } = await client
     .from("event_prizes").select("*").eq("event_id", eventId).maybeSingle();
+  const event = (currentEvents || []).find(e => e.id === eventId) || null;
+
+  renderPrizeCompetitions(event, data);
+  fillPrizePlayerSelects();
+  prizeSelectIds().forEach(id => { setPrizeValue(id, ""); });
   if (!data) return;
 
-  Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
-    setPrizeValue(id, data[col] ?? ""); if (id === "prize-first") { var pr = String(data.winning_pair || "").split(/\s*&\s*|\s+and\s+/i); setPrizeValue("prize-pair-a", (pr[0] || "").trim()); setPrizeValue("prize-pair-b", (pr[1] || "").trim()); }
-  });
+  Object.entries(PRIZE_FIELDS).forEach(([id, col]) => { setPrizeValue(id, data[col] ?? ""); });
+  window.ROUND_COMPETITIONS.forEach(comp => { setPrizeValue(compFieldId(comp), data[comp.winner] ?? ""); });
+
+  const pr = String(data.winning_pair || "").split(/\s*&\s*|\s+and\s+/i);
+  setPrizeValue("prize-pair-a", (pr[0] || "").trim());
+  setPrizeValue("prize-pair-b", (pr[1] || "").trim());
 }
 
 async function savePrizes(e) {
@@ -365,10 +412,25 @@ async function savePrizes(e) {
   const statusEl = document.getElementById("prize-status");
   if (!eventId) return;
 
-  const row = { event_id: eventId, updated_at: new Date().toISOString() };  var pairA = (document.getElementById("prize-pair-a") || {}).value || "";  var pairB = (document.getElementById("prize-pair-b") || {}).value || "";  row.winning_pair = (pairA && pairB) ? (pairA + " & " + pairB) : (pairA || pairB || null);  var pairA = (document.getElementById("prize-pair-a") || {}).value || "";
+  const row = { event_id: eventId, updated_at: new Date().toISOString() };
+  const readField = id => String((document.getElementById(id) || {}).value || "").trim();
+
+  const pairA = readField("prize-pair-a");
+  const pairB = readField("prize-pair-b");
+  row.winning_pair = (pairA && pairB) ? (pairA + " & " + pairB) : (pairA || pairB || null);
+
   Object.entries(PRIZE_FIELDS).forEach(([id, col]) => {
-    const value = String((document.getElementById(id) || {}).value || "").trim();
+    const value = readField(id);
     row[col] = value === "" ? null : value;
+  });
+
+  /* Every competition column is written, not just the ones on screen.
+     A competition dropped from the round has no box any more, so it
+     reads as empty and its old winner is cleared rather than left
+     behind to reappear if the competition is switched back on. */
+  window.ROUND_COMPETITIONS.forEach(comp => {
+    const value = readField(compFieldId(comp));
+    row[comp.winner] = value === "" ? null : value;
   });
 
   statusEl.textContent = "Saving…";
@@ -753,6 +815,10 @@ function loadEventIntoEditForm(eventId) {
   set("edit-event-website", event.website);
   set("edit-event-format", event.format);
   set("edit-event-notes", event.notes);
+  window.ROUND_COMPETITIONS.forEach(comp => {
+    const hole = window.competitionHole(event, comp);
+    set("edit-hole-" + comp.id, hole == null ? "" : hole);
+  });
   document.getElementById("edit-event-status").textContent = "";
 }
 
@@ -777,6 +843,29 @@ async function saveEventEdits(e) {
     notes: val("edit-event-notes") || null,
     cost: costRaw === "" ? null : Number(costRaw)
   };
+
+  /* A hole is only accepted as 1 to 18. Anything else clears the box
+     and switches that competition off, which is also how the database
+     check constraint sees it, so the form can never save a round the
+     database would reject. */
+  const badHoles = [];
+  window.ROUND_COMPETITIONS.forEach(comp => {
+    const raw = val("edit-hole-" + comp.id);
+    if (raw === "") { patch[comp.hole] = null; return; }
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 18) {
+      badHoles.push(window.competitionName(comp));
+      patch[comp.hole] = null;
+      return;
+    }
+    patch[comp.hole] = n;
+  });
+
+  if (badHoles.length) {
+    statusEl.textContent = "A hole has to be a whole number from 1 to 18. Check " + badHoles.join(", ") + ".";
+    statusEl.className = "status-msg err";
+    return;
+  }
 
   if (!patch.name || !patch.event_date) {
     statusEl.textContent = "A round name and date are both required.";
