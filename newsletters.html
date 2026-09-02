@@ -67,6 +67,7 @@
       <div>
         <div class="nl-actions">
           <button class="btn btn-outline" id="share-btn" type="button">Copy link to this issue</button>
+          <button class="btn btn-outline" id="wa-btn" type="button">Share to WhatsApp</button>
           <button class="btn btn-outline" id="print-btn" type="button">Print or save as PDF</button>
         </div>
         <p class="nl-status" id="status">Reading the fixtures and results…</p>
@@ -415,6 +416,39 @@
       el("status").textContent = d.inPeriod ? "" : "No round was played that month, so " + d.lastRound.name + " is the last card in.";
     }
   }
+
+  // A short post for the group, with the link. WhatsApp has no way to let a
+  // website post into a group, so this hands the text to the phone's share
+  // sheet and you pick the group. Two taps.
+  el("wa-btn").addEventListener("click", function () {
+    var d = gather(current);
+    var url = location.origin + location.pathname + "#" + current;
+    var lines = [monthName(current) + " round-up is up on the website."];
+
+    if (d.lastRound && d.roundResults.length) {
+      var w = d.roundResults[0];
+      lines.push(d.lastRound.name + ", " + (d.lastRound.venue || "") + ": " +
+        ((w.players && w.players.name) || "") + " won with " + w.points + " points from " +
+        d.roundResults.length + " playing.");
+    }
+    if (d.leaderboard.length) {
+      lines.push("Order of Merit: " + d.leaderboard.slice(0, 3).map(function (p, i) {
+        return (i + 1) + ". " + p.name + " " + p.totalPoints;
+      }).join(", ") + ".");
+    }
+    if (d.fixtures.length) {
+      var f = d.fixtures[0];
+      lines.push("Next up: " + f.name + " at " + (f.venue || "venue TBC") + ", " + longDate(f.event_date) + ".");
+    }
+    lines.push(url);
+
+    var text = lines.join("\n\n");
+    if (navigator.share) {
+      navigator.share({ text: text }).catch(function () {});
+    } else {
+      window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+    }
+  });
 
   el("print-btn").addEventListener("click", function () { window.print(); });
   el("share-btn").addEventListener("click", function () {
