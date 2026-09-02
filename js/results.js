@@ -141,7 +141,7 @@ function renderResultItem(event) {
       </button>
       <div class="fixture-panel" id="rpanel-${event.id}" hidden>
         ${renderScoreTable(rows)}
-        ${renderPrizes(prizesByEvent.get(event.id))}
+        ${renderPrizes(prizesByEvent.get(event.id), event)}
       </div>
     </li>
   `;
@@ -170,18 +170,25 @@ function renderScoreTable(rows) {
 // The scorecard says who scored what; this says who won what on the
 // day. Any prize left blank simply doesn't appear, so a round with only
 // a longest drive logged doesn't show seven empty lines.
-function renderPrizes(p) {
+//
+// The side competitions listed are the ones the round actually ran,
+// each labelled with the hole it was played on. A winner recorded
+// against a competition with no hole set still shows, so rounds logged
+// before the holes were kept are not lost.
+function renderPrizes(p, event) {
   if (!p) return "";
+
+  const comps = (window.ROUND_COMPETITIONS || []).map(c => {
+    const hole = window.competitionHole ? window.competitionHole(event, c) : null;
+    return [window.competitionName(c) + (hole ? " (hole " + hole + ")" : ""), p[c.winner]];
+  });
 
   const entries = [
     ["1st place", p.first_place],
     ["2nd place", p.second_place],
     ["3rd place", p.third_place],
     ["Winning pair", p.winning_pair],
-    ["Longest drive — front 9", p.longest_drive_front],
-    ["Longest drive — back 9", p.longest_drive_back],
-    ["Nearest the pin — front 9", p.nearest_pin_front],
-    ["Nearest the pin — back 9", p.nearest_pin_back]
+    ...comps
   ].filter(([, value]) => value && String(value).trim());
 
   if (!entries.length) return "";

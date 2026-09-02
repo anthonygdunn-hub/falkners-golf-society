@@ -15,16 +15,17 @@
                               (function () {
                                 "use strict";
 
-                                  var PRIZE_COLUMNS = [
-                                      { key: "first_place", label: "1st", title: "1st place" },
-                                          { key: "second_place", label: "2nd", title: "2nd place" },
-                                              { key: "third_place", label: "3rd", title: "3rd place" },
-                                                  { key: "longest_drive_front", label: "LD F9", title: "Longest drive, front nine" },
-                                                      { key: "longest_drive_back", label: "LD B9", title: "Longest drive, back nine" },
-                                                          { key: "nearest_pin_front", label: "NTP F9", title: "Nearest the pin, front nine" },
-                                                              { key: "nearest_pin_back", label: "NTP B9", title: "Nearest the pin, back nine" },
-                                                                  { key: "winning_pair", label: "Pairs", title: "Winning pair" }
-                                                                    ];
+                                  /* Built from the shared competition list so a competition added
+     there shows up here without a second edit. */
+  var PRIZE_COLUMNS = [
+    { key: "first_place", label: "1st", title: "1st place" },
+    { key: "second_place", label: "2nd", title: "2nd place" },
+    { key: "third_place", label: "3rd", title: "3rd place" }
+  ].concat((window.ROUND_COMPETITIONS || []).map(function (c) {
+    return { key: c.winner, label: c.short, title: c.title };
+  })).concat([
+    { key: "winning_pair", label: "Pairs", title: "Winning pair" }
+  ]);
 
                                                                       var ALIASES = {
                                                                           "al dunn": "Alan Dunn",
