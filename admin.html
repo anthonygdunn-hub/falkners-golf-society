@@ -101,6 +101,20 @@
             <div class="form-field"><label>Address</label><input id="edit-event-address" placeholder="Full address, used for the map link"></div>
             <div class="form-field"><label>Website</label><input id="edit-event-website" placeholder="e.g. clandongolfclub.co.uk"></div>
             <div class="form-field"><label>Format</label><input id="edit-event-format" placeholder="e.g. stableford"></div>
+            <h4 style="margin:22px 0 4px;">Competitions on the day</h4>
+            <p class="small">Type the hole each one is played on and it runs this round, showing on the fixture and waiting for a winner under Round prizes. Leave one blank to leave it out altogether.</p>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-ld-front">Longest drive &mdash; front 9</label><input id="edit-hole-ld-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-ld-back">Longest drive &mdash; back 9</label><input id="edit-hole-ld-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-np-front">Nearest the pin &mdash; front 9</label><input id="edit-hole-np-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-np-back">Nearest the pin &mdash; back 9</label><input id="edit-hole-np-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-field"><label for="edit-hole-np2-front">Nearest the pin in 2 &mdash; front 9</label><input id="edit-hole-np2-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+              <div class="form-field"><label for="edit-hole-np2-back">Nearest the pin in 2 &mdash; back 9</label><input id="edit-hole-np2-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
+            </div>
             <div class="form-field"><label>Notes</label><textarea id="edit-event-notes" rows="3" placeholder="Meet time, dress code, food afterwards..."></textarea></div>
             <button class="btn btn-brass" type="submit">Save changes</button>
             <div id="edit-event-status" class="small" style="margin-top:8px;"></div>
@@ -160,7 +174,7 @@
 
         <div class="card">
           <h3>Round prizes</h3>
-          <p class="small">Who won what on the day. Anything you leave blank simply won't appear on the results page.</p>
+          <p class="small">Who won what on the day. Anything you leave blank simply won't appear on the results page. The side competitions listed here are the ones set up against this fixture above, with the hole they were played on.</p>
           <div class="form-field">
             <label for="prize-event-select">Fixture</label>
             <select id="prize-event-select"></select>
@@ -174,14 +188,7 @@
               <div class="form-field"><label for="prize-third">3rd place</label><select id="prize-third"></select></div>
               <div class="form-field"><label for="prize-pair-a">Winning pair</label><select id="prize-pair-a"></select><select id="prize-pair-b" style="margin-top:8px;"></select></div>
             </div>
-            <div class="form-row">
-              <div class="form-field"><label for="prize-ld-front">Longest drive &mdash; front 9</label><select id="prize-ld-front"></select></div>
-              <div class="form-field"><label for="prize-ld-back">Longest drive &mdash; back 9</label><select id="prize-ld-back"></select></div>
-            </div>
-            <div class="form-row">
-              <div class="form-field"><label for="prize-np-front">Nearest the pin &mdash; front 9</label><select id="prize-np-front"></select></div>
-              <div class="form-field"><label for="prize-np-back">Nearest the pin &mdash; back 9</label><select id="prize-np-back"></select></div>
-            </div>
+            <div id="prize-competitions"></div>
             <button class="btn btn-brass" type="submit">Save prizes</button>
             <div id="prize-status" class="small" style="margin-top:8px;"></div>
           </form>
@@ -279,6 +286,6 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
-<script src="js/admin.js?v=2026-08-16c"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-09-01a"></script><script src="js/admin-view.js?v=2026-08-16c"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/admin.js?v=2026-09-01c"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-09-01a"></script><script src="js/admin-view.js?v=2026-08-16c"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
 </body>
 </html>
