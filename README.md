@@ -42,7 +42,8 @@ All of it lives on `admin.html`, behind a Supabase login:
 - Set the tee draw, which then shows publicly under that round
 - Set the pairs draw, separately from the tee draw. On an odd turnout a player can be given two pair numbers, so nobody is left out and that player gets two chances at the pairs prize
 - Log results, with whoever was actually on the round listed first
-- Record each round's prizes: 1st/2nd/3rd, winning pair, longest drive and nearest the pin on both nines
+- Choose which side competitions a round runs, by typing the hole each is played on: longest drive, nearest the pin, and nearest the pin in 2, on either nine. A blank hole means that competition is not on, so it appears on neither the fixture nor the results
+- Record each round's prizes: 1st/2nd/3rd, winning pair, and whichever side competitions that round ran
 - Keep the hole-in-one pot up to date, including paying it out
 - Hold the society's bank details and confirm who's paid for a round
 - Choose how many rounds count toward the Order of Merit
@@ -69,6 +70,7 @@ it again.
 14. `sql/league-settings.sql` — how many rounds count
 15. `sql/pairs-groupings.sql` — the pairs draw, alongside the tee draw
 16. `sql/pairs-double-up.sql` — lets one player hold two pair numbers on an odd turnout
+17. `sql/round-competitions.sql` — the hole each side competition is played on, and the nearest the pin in 2 winners
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain
