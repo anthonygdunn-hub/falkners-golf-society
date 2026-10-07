@@ -15,6 +15,7 @@ let currentDisplayName = "";
 let isApprovedMember = false;
 let membershipStatus = null;
 let bankDetails = null;
+let leagueSettings = { max_players: 32, close_days: 7 };
 const loadedAttendees = new Set();
 const eventsWithResults = new Set();
 const eventsById = new Map();
@@ -46,6 +47,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  try {
+    const { data: ls } = await client.from("league_settings").select("max_players, close_days").maybeSingle();
+    if (ls) leagueSettings = { max_players: ls.max_players || 32, close_days: ls.close_days == null ? 7 : ls.close_days };
+  } catch (lsErr) { console.error(lsErr); }
+
   let events, results;
   try {
     ({ events, results } = await fetchAllData());
@@ -58,7 +64,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
-  events.forEach(e => eventsById.set(e.id, e)); try { const att = (await client.from("attendance").select("event_id, player_id, profile_id")).data || []; const plyrs = (await client.from("players").select("id, profile_id")).data || []; events.forEach(e => { const seen = new Set(); att.filter(a => a.event_id === e.id).forEach(a => { let key = a.profile_id; if (!key && a.player_id) { const pl = plyrs.find(p => p.id === a.player_id); key = (pl && pl.profile_id) ? pl.profile_id : "p:" + a.player_id; } if (key) seen.add(key); }); const played = results.filter(r => r.event_id === e.id).length; e.playerCount = played > 0 ? played : seen.size; }); } catch (countErr) { console.error(countErr); }
+  events.forEach(e => eventsById.set(e.id, e)); try { const att = (await client.from("attendance").select("event_id, player_id, profile_id").eq("status", "playing")).data || []; const plyrs = (await client.from("players").select("id, profile_id")).data || []; events.forEach(e => { const seen = new Set(); att.filter(a => a.event_id === e.id).forEach(a => { let key = a.profile_id; if (!key && a.player_id) { const pl = plyrs.find(p => p.id === a.player_id); key = (pl && pl.profile_id) ? pl.profile_id : "p:" + a.player_id; } if (key) seen.add(key); }); const played = results.filter(r => r.event_id === e.id).length; e.playerCount = played > 0 ? played : seen.size; }); } catch (countErr) { console.error(countErr); }
 
   const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date));
   listEl.innerHTML = sorted.length
@@ -122,9 +128,9 @@ async function refreshAttendees(eventId) {
   // The playing list holds two kinds of people: members who registered
   // themselves, and anyone the committee added by hand — guests, or
   // players who don't use the website. Both belong on the list.
-  const { data: rows, error } = await client
+  const { data: allRows, error } = await client
     .from("attendance")
-    .select("profile_id, player_id")
+    .select("profile_id, player_id, status")
     .eq("event_id", eventId)
     .order("created_at", { ascending: true });
 
@@ -132,6 +138,12 @@ async function refreshAttendees(eventId) {
     slot.innerHTML = `<p class="small">Couldn't load who's playing yet.</p>`;
     return;
   }
+
+  const rows = allRows.filter(r => r.status !== "waiting");
+  const waitingRows = allRows.filter(r => r.status === "waiting");
+  const event = eventsById.get(eventId);
+  const cap = capFor(event);
+  const isPastRound = (slot.closest(".fixture-item") || {}).dataset?.past === "true";
 
   if (!rows.length) {
     const item = slot.closest(".fixture-item");
@@ -147,11 +159,36 @@ async function refreshAttendees(eventId) {
   /* Alphabetical rather than the order people registered, so the list
      reads like a team sheet. Each name carries its handicap in
      brackets, so the sort ignores that and compares the name itself. */
-  slot.innerHTML = `<div class="attendee-list">${names
+  const waitingNames = waitingRows.length ? await resolveAttendeeNames(waitingRows) : [];
+
+  slot.innerHTML = (isPastRound ? "" : `<p class="small" style="margin:0 0 6px;"><strong>${rows.length}</strong> of ${cap} places taken${rows.length >= cap ? " · full" : ""}</p>`) +
+    `<div class="attendee-list">${names
     .slice()
     .sort((a, b) => bareName(a).localeCompare(bareName(b)))
     .map(n => `<span class="attendee-chip">${escapeHtml(n)}</span>`)
-    .join("")}</div>`;
+    .join("")}</div>` +
+    (waitingNames.length && !isPastRound
+      ? `<p class="small" style="margin:12px 0 6px;">Waiting list, in order</p><div class="attendee-list">${waitingNames.map(n => `<span class="attendee-chip" style="opacity:.7;">${escapeHtml(n)}</span>`).join("")}</div>`
+      : "");
+}
+
+// ---- Places and closing date -----------------------------------------
+// The database enforces both; these just let the page say so up front.
+function capFor(event) {
+  return (event && event.max_players) || leagueSettings.max_players || 32;
+}
+function closesOn(event) {
+  const p = String(event.event_date).split("-");
+  const d = new Date(+p[0], +p[1] - 1, +p[2]);
+  d.setDate(d.getDate() - (leagueSettings.close_days == null ? 7 : leagueSettings.close_days));
+  return d;
+}
+function isClosed(event) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return today > closesOn(event);
+}
+function niceDay(d) {
+  return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
 /* "Alan Dunn (13.2)" sorts as "Alan Dunn". */
@@ -264,45 +301,139 @@ async function renderRegisterControl(eventId) {
     return;
   }
 
-  const { data: myRow } = await client
-    .from("attendance_payments")
-    .select("id, payment_status, payment_reference")
-    .eq("event_id", eventId)
-    .eq("profile_id", currentUser.id)
-    .maybeSingle();
+  const event = eventsById.get(eventId);
+  const [{ data: myRow }, { data: myGuests }, { data: everyone }] = await Promise.all([
+    client.from("attendance_payments")
+      .select("id, payment_status, payment_reference, status, created_at")
+      .eq("event_id", eventId).eq("profile_id", currentUser.id).maybeSingle(),
+    client.from("attendance_payments")
+      .select("id, player_id, payment_status, status")
+      .eq("event_id", eventId).eq("guest_of", currentUser.id),
+    client.from("attendance").select("id, status, created_at").eq("event_id", eventId).order("created_at", { ascending: true })
+  ]);
 
-  drawAttendanceButton(slot, eventId, myRow || null);
+  let guests = myGuests || [];
+  if (guests.length) {
+    const { data: gp } = await client.from("players").select("id, name").in("id", guests.map(g => g.player_id));
+    const byId = new Map((gp || []).map(p => [p.id, p.name]));
+    guests = guests.map(g => Object.assign({}, g, { name: byId.get(g.player_id) || "Guest" }));
+  }
+
+  const all = everyone || [];
+  const taken = all.filter(r => r.status !== "waiting").length;
+  const waitingOrder = all.filter(r => r.status === "waiting").map(r => r.id);
+  drawAttendanceButton(slot, eventId, myRow || null, { event, taken, cap: capFor(event), guests, waitingOrder });
 }
 
-function drawAttendanceButton(slot, eventId, myRow) {
+function drawAttendanceButton(slot, eventId, myRow, ctx) {
   const isRegistered = !!myRow;
+  const event = ctx.event;
+  const closed = isClosed(event);
+  const full = ctx.taken >= ctx.cap;
+  const left = Math.max(0, ctx.cap - ctx.taken);
 
-  slot.innerHTML = isRegistered
-    ? `<button class="btn btn-outline" type="button">Can't make it after all</button>`
-    : `<button class="btn btn-brass" type="button">I'm playing</button>`;
-
-  slot.querySelector("button").addEventListener("click", async () => {
-    const btn = slot.querySelector("button");
-    btn.disabled = true;
-
-    if (isRegistered) {
-      const { error } = await client.from("attendance").delete()
-        .eq("event_id", eventId).eq("profile_id", currentUser.id);
-      if (error) return showSlotError(slot, error);
-      drawAttendanceButton(slot, eventId, null);
-    } else {
-      const myPlayers = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || []; if (myPlayers.length) { await client.from("attendance").delete().eq("event_id", eventId).in("player_id", myPlayers.map(p => p.id)); } const { data, error } = await client.from("attendance")
-        .insert({ event_id: eventId, profile_id: currentUser.id })
-        .select("id").single();
-      if (data) { data.payment_status = "unpaid"; data.payment_reference = null; }
-      if (error) return showSlotError(slot, error);
-      drawAttendanceButton(slot, eventId, data);
+  if (!isRegistered) {
+    if (closed) {
+      slot.innerHTML = `<p class="small">Sign-ups for this round closed on ${niceDay(closesOn(event))}. If you still want to play, ask a committee member.</p>`;
+      return;
     }
+    slot.innerHTML = full
+      ? `<button class="btn btn-brass" type="button" data-join>Join the waiting list</button>
+         <p class="small" style="margin-top:8px;">All ${ctx.cap} places are taken. If one comes free, the committee will offer it to the waiting list in order.</p>`
+      : `<button class="btn btn-brass" type="button" data-join>I'm playing</button>
+         <p class="small" style="margin-top:8px;">${left} of ${ctx.cap} places left. Sign-ups close ${niceDay(closesOn(event))}.</p>`;
+    slot.querySelector("[data-join]").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      const myPlayers = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || [];
+      if (myPlayers.length) { await client.from("attendance").delete().eq("event_id", eventId).in("player_id", myPlayers.map(p => p.id)); }
+      const { error } = await client.from("attendance").insert({ event_id: eventId, profile_id: currentUser.id });
+      if (error) return showSlotError(slot, error);
+      await renderRegisterControl(eventId);
+      refreshAttendees(eventId);
+    });
+    return;
+  }
 
+  if (myRow.status === "waiting") {
+    const pos = ctx.waitingOrder.indexOf(myRow.id) + 1;
+    slot.innerHTML = `<p class="small"><span class="pay-status is-claimed">Waiting list${pos ? " · " + ordinal(pos) : ""}</span> The round is full. If a place comes up, a committee member will move you onto it, and you'll pay then.</p>
+      <button class="btn btn-outline btn-small" type="button" data-leave>Take me off the waiting list</button>`;
+    slot.querySelector("[data-leave]").addEventListener("click", () => leaveRound(slot, eventId));
+    return;
+  }
+
+  slot.innerHTML = `<p class="small"><span class="pay-status is-confirmed">You're playing</span></p>
+    <button class="btn btn-outline btn-small" type="button" data-leave>Can't make it after all</button>
+    ${ctx.guests.length ? `<p class="small" style="margin-top:6px;">If you pull out, your ${ctx.guests.length === 1 ? "guest stays" : "guests stay"} on the list until you remove them below or the committee does.</p>` : ""}`;
+  slot.querySelector("[data-leave]").addEventListener("click", () => leaveRound(slot, eventId));
+
+  renderGuestBlock(slot, eventId, ctx, closed);
+  renderPaymentBlock(slot, eventId, myRow, ctx.guests);
+}
+
+async function leaveRound(slot, eventId) {
+  slot.querySelectorAll("button").forEach(b => b.disabled = true);
+  const { error } = await client.from("attendance").delete()
+    .eq("event_id", eventId).eq("profile_id", currentUser.id);
+  if (error) return showSlotError(slot, error);
+  await renderRegisterControl(eventId);
+  refreshAttendees(eventId);
+}
+
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// ---- Guests ----------------------------------------------------------
+// A member can bring guests. Each guest takes a place (or goes on the
+// waiting list if the round is full) and the member pays for them.
+function renderGuestBlock(slot, eventId, ctx, closed) {
+  const list = ctx.guests.map(g => `
+      <li style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line);">
+        <span>${escapeHtml(g.name)}
+          ${g.status === "waiting" ? `<span class="pay-status is-claimed">Waiting list</span>` : ""}
+          ${g.payment_status === "confirmed" ? `<span class="pay-status is-confirmed">Paid</span>` : ""}
+        </span>
+        ${g.payment_status === "confirmed" ? "" : `<button class="btn btn-outline btn-small" type="button" data-remove-guest="${g.id}">Remove</button>`}
+      </li>`).join("");
+
+  slot.insertAdjacentHTML("beforeend", `
+    <div class="pay-box guest-box">
+      <strong>Your guests</strong>
+      ${ctx.guests.length ? `<ul style="list-style:none; margin:6px 0 10px; padding:0;">${list}</ul>` : `<p class="small">Bringing someone? Add them here. They take a place on the round and you pay for them.</p>`}
+      ${closed
+        ? `<p class="small">Sign-ups have closed, so guests can only be added by a committee member now.</p>`
+        : `<form data-guest-form style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+             <div class="form-field" style="flex:1 1 200px; margin:0;">
+               <label for="guest-name-${eventId}">Guest's full name</label>
+               <input id="guest-name-${eventId}" required minlength="2" autocomplete="off" placeholder="First and last name">
+             </div>
+             <button class="btn btn-outline btn-small" type="submit">Add guest</button>
+           </form>`}
+      <div class="small" data-guest-status style="margin-top:6px;"></div>
+    </div>`);
+
+  const box = slot.querySelector(".guest-box");
+  const status = box.querySelector("[data-guest-status]");
+  const form = box.querySelector("[data-guest-form]");
+  if (form) form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = form.querySelector("input");
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    const { error } = await client.rpc("register_guest", { p_event: eventId, p_name: input.value });
+    if (error) { status.innerHTML = `<span class="status-msg err">${escapeHtml(error.message)}</span>`; btn.disabled = false; return; }
+    await renderRegisterControl(eventId);
     refreshAttendees(eventId);
   });
-
-  if (isRegistered) renderPaymentBlock(slot, eventId, myRow);
+  box.querySelectorAll("[data-remove-guest]").forEach(b => b.addEventListener("click", async () => {
+    b.disabled = true;
+    const { error } = await client.rpc("remove_guest", { p_attendance: b.dataset.removeGuest });
+    if (error) { status.innerHTML = `<span class="status-msg err">${escapeHtml(error.message)}</span>`; b.disabled = false; return; }
+    await renderRegisterControl(eventId);
+    refreshAttendees(eventId);
+  }));
 }
 
 function showSlotError(slot, error) {
@@ -314,14 +445,20 @@ function showSlotError(slot, error) {
 // bank transfer, so nothing sensitive passes through the website and
 // there are no fees taken out of the green fee. All the site tracks is
 // whether somebody says they've paid, and whether that's been checked.
+// A member pays for themselves and any guests with a place, in one go.
 // ------------------------------------------------------------------
-function renderPaymentBlock(slot, eventId, myRow) {
+function renderPaymentBlock(slot, eventId, myRow, guests) {
   const event = eventsById.get(eventId);
   const cost = event && event.cost != null ? Number(event.cost) : null;
   if (!cost) return;
 
-  const status = myRow.payment_status || "unpaid";
+  const covered = [{ name: "You", payment_status: myRow.payment_status || "unpaid" }]
+    .concat((guests || []).filter(g => g.status !== "waiting").map(g => ({ name: g.name, payment_status: g.payment_status || "unpaid" })));
+  const outstanding = covered.filter(c => c.payment_status !== "confirmed");
+  const status = !outstanding.length ? "confirmed"
+    : outstanding.every(c => c.payment_status === "claimed") ? "claimed" : "unpaid";
   const reference = myRow.payment_reference || buildPaymentReference(event);
+  const owed = outstanding.length * cost;
 
   const bank = bankDetails && (bankDetails.account_name || bankDetails.account_number)
     ? `<dl class="fixture-facts">
@@ -333,6 +470,10 @@ function renderPaymentBlock(slot, eventId, myRow) {
        ${bankDetails.payment_note ? `<p class="small">${escapeHtml(bankDetails.payment_note)}</p>` : ""}`
     : `<p class="small">The committee hasn't added the society's bank details yet — they'll appear here once they do.</p>`;
 
+  const heading = covered.length > 1
+    ? `${formatCost(owed || cost * covered.length)} to play <span class="small">(you + ${covered.length - 1} ${covered.length === 2 ? "guest" : "guests"} at ${formatCost(cost)} each${outstanding.length < covered.length && outstanding.length ? ", " + (covered.length - outstanding.length) + " already paid" : ""})</span>`
+    : `${formatCost(cost)} to play`;
+
   let action;
   if (status === "confirmed") {
     action = `<p class="small"><span class="pay-status is-confirmed">Paid</span> Thanks — the committee has this one.</p>`;
@@ -340,12 +481,12 @@ function renderPaymentBlock(slot, eventId, myRow) {
     action = `<p class="small"><span class="pay-status is-claimed">Awaiting check</span> You've flagged this as paid. A committee member will confirm it once it lands.</p>
               <button class="btn btn-outline btn-small" type="button" data-pay="unpaid">Actually, I haven't paid yet</button>`;
   } else {
-    action = `<button class="btn btn-brass" type="button" data-pay="claimed">I've paid</button>`;
+    action = `<button class="btn btn-brass" type="button" data-pay="claimed">I've paid${outstanding.length > 1 ? " " + formatCost(owed) : ""}</button>`;
   }
 
   slot.insertAdjacentHTML("beforeend", `
     <div class="pay-box">
-      <strong>${formatCost(cost)} to play</strong>
+      <strong>${heading}</strong>
       ${status === "confirmed" ? "" : bank}
       ${action}
       <div class="small" data-pay-status></div>
@@ -356,11 +497,9 @@ function renderPaymentBlock(slot, eventId, myRow) {
 
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    const next = btn.dataset.pay;
-    const { error } = await client.from("attendance").update({
-      payment_status: next,
-      payment_reference: next === "claimed" ? reference : null
-    }).eq("id", myRow.id);
+    const { error } = await client.rpc("claim_round_payment", {
+      p_event: eventId, p_status: btn.dataset.pay, p_reference: reference
+    });
 
     if (error) {
       slot.querySelector("[data-pay-status]").innerHTML =

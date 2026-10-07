@@ -181,7 +181,7 @@ async function refreshGroupList(eventId) {
 
   const [{ data: attendance, error }, { data: groups }] = await Promise.all([
     client.from("attendance").select("profile_id, player_id")
-      .eq("event_id", eventId).order("created_at", { ascending: true }),
+      .eq("event_id", eventId).eq("status", "playing").order("created_at", { ascending: true }),
     client.from("groupings").select("profile_id, player_id, group_number").eq("group_type", "fours")
       .eq("event_id", eventId)
   ]);
@@ -593,8 +593,9 @@ async function refreshPaymentList(eventId) {
 
   const { data: rows, error } = await client
     .from("attendance_payments")
-    .select("id, profile_id, player_id, payment_status, payment_reference")
+    .select("id, profile_id, player_id, payment_status, payment_reference, guest_of")
     .eq("event_id", eventId)
+    .eq("status", "playing")
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -607,7 +608,7 @@ async function refreshPaymentList(eventId) {
     return;
   }
 
-  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
+  const profileIds = rows.flatMap(r => [r.profile_id, r.guest_of]).filter(Boolean);
   let profById = new Map();
   if (profileIds.length) {
     const { data: profs } = await client
@@ -632,6 +633,7 @@ async function refreshPaymentList(eventId) {
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line);">
           <span style="flex:1 1 auto; min-width:0;">${escapeHtml(name)}
             <span class="pay-status ${cls}">${label}</span>
+            ${r.guest_of ? `<span class="small" style="display:block; margin-top:2px;">Guest of ${escapeHtml(profById.get(r.guest_of) || "a member")}, who pays for them</span>` : ""}
             ${r.payment_reference ? `<span class="small pay-ref" style="display:block; margin-top:2px;">${escapeHtml(r.payment_reference)}</span>` : ""}
           </span>
           <span style="flex:0 0 auto;">
@@ -806,26 +808,31 @@ async function refreshPlayingList(eventId) {
   const el = document.getElementById("playing-list");
   if (!el || !eventId) return;
 
-  const { data: rows, error } = await client
-    .from("attendance")
-    .select("id, profile_id, player_id, created_at")
-    .eq("event_id", eventId)
-    .order("created_at", { ascending: true });
+  const [{ data: rows, error }, { data: settings }] = await Promise.all([
+    client.from("attendance")
+      .select("id, profile_id, player_id, created_at, status, guest_of")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: true }),
+    client.from("league_settings").select("max_players, close_days").maybeSingle()
+  ]);
 
   if (error) {
     el.innerHTML = `<p class="status-msg err">Couldn't load the playing list: ${escapeHtml(error.message)}</p>`;
     return;
   }
 
+  const event = currentEvents.find(e => e.id === eventId) || {};
+  const cap = event.max_players || (settings && settings.max_players) || 32;
+
   if (!rows.length) {
-    el.innerHTML = `<p class="small">Nobody on this round yet.</p>`;
+    el.innerHTML = `<p class="small">Nobody on this round yet. ${cap} places.</p>`;
     return;
   }
 
   // Look the names up separately rather than letting the database join
   // them for us — attendance points at two different name tables, and
   // spelling the join out here keeps it unambiguous.
-  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
+  const profileIds = rows.flatMap(r => [r.profile_id, r.guest_of]).filter(Boolean);
   let profById = new Map();
   if (profileIds.length) {
     const { data: profs } = await client
@@ -833,36 +840,57 @@ async function refreshPlayingList(eventId) {
     profById = new Map((profs || []).map(p => [p.id, p.display_name]));
   }
   const playerById = new Map(currentPlayers.map(p => [p.id, p.name]));
+  const hosts = new Set(rows.filter(r => r.profile_id).map(r => r.profile_id));
 
-  /* Sorted by name rather than by when they were added, because the
-     list is read to answer "is so-and-so playing?", and a headcount at
-     the top because that is the other thing always being counted. */
-  const listed = rows.map(r => {
-    const isGuest = !!r.player_id;
+  const toRow = r => {
+    const isMember = !!r.profile_id;
+    let tag;
+    if (isMember) tag = "registered online";
+    else if (r.guest_of) tag = `guest of ${profById.get(r.guest_of) || "a member"}` + (hosts.has(r.guest_of) ? "" : " (who has pulled out)");
+    else tag = "added by the committee";
     return {
-      id: r.id,
-      isGuest,
-      name: isGuest
-        ? (playerById.get(r.player_id) || "Player")
-        : (profById.get(r.profile_id) || "Member")
+      id: r.id, status: r.status, tag, orphan: !!r.guest_of && !hosts.has(r.guest_of),
+      name: isMember ? (profById.get(r.profile_id) || "Member") : (playerById.get(r.player_id) || "Player")
     };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+  };
 
-  const total = `<p class="small" style="margin:0 0 4px;"><strong>${listed.length}</strong> ${listed.length === 1 ? "player" : "players"} on this round</p>`;
+  /* Playing is sorted by name, because the list is read to answer "is
+     so-and-so playing?". The waiting list stays in the order people
+     joined it, because that's the fair order to offer places in. */
+  const playing = rows.filter(r => r.status !== "waiting").map(toRow).sort((a, b) => a.name.localeCompare(b.name));
+  const waiting = rows.filter(r => r.status === "waiting").map(toRow);
+  const full = playing.length >= cap;
 
-  el.innerHTML = total + listed.map(p => {
-    const tag = p.isGuest
-      ? `<span class="small" style="color:var(--muted);">added by the committee</span>`
-      : `<span class="small" style="color:var(--muted);">registered online</span>`;
-    return `
+  const line = p => `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${escapeHtml(p.name)} ${tag}</span>
-        <button class="btn btn-outline btn-small" type="button" data-remove-attendance="${p.id}">Remove</button>
+        <span>${escapeHtml(p.name)} <span class="small" style="color:${p.orphan ? "#8A560B" : "var(--muted)"};">${escapeHtml(p.tag)}</span></span>
+        <span style="display:flex; gap:6px; flex:0 0 auto;">
+          ${p.status === "waiting"
+            ? `<button class="btn btn-brass btn-small" type="button" data-move-attendance="${p.id}" data-move-to="playing">Give them a place</button>`
+            : ""}
+          <button class="btn btn-outline btn-small" type="button" data-remove-attendance="${p.id}">Remove</button>
+        </span>
       </div>`;
-  }).join("");
+
+  el.innerHTML =
+    `<p class="small" style="margin:0 0 4px;"><strong>${playing.length}</strong> of ${cap} places taken${full ? " · <strong>full</strong>" : ` · ${cap - playing.length} left`}</p>` +
+    playing.map(line).join("") +
+    (waiting.length
+      ? `<h4 style="margin:20px 0 4px;">Waiting list (${waiting.length})</h4>
+         <p class="small">In the order they joined. Nobody moves up on their own: give somebody a place when one comes free.${full ? " The round is full, so giving a place takes it over " + cap + "." : ""}</p>` + waiting.map(line).join("")
+      : "");
 
   el.querySelectorAll("[data-remove-attendance]").forEach(btn => {
     btn.addEventListener("click", () => removeFromRound(btn.dataset.removeAttendance, eventId));
+  });
+  el.querySelectorAll("[data-move-attendance]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const { error: moveErr } = await client.from("attendance").update({ status: btn.dataset.moveTo }).eq("id", btn.dataset.moveAttendance);
+      const statusEl = document.getElementById("guest-status");
+      if (moveErr) { statusEl.textContent = "Couldn't move them: " + moveErr.message; statusEl.className = "status-msg err"; btn.disabled = false; return; }
+      await refreshPlayingPanels(eventId);
+    });
   });
 }
 
@@ -1047,7 +1075,7 @@ function populateEventSelect() {
 async function loadResultsFormFor(eventId) {
   const [{ data: existing }, { data: attendance }] = await Promise.all([
     client.from("results").select("*").eq("event_id", eventId),
-    client.from("attendance").select("profile_id, player_id").eq("event_id", eventId)
+    client.from("attendance").select("profile_id, player_id").eq("event_id", eventId).eq("status", "playing")
   ]);
 
   const existingByPlayer = new Map((existing || []).map(r => [r.player_id, r]));

@@ -20,6 +20,7 @@
     var current = null;
 
    var TABS = [
+     { id: "overview", label: "Overview", headings: ["Overview"] },
      { id: "requests", label: "Requests", headings: ["Pending member requests"] },
      { id: "results", label: "Results", headings: ["Enter results", "Round prizes", "Order of Merit"] },
      { id: "fixtures", label: "Fixtures", headings: ["Edit a fixture", "Add a fixture", "Who's playing", "Tee groups", "Pairs"] },
@@ -73,7 +74,12 @@
          });
          apply();
          try { localStorage.setItem(STORE_KEY, id); } catch (e) {}
+         if (id === "overview" && window.fgsRefreshOverview) window.fgsRefreshOverview();
    }
+
+   /* Used by the Overview tab to jump straight to a section. */
+   window.fgsAdminShow = function (id) { tagSections(); show(id); };
+   window.fgsAdminSection = sectionFor;
 
    function orderResults() {
          if (window.__fgsPrizeMoved) return;
@@ -119,7 +125,9 @@
                  try { saved = localStorage.getItem(STORE_KEY); } catch (e) {}
                  var valid = false;
                  TABS.forEach(function (t) { if (t.id === saved) valid = true; });
-                 show(valid ? saved : "results");
+                 /* Always open on the Overview: it's the summary of everything
+                    else, and every item on it links to the right tab. */
+                 show(sectionFor("Overview") ? "overview" : (valid ? saved : "results"));
          } else {
                  apply();
          }

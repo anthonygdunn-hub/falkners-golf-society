@@ -98,7 +98,7 @@
   async function refreshPairList(eventId) {
     var el = document.getElementById("pair-list");
     if (!el || !eventId) return;
-    var attRes = await client.from("attendance").select("profile_id, player_id").eq("event_id", eventId).order("created_at", { ascending: true });
+    var attRes = await client.from("attendance").select("profile_id, player_id").eq("event_id", eventId).eq("status", "playing").order("created_at", { ascending: true });
     if (attRes.error) { el.innerHTML = '<p class="status-msg err">Could not load the round.</p>'; return; }
     var attendance = attRes.data || [];
     if (!attendance.length) { el.innerHTML = '<p class="small">Nobody is on this round yet, so there are no pairs to draw.</p>'; setStatus(""); return; }
