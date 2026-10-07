@@ -114,8 +114,8 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
-  <script src="js/nav.js?v=2026-08-16c"></script>
-<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-09-01c"></script>
+  <script src="js/nav.js?v=2026-10-07a"></script>
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-10-07a"></script>
 <script>
 (async function () {
   try {
@@ -125,8 +125,9 @@
     const leaderboard = buildLeaderboard(results,
       typeof fetchLeagueSettings === "function" ? await fetchLeagueSettings() : {});
     renderLeaderboardTable(document.getElementById("home-leaderboard"), leaderboard.slice(0, 5));
-    const roundsLogged = new Set(results.map(r => r.event_id)).size;
-    document.getElementById("round-count-meta").textContent = `${roundsLogged} of ${events.length} rounds logged`;
+    const roundIds = new Set((typeof seasonRounds === "function" ? seasonRounds(events) : events.filter(e => !e.is_trip)).map(e => e.id));
+    const roundsLogged = new Set(results.map(r => r.event_id).filter(id => roundIds.has(id))).size;
+    document.getElementById("round-count-meta").textContent = `${roundsLogged} of ${roundIds.size} rounds logged`;
 
     // Next fixture
     const today = new Date().toISOString().slice(0, 10);

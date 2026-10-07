@@ -50,29 +50,53 @@ async function fetchAllData() {
 // rule comes from the database rather than being baked in here.
 function buildLeaderboard(results, options = {}) {
   const countingRounds = Number(options.countingRounds) || null;
-  const byPlayer = new Map();
 
-  for (const r of results) {
-    const name = r.players?.name || "Unknown";
-    if (!byPlayer.has(name)) {
-      byPlayer.set(name, { name, handicap: r.players?.handicap, profileId: r.players?.profile_id, scores: [] });
+  const table = (rows) => {
+    const byPlayer = new Map();
+    for (const r of rows) {
+      const name = r.players?.name || "Unknown";
+      if (!byPlayer.has(name)) {
+        byPlayer.set(name, { name, playerId: r.player_id, handicap: r.players?.handicap, profileId: r.players?.profile_id, scores: [], played: [] });
+      }
+      const entry = byPlayer.get(name);
+      entry.scores.push(Number(r.points) || 0);
+      entry.played.push({ eventId: r.event_id, date: r.events?.event_date || "", name: r.events?.name || "", points: Number(r.points) || 0 });
+      // Keep the most recently-seen handicap
+      if (r.players?.handicap != null) entry.handicap = r.players.handicap;
     }
-    const entry = byPlayer.get(name);
-    entry.scores.push(Number(r.points) || 0);
-    // Keep the most recently-seen handicap
-    if (r.players?.handicap != null) entry.handicap = r.players.handicap;
-  }
+    for (const entry of byPlayer.values()) {
+      entry.rounds = entry.scores.length;
+      const counted = countingRounds && countingRounds < entry.scores.length
+        ? [...entry.scores].sort((a, b) => b - a).slice(0, countingRounds)
+        : entry.scores;
+      entry.countedRounds = counted.length;
+      entry.totalPoints = counted.reduce((sum, v) => sum + v, 0);
+      // Form: the last five rounds played, oldest first.
+      entry.form = entry.played.sort((a, b) => a.date.localeCompare(b.date)).slice(-5);
+    }
+    return Array.from(byPlayer.values()).sort((a, b) => b.totalPoints - a.totalPoints);
+  };
 
-  for (const entry of byPlayer.values()) {
-    entry.rounds = entry.scores.length;
-    const counted = countingRounds && countingRounds < entry.scores.length
-      ? [...entry.scores].sort((a, b) => b - a).slice(0, countingRounds)
-      : entry.scores;
-    entry.countedRounds = counted.length;
-    entry.totalPoints = counted.reduce((sum, v) => sum + v, 0);
-  }
+  const now = table(results);
 
-  return Array.from(byPlayer.values()).sort((a, b) => b.totalPoints - a.totalPoints);
+  // Movement since the latest round: compare with the table as it stood
+  // before that round was logged. Null means the player is new to the table.
+  const dates = results.map(r => r.events?.event_date).filter(Boolean).sort();
+  const latest = dates[dates.length - 1];
+  if (latest) {
+    const before = table(results.filter(r => (r.events?.event_date || "") < latest));
+    if (before.length) {
+      const prev = new Map(before.map((e, i) => [e.name, i]));
+      now.forEach((e, i) => { e.move = prev.has(e.name) ? prev.get(e.name) - i : null; });
+    }
+  }
+  return now;
+}
+
+// The rounds that make up the season: the main meetings, not trips
+// like the Ryder Cup weekend, and not anything hidden.
+function seasonRounds(events) {
+  return (events || []).filter(e => !e.is_trip && !e.hidden);
 }
 
 // How many rounds count toward the Order of Merit. Public on purpose —
@@ -103,21 +127,33 @@ function renderLeaderboardTable(container, leaderboard) {
     return;
   }
 
-  const rows = leaderboard.map((p, i) => `
-    <tr class="${i === 0 ? 'pos-1' : ''}">
+  const top = Math.max(...leaderboard.map(p => Math.max(0, ...(p.form || []).map(f => f.points))), 1);
+  const moveTag = (m) => m == null ? '<span class="lb-move lb-new" title="New to the table">new</span>'
+    : m > 0 ? `<span class="lb-move lb-up" title="Up ${m} since the last round">&#9650;${m}</span>`
+    : m < 0 ? `<span class="lb-move lb-down" title="Down ${-m} since the last round">&#9660;${-m}</span>` : "";
+  const hasMoves = leaderboard.some(p => "move" in p);
+
+  const rows = leaderboard.map((p, i) => {
+    const form = (p.form || []).map(f =>
+      `<i style="height:${Math.max(12, Math.round(f.points / top * 100))}%" title="${escapeHtml(f.name)}: ${f.points} pts"></i>`).join("");
+    const hot = (p.form || []).length >= 3 && p.form.slice(-3).every(f => f.points >= 36);
+    return `
+    <tr class="${i === 0 ? 'pos-1' : ''}${i < 3 ? ' pos-top' : ''}" style="--i:${i}">
       <td class="pos"><span class="pos-badge">${i + 1}</span></td>
-      <td>${p.profileId ? '<a href="members.html#m-' + p.profileId + '">' + escapeHtml(p.name) + '</a>' : escapeHtml(p.name)}</td>
+      <td><a class="lb-name" href="player.html?id=${encodeURIComponent(p.playerId || "")}">${escapeHtml(p.name)}</a>${hasMoves ? moveTag(p.move) : ""}${hot ? '<span class="lb-hot" title="36+ points in each of the last three rounds">Hot streak</span>' : ""}</td>
+      <td class="lb-form-cell"><span class="lb-form" aria-label="Last ${(p.form || []).length} rounds: ${(p.form || []).map(f => f.points).join(", ")} points">${form}</span></td>
       <td class="num">${p.handicap ?? '—'}</td>
       <td class="num">${p.countedRounds != null && p.countedRounds !== p.rounds ? `${p.countedRounds} of ${p.rounds}` : p.rounds}</td>
-      <td class="num">${p.totalPoints}</td>
+      <td class="num"><span class="lb-points" data-count="${p.totalPoints}">${p.totalPoints}</span></td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 
   container.innerHTML = `
-    <table class="score-table">
+    <table class="score-table lb-table">
       <thead>
         <tr>
-          <th>Pos</th><th>Name</th><th class="num">HCap</th><th class="num">Rounds</th><th class="num">Points</th>
+          <th>Pos</th><th>Name</th><th class="lb-form-cell">Form</th><th class="num">HCap</th><th class="num">Rounds</th><th class="num">Points</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>

@@ -191,3 +191,6 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 
 /* Share buttons, round photos, season stats and calendar files. */
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/extras.js?v=2026-09-03a" }));
+
+/* Motion: leaderboard, homepage countdown, pot ticker and scroll reveals. */
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/motion.js?v=2026-10-07a" }));

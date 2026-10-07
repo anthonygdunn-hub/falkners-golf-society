@@ -136,6 +136,7 @@ function renderResultItem(event) {
         <span class="fixture-body">
           <span class="fixture-title">${escapeHtml(event.name)}${event.venue ? ' — ' + escapeHtml(event.venue) : ''}</span>
           <span class="venue">${summary}</span>
+          ${renderPodium(rows, prizesByEvent.get(event.id))}
         </span>
         <span class="fixture-chevron" aria-hidden="true">&#9662;</span>
       </button>
@@ -158,7 +159,7 @@ function renderScoreTable(rows) {
         ${rows.map((r, i) => `
           <tr class="${i === 0 ? 'pos-1' : ''}">
             <td class="pos"><span class="pos-badge">${i + 1}</span></td>
-            <td>${escapeHtml(r.players?.name || 'Unknown')}</td>
+            <td>${playerLink(r.player_id, r.players?.name || 'Unknown')}</td>
             <td class="num">${r.handicap ?? '—'}</td>
             <td class="num">${r.points}</td>
                        </tr>`).join("")}
@@ -197,7 +198,7 @@ function renderPrizes(p, event) {
     <h4 class="prize-heading">On the day</h4>
     <dl class="fixture-facts prize-list">
       ${entries.map(([label, value]) =>
-        `<dt>${label}</dt><dd>${escapeHtml(String(value).trim())}</dd>`).join("")}
+        `<dt>${label}</dt><dd>${linkNames(String(value).trim())}</dd>`).join("")}
     </dl>
   `;
 }
@@ -222,4 +223,44 @@ function openEvent(eventId, opts = {}) {
   if (!item) return;
   setOpen(item, true);
   if (opts.scroll) item.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+
+// ---- At-a-glance podium on each round card --------------------------
+// The top three as medals, then the side competition winners, so the
+// story of a round reads without opening it. Prizes recorded by the
+// committee win over the raw scores, because ties are settled on the day.
+function renderPodium(rows, p) {
+  const nameOf = r => (r && r.players && r.players.name) || "";
+  const podium = [
+    ["gold", "1st", (p && p.first_place) || nameOf(rows[0])],
+    ["silver", "2nd", (p && p.second_place) || nameOf(rows[1])],
+    ["bronze", "3rd", (p && p.third_place) || nameOf(rows[2])]
+  ].filter(x => x[2]);
+  if (!podium.length) return "";
+  const side = p ? (window.ROUND_COMPETITIONS || [])
+    .filter(c => p[c.winner] && String(p[c.winner]).trim())
+    .map(c => `<span class="rp-side" title="${escapeHtml(c.title)}">${escapeHtml(c.short)} ${escapeHtml(String(p[c.winner]).trim())}</span>`) : [];
+  return `<span class="rp-podium">${podium.map(([cls, label, name]) =>
+      `<span class="rp-medal rp-${cls}"><span class="rp-disc" aria-hidden="true">${label.charAt(0)}</span><span class="rp-label">${label}</span> ${escapeHtml(name)}</span>`).join("")}</span>` +
+    (side.length ? `<span class="rp-sides">${side.join("")}</span>` : "");
+}
+
+// Names in results link to that player's season page. A prize can be
+// typed as free text, so names are matched to players by spelling.
+let playerIdByName = null;
+function playerLink(id, name) {
+  return id ? `<a class="player-link" href="player.html?id=${encodeURIComponent(id)}">${escapeHtml(name)}</a>` : escapeHtml(name);
+}
+function linkNames(value) {
+  if (!playerIdByName) {
+    playerIdByName = new Map();
+    resultsByEvent.forEach(rows => rows.forEach(r => {
+      if (r.players && r.players.name) playerIdByName.set(r.players.name.trim().toLowerCase(), r.player_id);
+    }));
+  }
+  return value.split(/(\s*&\s*)/).map(part => {
+    const id = playerIdByName.get(part.trim().toLowerCase());
+    return id ? playerLink(id, part.trim()) : escapeHtml(part);
+  }).join("");
 }

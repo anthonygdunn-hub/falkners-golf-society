@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player — The Falkners Arms Golf Society</title>
+<link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg"><meta name="description" content="A player's season at the Falkners Arms Golf Society: points by round, prizes and Order of Merit place."><meta name="robots" content="noindex"><link rel="stylesheet" href="css/style.css?v=2026-08-16c">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="assets/logo.jpeg" alt="The Falkners Arms Golf Society crest">
+      <span class="brand-text">The Falkners Arms<br>Golf Society<small>FLEET · EST. 2023</small></span>
+    </a>
+    <ul class="main-nav">
+      <li><a href="index.html">The Society</a></li>
+      <li><a href="committee.html">Committee</a></li>
+      <li><a href="hole-in-one.html">Hole in One Club</a></li>
+      <li><a href="leaderboard.html">Leaderboard</a></li>
+      <li><a href="fixtures.html">Fixtures</a></li>
+      <li><a href="results.html">Results</a></li>
+      <li><a href="gallery.html">Gallery</a></li>
+        <li id="nav-my-profile" style="display:none;"><a href="member.html">My Profile</a></li>
+
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </div>
+</header>
+        
+<section class="section">
+  <div class="container">
+    <span class="eyebrow" id="pl-eyebrow">Player</span>
+    <h1 id="pl-name">Loading…</h1>
+    <p class="small" id="pl-sub"></p>
+    <div class="fixtures-actions">
+      <a class="btn btn-outline" href="leaderboard.html">&larr; Leaderboard</a>
+      <a class="btn btn-outline" href="results.html">All results</a>
+      <a class="btn btn-outline" id="pl-member" href="members.html" hidden>Member profile</a>
+    </div>
+
+    <div id="pl-stats" class="pl-stats" aria-live="polite"></div>
+
+    <div class="scorecard">
+      <div class="scorecard-head"><h3>Points by round</h3><span class="meta" id="pl-chart-meta"></span></div>
+      <div id="pl-chart"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <div class="scorecard" style="margin-top:32px;">
+      <div class="scorecard-head"><h3>Prizes won</h3><span class="meta" id="pl-prize-meta"></span></div>
+      <div id="pl-prizes"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <div class="scorecard" style="margin-top:32px;">
+      <div class="scorecard-head"><h3>Round by round</h3></div>
+      <div id="pl-rounds"><div class="empty-state">Loading…</div></div>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>&copy; 2026 The Falkners Arms Golf Society</span>
+    <ul class="footer-links">
+      <li><a href="contact.html">Contact</a></li>
+      <li><a href="admin.html">Committee login</a></li>
+    </ul>
+      <p class="built-by">Website by <a href="https://dunnworks.io">Dunnworks</a></p>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/config.js?v=2026-08-16c"></script>
+<script src="js/nav.js?v=2026-10-07a"></script>
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-10-07a"></script>
+<script src="js/player.js?v=2026-10-07a"></script>
+</body>
+</html>
