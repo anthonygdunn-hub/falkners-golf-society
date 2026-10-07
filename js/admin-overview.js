@@ -65,14 +65,27 @@
     if (t.el) target = document.getElementById(t.el) || target;
     if (t.heading && window.fgsAdminSection) target = window.fgsAdminSection(t.heading) || target;
     var block = target && target.closest ? (target.closest(".card, .scorecard") || target) : null;
-    if (!block) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    if (!block) { window.scrollTo({ top: 0, behavior: "instant" }); return; }
+
+    /* Land on the fixture picker for that section when there is one (it
+       sits right above the list being worked on, e.g. "Who's paid"),
+       otherwise on the top of the section. An instant jump rather than
+       a smooth one: smooth scrolling is skipped or cut short by some
+       browsers, and lists loading above can shift the page mid-scroll,
+       so it jumps again once those have settled. */
+    var anchor = (t.select && target && target.closest && target.closest(".form-field")) || block;
+    var jump = function () {
+      var top = anchor.getBoundingClientRect().top + window.scrollY - 110;
+      window.scrollTo({ top: Math.max(0, top), behavior: "instant" });
+    };
     setTimeout(function () {
-      block.scrollIntoView({ behavior: "smooth", block: "start" });
+      jump();
       block.classList.remove("ov-flash");
       void block.offsetWidth;
       block.classList.add("ov-flash");
       if (t.names && t.names.length) highlightNames(t.names);
     }, 150);
+    setTimeout(jump, 900);
   }
 
   // After a jump to the playing list, mark the names the to-do was about.
