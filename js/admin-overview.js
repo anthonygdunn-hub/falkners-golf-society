@@ -658,10 +658,11 @@
       var res = s.results.slice().sort(function (a, b) { return (Number(b.points) || 0) - (Number(a.points) || 0); });
       var rows = res.map(function (r) { var pl = m.playerById.get(r.player_id); return { name: pl ? pl.name : "Player", points: Number(r.points) || 0, gross: r.gross_score }; });
       var pos = positions(rows, "points");
+      var hasGross = rows.some(function (r) { return r.gross != null && r.gross !== ""; });
       var avg = rows.length ? Math.round(rows.reduce(function (a, r) { return a + r.points; }, 0) / rows.length) : 0;
       html += section("Results · " + rows.length + " played" + (rows.length ? " · avg " + avg + " pts" : ""),
-        rows.length ? '<div class="ov-tbl"><table><thead><tr><th>Pos</th><th>Player</th><th class="ov-num">Gross</th><th class="ov-num">Pts</th></tr></thead><tbody>' +
-          rows.map(function (r, i) { return '<tr class="ov-row-link" data-player="' + esc(r.name) + '" tabindex="0"><td class="ov-pos">' + pos[i] + "</td><td>" + esc(r.name) + '</td><td class="ov-num">' + (r.gross != null ? esc(r.gross) : "–") + '</td><td class="ov-num"><b>' + r.points + "</b></td></tr>"; }).join("") +
+        rows.length ? '<div class="ov-tbl"><table><thead><tr><th>Pos</th><th>Player</th>' + (hasGross ? '<th class="ov-num">Gross</th>' : "") + '<th class="ov-num">Pts</th></tr></thead><tbody>' +
+          rows.map(function (r, i) { return '<tr class="ov-row-link" data-player="' + esc(r.name) + '" tabindex="0"><td class="ov-pos">' + pos[i] + "</td><td>" + esc(r.name) + "</td>" + (hasGross ? '<td class="ov-num">' + (r.gross != null ? esc(r.gross) : "–") + "</td>" : "") + '<td class="ov-num"><b>' + r.points + "</b></td></tr>"; }).join("") +
           "</tbody></table></div>" : '<p class="small">No results entered yet.</p>');
       var p = s.prize || {};
       var comps = (window.ROUND_COMPETITIONS || []).filter(function (c) { return p[c.winner] || (window.competitionHole && window.competitionHole(ev, c)); });
@@ -946,7 +947,7 @@
       ".ov-bars>button.ov-bar:first-of-type .ov-tip{left:0;transform:none}.ov-bars>button.ov-bar:last-of-type .ov-tip{left:auto;right:0;transform:none}",
       /* side panel */
       ".ov-no-scroll{overflow:hidden;}",
-      ".ov-drawer-wrap{position:fixed;inset:0;z-index:1000;}",
+      ".ov-drawer-wrap{position:fixed;inset:0;z-index:100000;}",
       ".ov-scrim{position:absolute;inset:0;background:rgba(16,35,63,.45);}",
       ".ov-drawer{position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);background:var(--paper,#F3F5F9);box-shadow:-18px 0 40px -20px rgba(0,0,0,.5);display:flex;flex-direction:column;outline:none;animation:ovSlide .18s ease-out;}",
       "@keyframes ovSlide{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}",
