@@ -48,6 +48,27 @@ All of it lives on `admin.html`, behind a Supabase login:
 - Hold the society's bank details and confirm who's paid for a round
 - Choose how many rounds count toward the Order of Merit
 
+## The scoring app (`/app`)
+
+An installable web app at `/app/` for live scoring on the course. Same
+logins and data as the website — members add it to their home screen
+from Safari or Chrome.
+
+- **Score**: pick your group from the tee draw (or pick players), then
+  go hole by hole. One phone per group is enough, but anyone on the round
+  can score. Scores save on the phone first and send when there's signal
+- **Leaderboard**: Stableford (with countback), Medal net and gross, Skins
+  (net or gross, with carry-overs) and Pairs (combined and better ball),
+  updating live. Signed-in, approved members only
+- **Setup** (committee): course and tee, handicap method (full WHS, the
+  handicap on file, or set by hand), allowance, formats, per-player
+  overrides; start the round, then finish it to copy Stableford points
+  into Results for the Order of Merit
+- **Courses** (committee): add courses and tees, with par, stroke index,
+  yardage, course rating and slope
+
+The scoring maths lives in `app/scoring.js` with no dependencies.
+
 ## Setting up the database
 
 Supabase dashboard → SQL Editor → paste → Run, in this order. Every file is
@@ -71,6 +92,8 @@ it again.
 15. `sql/pairs-groupings.sql` — the pairs draw, alongside the tee draw
 16. `sql/pairs-double-up.sql` — lets one player hold two pair numbers on an odd turnout
 17. `sql/round-competitions.sql` — the hole each side competition is played on, and the nearest the pin in 2 winners
+18. `sql/live-scoring.sql` — courses, tees, holes and hole-by-hole scores for the app
+19. `sql/course-milford.sql` — Milford Golf Club's White and Yellow tees (check against the card)
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain

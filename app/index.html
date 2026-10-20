@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#10233F">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Falkners Golf">
+  <title>Falkners Golf — Live Scoring</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="app.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="topbar-brand" aria-label="Home">
+      <img src="icons/icon-192.png" alt="">
+      <span>Falkners Golf</span>
+    </a>
+    <div class="topbar-right">
+      <span id="sync-pill" class="sync-pill" hidden></span>
+      <button id="menu-btn" class="icon-btn" aria-label="Menu" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="menu" class="menu" hidden>
+    <a href="#/">Rounds</a>
+    <a href="#/courses" id="menu-courses" hidden>Courses</a>
+    <a href="../index.html">Society website</a>
+    <button id="signout-btn" type="button">Sign out</button>
+  </div>
+
+  <main id="view" class="view" aria-live="polite">
+    <div class="loading">Loading…</div>
+  </main>
+
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-backdrop" data-action="close-sheet"></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true">
+      <button class="sheet-close" data-action="close-sheet" aria-label="Close">×</button>
+      <div id="sheet-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <script src="../js/config.js"></script>
+  <script src="scoring.js?v=1"></script>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
