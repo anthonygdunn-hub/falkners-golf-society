@@ -143,6 +143,13 @@ it again.
 24. `sql/scoring-function-grants.sql` — who can call the scoring functions
 25. `sql/tighten-payments-view.sql` — the payments list is read-only
 26. `sql/round-checkin.sql` — checking in, from when the round is set up until the day (until it's run, the app hides check-in)
+27. `sql/round-extras.sql` — side contest stakes, the live feed, putts & fairways, front/back of the green
+28. `sql/push-notifications.sql` — phone notifications (needs the `push-notify` Edge Function)
+29. `sql/round-admins.sql` — a player made admin for one round can run it when the committee can't
+
+Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`,
+with the secrets `VAPID_PUBLIC_KEY` (also in `app/app.js`) and `VAPID_PRIVATE_KEY`
+(kept out of the repository).
 
 Then redeploy the `member-alerts` Edge Function from
 `supabase/functions/member-alerts/index.ts` — it adds the "disputed score"

@@ -653,3 +653,18 @@ body.has-tabbar .hole-nav { padding-bottom: 4px; }
 #season-card .board td { padding: 8px 4px; }
 .push-list { margin: 0 0 14px; padding-left: 20px; }
 .push-list li { margin: 4px 0; }
+.avatar { position: relative; overflow: hidden; }
+.avatar i { font-style: normal; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar.has-img i { visibility: hidden; }
+.avatar.me.has-img { box-shadow: 0 0 0 2px var(--gold); }
+.profile-head { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.photo-link { display: inline-block; margin-top: 6px; font-size: .88rem; cursor: pointer; }
+.oom-card { display: flex; align-items: center; justify-content: space-between; text-decoration: none; color: inherit; margin-top: 12px; border-left: 4px solid var(--gold); }
+.oom-pos { font-family: var(--font-display); font-size: 2rem; color: var(--navy); line-height: 1.1; }
+.oom-pos small { font-size: .9rem; color: var(--ink-soft); font-family: var(--font-body); }
+.fx-item { padding: 10px 0; border-top: 1px solid var(--line); }
+.fx-item:first-of-type { border-top: 0; }
+.hello { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-decoration: none; }
+.hello-av { width: 52px; height: 52px; font-size: 1.05rem; }
+.hello-link { color: var(--navy); font-weight: 600; }

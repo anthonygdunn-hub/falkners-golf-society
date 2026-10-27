@@ -159,6 +159,7 @@
     ]);
     app.approved = !!appr.data;
     app.committee = !!comm.data;
+    if (app.approved) loadAvatars().then(() => { if (!app.round) return; refreshRound(); });
     $("#menu-btn").hidden = false;
     $("#menu-courses").hidden = !app.committee;
   }
@@ -234,10 +235,11 @@
     const hello = hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
 
     view.innerHTML = `
-      <div class="hello">
-        <div class="hello-hi">${hello}${first ? ", " + esc(first) : ""}</div>
-        <div class="hello-sub">The Falkners Arms Golf Society</div>
-      </div>
+      <a class="hello" href="#/me" aria-label="My profile">
+        <div><div class="hello-hi">${hello}${first ? ", " + esc(first) : ""}</div>
+        <div class="hello-sub">The Falkners Arms Golf Society · <span class="hello-link">My profile ›</span></div></div>
+        ${avatar(prof && prof.display_name || "Me", me, "hello-av me")}
+      </a>
       ${installTip()}
       ${pushTip()}
       ${heroCard(live[0] || upcoming[0], status, playing, today)}
@@ -356,7 +358,7 @@
     const mv = e.move == null || e.move === 0 ? "" : `<span class="move ${e.move > 0 ? "up" : "down"}">${e.move > 0 ? "▲" : "▼"}${Math.abs(e.move)}</span>`;
     return `<tr class="${mine ? "me" : ""}" data-stats="${e.playerId}">
       <td class="pos"><span class="medal ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span>${mv}</td>
-      <td class="av"><span class="avatar${mine ? " me" : ""}">${initials(e.name)}</span></td>
+      <td class="av">${avatar(e.name, e.profileId, mine ? "me" : "")}</td>
       <td><strong>${esc(e.name)}</strong><div class="thru">${e.rounds} round${e.rounds === 1 ? "" : "s"}${e.countedRounds < e.rounds ? ` · best ${e.countedRounds} count` : ""}</div></td>
       <td class="num"><span class="big">${e.totalPoints}</span></td></tr>`;
   }
@@ -406,7 +408,7 @@
       client.from("results").select("event_id, player_id, points, gross_score"),
       client.from("hole_scores").select("event_id, hole, strokes, picked_up").eq("player_id", pid),
       client.from("hole_stats").select("event_id, hole, putts, fairway").eq("player_id", pid),
-      client.from("events").select("id, name, venue, event_date"),
+      client.from("events").select("id, name, venue, event_date, tee_time, hidden"),
     ]);
     if (!pl.data) { view.innerHTML = `<div class="card status-msg err">Couldn't find that player.</div>`; return; }
     const p = pl.data;
@@ -447,11 +449,33 @@
       ${pts.map((v, i) => `<rect x="${i * 40 + 8}" y="${110 - (v / maxP) * 100}" width="24" height="${(v / maxP) * 100}" rx="4" fill="${v === best ? "#B8923C" : "#1B3A6C"}"/>
         <text x="${i * 40 + 20}" y="${104 - (v / maxP) * 100}" text-anchor="middle" font-size="11" fill="#57617A">${v}</text>`).join("")}</svg>` : "";
     const isMe = p.profile_id === app.user.id;
+    // Where they stand on the season table, same as the website's leaderboard.
+    let oom = null;
+    try { const d = await loadSeason(); const i = d.table.findIndex(e => e.playerId === pid); if (i >= 0) oom = { pos: i + 1, of: d.table.length, pts: d.table[i].totalPoints, move: d.table[i].move }; } catch (e) { /* table not available */ }
+    // Their fixtures: coming up, and whether they're down to play.
+    let fixtures = "";
+    if (isMe) {
+      const today = londonToday();
+      const [a1, a2, sc] = await Promise.all([
+        client.from("attendance").select("event_id, status").eq("profile_id", app.user.id),
+        client.from("attendance").select("event_id, status").eq("player_id", pid),
+        client.from("event_scoring").select("event_id, status"),
+      ]);
+      const playing = new Set([...(a1.data || []), ...(a2.data || [])].filter(a => !a.status || a.status === "playing").map(a => a.event_id));
+      const status = new Map((sc.data || []).map(x => [x.event_id, x.status]));
+      const next = (evs.data || []).filter(e => !e.hidden && e.event_date >= today).sort((a, b) => a.event_date.localeCompare(b.event_date));
+      fixtures = `<div class="card"><h2>Fixtures</h2>${next.length ? next.map(e => roundItem(e, status, playing).replace('class="card round-item"', 'class="round-item fx-item"')).join("") : `<p class="small muted">No fixtures coming up.</p>`}
+        <a class="small" href="../fixtures.html">Register or pay on the website ›</a></div>`;
+    }
     const bar = (label, n, cls) => `<div class="dist-row"><span>${label}</span><div class="dist-bar"><i class="${cls}" style="width:${holes ? Math.round(n / holes * 100) : 0}%"></i></div><b>${n}</b></div>`;
     view.innerHTML = `
-      <a class="back-link" href="#/season">‹ Order of Merit</a>
-      <div class="row"><span class="avatar big-av${isMe ? " me" : ""}">${initials(p.name)}</span><div><h1 style="margin:0">${esc(p.name)}</h1>
-        <div class="small muted">Index ${p.handicap == null ? "?" : p.handicap}</div></div></div>
+      <a class="back-link" href="${isMe ? "#/" : "#/season"}">‹ ${isMe ? "Home" : "Order of Merit"}</a>
+      <div class="profile-head">${avatar(p.name, p.profile_id, "big-av" + (isMe ? " me" : ""))}<div style="flex:1;min-width:0"><h1 style="margin:0">${esc(p.name)}</h1>
+        <div class="small muted">Handicap index ${p.handicap == null ? "?" : p.handicap}${isMe ? " · set by the committee" : ""}</div>
+        ${isMe ? `<label class="mv-link photo-link">${app.avatars.get(app.user.id) ? "Change" : "Add"} profile picture<input type="file" id="avatar-file" accept="image/*" hidden></label>` : ""}</div></div>
+      ${oom ? `<a class="card oom-card" href="#/season"><div><div class="lc-label" style="color:var(--ink-soft)">Order of Merit</div>
+          <div class="oom-pos">${ordinal(oom.pos)} <small>of ${oom.of}</small>${oom.move ? ` <span class="move ${oom.move > 0 ? "up" : "down"}" style="display:inline">${oom.move > 0 ? "▲" : "▼"}${Math.abs(oom.move)}</span>` : ""}</div></div>
+          <div style="text-align:right"><div class="big">${oom.pts}</div><div class="thru">points</div></div></a>` : ""}
       <div class="card last-card" style="margin-top:12px">
         <div class="lc-col"><div class="big">${mine.length}</div><div class="thru">rounds</div></div>
         <div class="lc-col"><div class="big">${mean}</div><div class="thru">average pts</div></div>
@@ -471,9 +495,11 @@
           <div class="lc-col"><div class="big">${girHoles ? Math.round(gir / girHoles * 100) + "%" : "–"}</div><div class="thru">greens in reg</div></div>
         </div><p class="small muted" style="margin:8px 0 0">Only holes where putts or fairways were logged.</p></div>`
         : isMe ? `<div class="card small muted">Want putts and fairways? Tap <b>Add putts &amp; fairways</b> on the number pad when you score.</div>` : ""}
+      ${fixtures}
       <div class="card"><h2>Rounds</h2>${mine.slice().reverse().map(x => { const e = evById.get(x.event_id); const q = posIn(x);
         return `<a class="row stat-round" href="#/round/${e.id}"><div><b>${esc(e.name)}</b><div class="thru">${esc(e.venue || "")} · ${fmtDate(e.event_date)}</div></div><span class="spacer"></span>
-          <span class="small muted">${ordinal(q.pos)} of ${q.of}</span><span class="big" style="margin-left:12px">${x.points}</span></a>`; }).join("") || `<p class="small muted">No results yet.</p>`}</div>`;
+          <span class="small muted">${ordinal(q.pos)} of ${q.of}${x.gross_score ? ` · ${x.gross_score} gross` : ""}</span><span class="big" style="margin-left:12px">${x.points}</span></a>`; }).join("") || `<p class="small muted">No results yet.</p>`}</div>
+      ${isMe ? `<p class="small muted" style="text-align:center">Change your name or bio on the <a href="../member.html">website</a>.</p>` : ""}`;
   }
 
 
@@ -617,7 +643,7 @@
   // ---------- loading a round ----------
 
   async function loadRound(eventId) {
-    const [ev, setup, field, hcps, scores, manage, entries, subs, checks, claims, posts, stats, prizes] = await Promise.all([
+    const [ev, setup, field, hcps, scores, manage, entries, subs, checks, claims, posts, stats, prizes, admins] = await Promise.all([
       client.from("events").select("*").eq("id", eventId).maybeSingle(),
       client.from("event_scoring").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("scoring_field", { target: eventId }),
@@ -632,6 +658,7 @@
       client.from("round_posts").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(150),
       client.from("hole_stats").select("player_id, hole, putts, fairway").eq("event_id", eventId),
       client.from("event_prizes").select("*").eq("event_id", eventId).maybeSingle(),
+      client.rpc("round_admins", { p_event: eventId }),
     ]);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
@@ -671,6 +698,7 @@
       comments: [], likes: [],
       stats: new Map((stats.error ? [] : stats.data || []).map(x => [cellKey(x.player_id, x.hole), x])),
       prizes: prizes.error ? null : prizes.data,
+      admins: admins.error ? null : admins.data || [],
       canManage: !!manage.data,
     };
     if (!r.feedOff && r.posts.length) {
@@ -1124,7 +1152,7 @@
       </div>
       ${rows.map(({ p, sum }) => `
         <button class="gb-row${r.me && p.id === r.me.id ? " me" : ""}" data-action="open-card" data-player="${p.id}">
-          <span class="gb-name"><span class="avatar${r.me && p.id === r.me.id ? " me" : ""}">${initials(p.name)}</span><b>${esc(shortName(p.name))}</b>${flags(r, p)}</span>
+          <span class="gb-name">${avatar(p.name, p.profileId, r.me && p.id === r.me.id ? "me" : "")}<b>${esc(shortName(p.name))}</b>${flags(r, p)}</span>
           <span class="gb-n">${p.ph == null ? "?" : p.ph}</span>
           <span class="gb-n">${sum.thru}</span>
           ${circ(sum.pickups ? "NR" : tp(sum.thru ? sum.grossToPar : null), "dark")}
@@ -1146,7 +1174,7 @@
     const teeDot = `<span class="tee-dot" style="background:${esc((r.tee && r.tee.colour) || "#f2c94c")}" title="${esc(r.tee ? r.tee.name : "")} tees"></span>`;
     const head = `<div class="sg-row sg-head" style="${cols}">
       ${teeDot}<span>Yds</span><span>SI</span><span>Par</span>
-      ${players.map(p => `<span class="sg-who"><span class="avatar${r.me && p.id === r.me.id ? " me" : ""}">${initials(p.name)}</span></span>`).join("")}
+      ${players.map(p => `<span class="sg-who">${avatar(p.name, p.profileId, r.me && p.id === r.me.id ? "me" : "")}</span>`).join("")}
     </div>`;
     const sums = players.map(p => S.summarise(r.holes, p.scores, p.ph));
     const row = h => `<div class="sg-row${gaps.has(h.hole) ? " gap" : ""}" style="${cols}">
@@ -1274,6 +1302,22 @@
     return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0] || "";
   }
 
+  // Profile pictures from the website, by account. Cached on the phone
+  // so they show with no signal.
+  app.avatars = new Map(Object.entries(store.get("avatars", {})));
+  async function loadAvatars() {
+    const { data, error } = await client.rpc("member_directory");
+    if (error || !data) return;
+    const m = {};
+    data.forEach(x => { if (x.avatar_url) m[x.id] = x.avatar_url; });
+    app.avatars = new Map(Object.entries(m));
+    store.set("avatars", m);
+  }
+  function avatar(name, profileId, cls) {
+    const url = profileId && app.avatars.get(profileId);
+    return `<span class="avatar${cls ? " " + cls : ""}${url ? " has-img" : ""}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" onerror="this.parentNode.classList.remove('has-img');this.remove()">` : ""}<i>${initials(name)}</i></span>`;
+  }
+
   function initials(name) {
     const w = String(name || "?").trim().split(/\s+/);
     return esc(((w[0] || "?")[0] + (w.length > 1 ? w[w.length - 1][0] : "")).toUpperCase());
@@ -1303,7 +1347,7 @@
   }
 
   function locked(r, playerId) {
-    return r.submitted.has(playerId) && !app.committee;
+    return r.submitted.has(playerId) && !r.canManage;
   }
 
   function setStroke(playerId, next) {
@@ -1425,7 +1469,7 @@
   // Who this phone can check in: your tee group (or everyone, before the
   // draw is set). The committee checks people in from Setup as well.
   function checkinGroup(r) {
-    if (!r.me) return app.committee ? selectedPlayers(r) : [];
+    if (!r.me) return r.canManage ? selectedPlayers(r) : [];
     if (r.me.group == null) {
       const drawSet = r.players.some(p => p.group != null);
       return drawSet ? [r.me] : r.players;
@@ -1608,7 +1652,7 @@
     if (!p) return;
     const sum = S.summarise(r.holes, p.scores, p.ph);
     const st = cardStatus(r, p);
-    const canEdit = editing && app.committee;
+    const canEdit = editing && r.canManage;
     const half = (from, to, label) => {
       const hs = r.holes.slice(from, to);
       const cell = (h, f) => `<td>${f(h)}</td>`;
@@ -1648,8 +1692,8 @@
     } else {
       if (st.ok && live && canScore(r)) actions.push(`<button class="btn gold block" data-action="submit-card" data-player="${p.id}">Submit ${esc(p.name.split(" ")[0])}'s card</button>`);
       if (st.key === "disputed") actions.push(`<p class="status-msg err small">⚠ ${esc(st.text)} — agree ${st.text.startsWith("1 ") ? "it" : "them"} on the Score screen, or ask the committee, before this card can be submitted.</p>`);
-      if (app.committee) {
-        actions.push(`<button class="btn ghost block" style="margin-top:8px" data-action="edit-card" data-player="${p.id}">Change scores (committee)</button>`);
+      if (r.canManage) {
+        actions.push(`<button class="btn ghost block" style="margin-top:8px" data-action="edit-card" data-player="${p.id}">Change scores (${app.committee ? "committee" : "round admin"})</button>`);
         if (r.submitted.has(p.id)) actions.push(`<button class="btn ghost block" style="margin-top:8px" data-action="reopen-card" data-player="${p.id}">Reopen card</button>`);
       }
     }
@@ -1691,6 +1735,48 @@
     scorecardSheet(app.round, playerId);
   }
 
+
+
+  // ---------- round admins ----------
+  // When the committee can't be there, they hand one player the running
+  // of this round: setup, publishing, disputes, cards, contests and
+  // results — for this fixture only. Handicaps stay with the committee.
+
+  function adminsCard(r) {
+    if (r.admins == null) return "";
+    const list = r.admins;
+    const candidates = r.players.filter(p => p.profileId && !list.some(a => a.profile_id === p.profileId));
+    return `<div class="card">
+      <h2>Round admins</h2>
+      <p class="small muted" style="margin-top:0">Can't be there? Make a player the admin for this round. They can set it up, publish it, settle disputes, change and reopen cards, confirm the side contests and finish it into Results — for this round only. Handicaps stay with the committee.</p>
+      ${list.length ? list.map(a => `<div class="row checkin-row">${avatar(a.name, a.profile_id)}<b>${esc(a.name)}</b><span class="spacer"></span>
+          ${app.committee ? `<button class="btn ghost" style="min-height:34px" data-action="remove-admin" data-profile="${a.profile_id}">Remove</button>` : ""}</div>`).join("")
+        : `<p class="small" style="margin:0 0 6px">No round admin — the committee runs it.</p>`}
+      ${app.committee && candidates.length ? `<div class="row" style="margin-top:8px;gap:8px">
+          <select id="admin-pick" style="flex:1;min-height:42px;border:1.5px solid var(--line);border-radius:8px;padding:0 8px;background:#fff">
+            <option value="">Choose a player…</option>${candidates.map(p => `<option value="${p.profileId}">${esc(p.name)}</option>`).join("")}
+          </select>
+          <button class="btn gold" style="min-height:42px" data-action="add-admin">Make admin</button></div>
+        <p class="small muted" style="margin:6px 0 0">Only players with a website account can be made admin.</p>` : ""}
+    </div>`;
+  }
+
+  async function addAdmin(r) {
+    const pid = $("#admin-pick") && $("#admin-pick").value;
+    if (!pid) { toast("Choose a player first.", true); return; }
+    const { error } = await client.from("moderator_grants").insert({ profile_id: pid, event_id: r.id, granted_by: app.user.id });
+    if (error) { toast(error.message, true); return; }
+    const p = r.players.find(x => x.profileId === pid);
+    toast(`${p ? p.name : "They"} can now run ${r.event.name}`);
+    await reloadRound();
+  }
+
+  async function removeAdmin(r, profileId) {
+    const { error } = await client.from("moderator_grants").delete().eq("event_id", r.id).eq("profile_id", profileId);
+    if (error) { toast(error.message, true); return; }
+    toast("Round admin removed");
+    await reloadRound();
+  }
 
   // ---------- side contests: the stake on the hole ----------
   // The committee picks the holes on the admin page. A group names whoever
@@ -1859,7 +1945,7 @@
       head = `<div class="post-auto"><span class="pa-ico">${c ? COMP_ICON[compKind(c)] : "📍"}</span><div><b>${esc(playerName(r, p.player_id))}</b> is in front · ${c ? esc(c.label) : "side contest"}${c ? `, hole ${window.competitionHole(r.event, c) || ""}` : ""}
         <div class="thru">named by ${esc(feedName(r, p.author_id))} · ${timeOf(p.created_at)}</div></div></div>`;
     } else {
-      head = `<div class="post-head"><span class="avatar">${initials(feedName(r, p.author_id))}</span><div><b>${esc(feedName(r, p.author_id))}</b><div class="thru">${timeOf(p.created_at)}</div></div></div>`;
+      head = `<div class="post-head">${avatar(feedName(r, p.author_id) === "You" ? (r.me ? r.me.name : "You") : feedName(r, p.author_id), p.author_id)}<div><b>${esc(feedName(r, p.author_id))}</b><div class="thru">${timeOf(p.created_at)}</div></div></div>`;
       if (p.kind === "photo") body += `<img class="post-photo" src="${esc(photoUrl(p.photo_path))}" alt="" loading="lazy" data-action="photo" data-src="${esc(photoUrl(p.photo_path))}">`;
       if (p.body) body += `<p class="post-body">${esc(p.body)}</p>`;
     }
@@ -2130,7 +2216,7 @@
       <tbody>${rows.map(x => `
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${x.sum.thru ? posCell(x.pos, x.tied) : ""}${move(x.player.id)}</td>
-          <td class="av"><span class="avatar${meClass(x.player) ? " me" : ""}">${initials(x.player.name)}</span></td>
+          <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
           <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
@@ -2153,7 +2239,7 @@
       <tbody>${rows.map(x => `
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${posCell(x.pos)}${move(x.player.id)}</td>
-          <td class="av"><span class="avatar${meClass(x.player) ? " me" : ""}">${initials(x.player.name)}</span></td>
+          <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
           <td><strong>${esc(x.player.name)}</strong><div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num">${x.nr ? "NR" : x.sum.thru ? (gross ? x.sum.gross : x.sum.net) : "–"}</td>
@@ -2352,6 +2438,7 @@
 
       ${checkinsSetupCard(r)}
       ${r.contestsOff ? "" : contestsSetupCard(r)}
+      ${adminsCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
       <div class="card">
@@ -2876,6 +2963,8 @@
         break;
       }
       case "review-cards": submitSheet(r); break;
+      case "add-admin": addAdmin(r); break;
+      case "remove-admin": if (confirm("Remove this round admin?")) removeAdmin(r, el.dataset.profile); break;
       case "stake": stakeSheet(r, el.dataset.comp); break;
       case "stake-claim": claimStake(r, el.dataset.comp, el.dataset.player); break;
       case "unstake": {
@@ -2976,7 +3065,27 @@
     }
   });
 
-  document.addEventListener("change", e => {
+  document.addEventListener("change", async e => {
+    if (e.target && e.target.id === "avatar-file") {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      toast("Uploading your picture…");
+      try {
+        let body = f;
+        if (window.ImageResize) { const sized = await window.ImageResize.resize(f); if (sized && sized.thumb) body = sized.thumb; }
+        const path = `${app.user.id}/${Date.now()}.jpg`;
+        const up = await client.storage.from("avatars").upload(path, body, { upsert: true, contentType: body.type || "image/jpeg" });
+        if (up.error) throw up.error;
+        const url = client.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+        const { error } = await client.from("profiles").update({ avatar_url: url }).eq("id", app.user.id);
+        if (error) throw error;
+        app.avatars.set(app.user.id, url);
+        store.set("avatars", Object.fromEntries(app.avatars));
+        toast("Profile picture updated");
+        route();
+      } catch (err) { toast(err.message || "Couldn't upload that picture.", true); }
+      return;
+    }
     if (e.target && e.target.id === "feed-photo") {
       const f = e.target.files && e.target.files[0];
       $("#feed-photo-name").textContent = f ? f.name : "";
