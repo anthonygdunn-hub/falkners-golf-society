@@ -165,6 +165,7 @@
 
   function renderSignIn(msg) {
     $("#menu-btn").hidden = true;
+    hideTabbar();
     view.innerHTML = `
       <div class="card">
         <h1>Sign in</h1>
@@ -205,54 +206,199 @@
 
   async function renderHome() {
     view.innerHTML = `<div class="loading">Loading rounds…</div>`;
-    const [{ data: events, error }, { data: setups }] = await Promise.all([
+    const me = app.user.id;
+    const [{ data: events, error }, { data: setups }, { data: prof }, { data: mine }] = await Promise.all([
       client.from("events").select("id, name, venue, event_date, tee_time, format, hidden").eq("hidden", false).order("event_date"),
       client.from("event_scoring").select("event_id, status"),
+      client.from("profiles").select("display_name").eq("id", me).maybeSingle(),
+      client.from("players").select("id").eq("profile_id", me),
     ]);
     if (error) { view.innerHTML = `<div class="card status-msg err">Couldn't load rounds: ${esc(error.message)}</div>`; return; }
+    const myPlayers = (mine || []).map(p => p.id);
+    // Rounds you're down to play, by your account or your name on the player list.
+    const [byProfile, byPlayer, myResults] = await Promise.all([
+      client.from("attendance").select("event_id, status").eq("profile_id", me),
+      myPlayers.length ? client.from("attendance").select("event_id, status").in("player_id", myPlayers) : Promise.resolve({ data: [] }),
+      myPlayers.length ? client.from("results").select("event_id, points, gross_score").in("player_id", myPlayers) : Promise.resolve({ data: [] }),
+    ]);
+    const playing = new Set([...(byProfile.data || []), ...(byPlayer.data || [])].filter(a => !a.status || a.status === "playing").map(a => a.event_id));
+
     const status = new Map((setups || []).map(s => [s.event_id, s.status]));
-    const today = todayISO();
+    const today = londonToday();
     const live = events.filter(e => status.get(e.id) === "live");
     const upcoming = events.filter(e => e.event_date >= today && status.get(e.id) !== "live");
     const past = events.filter(e => e.event_date < today && status.get(e.id) !== "live").reverse();
 
-    const item = e => {
-      const st = status.get(e.id);
-      const badge = st === "live" ? `<span class="badge live">Live</span>`
-        : st === "final" ? `<span class="badge final">Final</span>`
-        : st === "setup" ? `<span class="badge">Preview</span>` : "";
-      const d = new Date(e.event_date + "T12:00:00");
-      return `
-        <a class="card round-item" href="#/round/${e.id}">
-          <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
-          <div class="round-meta">
-            <strong>${esc(e.name)}</strong>
-            <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}</span>
-          </div>
-          ${badge}
-        </a>`;
-    };
+    const first = prof && prof.display_name ? String(prof.display_name).trim().split(/\s+/)[0] : "";
+    const hour = Number(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/London" }));
+    const hello = hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
 
     view.innerHTML = `
+      <div class="hello">
+        <div class="hello-hi">${hello}${first ? ", " + esc(first) : ""}</div>
+        <div class="hello-sub">The Falkners Arms Golf Society</div>
+      </div>
       ${installTip()}
-      ${live.length ? `<div class="section-label">Live now</div>${live.map(item).join("")}` : ""}
-      <div class="section-label">Coming up</div>
-      ${upcoming.length ? upcoming.map(item).join("") : `<p class="empty">No rounds scheduled.</p>`}
-      ${past.length ? `<div class="section-label">Played</div>${past.map(item).join("")}` : ""}`;
+      ${heroCard(live[0] || upcoming[0], status, playing, today)}
+      ${lastScoreCard(myResults.data || [], events)}
+      ${live.length > 1 ? `<div class="section-label">Live now</div>${live.slice(1).map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${(live.length ? upcoming : upcoming.slice(1)).length ? `<div class="section-label">Coming up</div>${(live.length ? upcoming : upcoming.slice(1)).map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${past.length ? `<div class="section-label">Played</div>${past.slice(0, 4).map(e => roundItem(e, status, playing)).join("")}
+        ${past.length > 4 ? `<details class="more-rounds"><summary>All ${past.length} played rounds</summary>${past.slice(4).map(e => roundItem(e, status, playing)).join("")}</details>` : ""}` : ""}`;
+    loadLastScoreRank(myResults.data || [], events, myPlayers);
+  }
+
+  function badgeFor(st) {
+    return st === "live" ? `<span class="badge live">Live</span>`
+      : st === "final" ? `<span class="badge final">Final</span>`
+      : st === "setup" ? `<span class="badge">Preview</span>` : "";
+  }
+
+  function roundItem(e, status, playing) {
+    const d = new Date(e.event_date + "T12:00:00");
+    return `
+      <a class="card round-item" href="#/round/${e.id}">
+        <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
+        <div class="round-meta">
+          <strong>${esc(e.name)}</strong>
+          <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}${playing.has(e.id) ? ' · <span class="playing">You\'re playing</span>' : ""}</span>
+        </div>
+        ${badgeFor(status.get(e.id))}
+        <span class="chev" aria-hidden="true">›</span>
+      </a>`;
+  }
+
+  function daysAway(iso, today) {
+    const n = Math.round((new Date(iso + "T12:00:00") - new Date(today + "T12:00:00")) / 864e5);
+    return n === 0 ? "Today" : n === 1 ? "Tomorrow" : n < 0 ? "" : `In ${n} days`;
+  }
+
+  // The round that matters right now, big, with the one button you need.
+  function heroCard(e, status, playing, today) {
+    if (!e) return `<div class="card empty">No rounds scheduled yet.</div>`;
+    const st = status.get(e.id);
+    const isLive = st === "live";
+    const onDay = e.event_date === today;
+    const youre = playing.has(e.id);
+    let cta;
+    if (isLive && youre) cta = `<a class="btn gold block" href="#/round/${e.id}/start">Score now</a>`;
+    else if (isLive) cta = `<a class="btn gold block" href="#/round/${e.id}">Live leaderboard</a>`;
+    else if (onDay && youre && st) cta = `<a class="btn gold block" href="#/round/${e.id}/start">Start round</a>`;
+    else if (st) cta = `<a class="btn gold block" href="#/round/${e.id}">View round</a>`;
+    else cta = `<a class="btn ghost-light block" href="#/round/${e.id}">Round details</a>`;
+    const when = isLive ? "Live now" : daysAway(e.event_date, today);
+    return `<div class="hero">
+      <div class="hero-top"><span class="hero-when">${esc(when || fmtDate(e.event_date))}</span>${badgeFor(st)}</div>
+      <div class="hero-name">${esc(e.name)}</div>
+      <div class="hero-venue">${esc(e.venue || "Venue TBC")}</div>
+      <div class="hero-facts">
+        <div><span>Date</span><b>${fmtDate(e.event_date)}</b></div>
+        ${e.tee_time ? `<div><span>First tee</span><b>${esc(e.tee_time.slice(0, 5))}</b></div>` : ""}
+        <div><span>You</span><b>${youre ? "Playing" : "Not entered"}</b></div>
+      </div>
+      ${cta}
+      ${youre ? "" : `<a class="hero-link" href="../fixtures.html">Register on the website ›</a>`}
+    </div>`;
+  }
+
+  function lastScoreCard(results, events) {
+    const byId = new Map(events.map(e => [e.id, e]));
+    const rs = results.filter(x => byId.has(x.event_id) && x.points != null)
+      .sort((a, b) => byId.get(b.event_id).event_date.localeCompare(byId.get(a.event_id).event_date));
+    if (!rs.length) return "";
+    const last = rs[0], ev = byId.get(last.event_id);
+    const best = rs.reduce((m, x) => Math.max(m, x.points), 0);
+    return `<a class="card last-card" href="#/round/${ev.id}">
+      <div class="lc-col"><div class="big">${last.points}</div><div class="thru">pts last time</div></div>
+      <div class="lc-col"><div class="big" id="last-rank">–</div><div class="thru">position</div></div>
+      <div class="lc-col"><div class="big">${best}</div><div class="thru">best this season</div></div>
+      <div class="lc-what small muted">${esc(ev.name)} · ${esc(ev.venue || "")}</div>
+    </a>`;
+  }
+
+  async function loadLastScoreRank(results, events, myPlayers) {
+    const el = document.getElementById("last-rank");
+    if (!el) return;
+    const byId = new Map(events.map(e => [e.id, e]));
+    const rs = results.filter(x => byId.has(x.event_id) && x.points != null)
+      .sort((a, b) => byId.get(b.event_id).event_date.localeCompare(byId.get(a.event_id).event_date));
+    if (!rs.length) return;
+    const { data } = await client.from("results").select("player_id, points").eq("event_id", rs[0].event_id);
+    if (!data || !data.length) return;
+    const above = data.filter(x => x.points != null && x.points > rs[0].points).length;
+    const level = data.filter(x => x.points === rs[0].points && !myPlayers.includes(x.player_id)).length;
+    const pos = above + 1;
+    const sfx = n => (n % 100 >= 11 && n % 100 <= 13) ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+    const node = document.getElementById("last-rank");
+    if (node) node.innerHTML = `${level ? "T" : ""}${pos}<small>${sfx(pos)}</small> <span class="of">/${data.length}</span>`;
+  }
+
+  // ---------- getting it on the home screen ----------
+
+  let installEvent = null; // Android/Chrome's own install prompt, when offered
+  window.addEventListener("beforeinstallprompt", e => {
+    e.preventDefault();
+    installEvent = e;
+    const b = document.getElementById("install-now");
+    if (b) b.hidden = false;
+  });
+  window.addEventListener("appinstalled", () => { installEvent = null; store.set("app-installed", true); });
+
+  const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  function platform() {
+    const ua = navigator.userAgent;
+    const ios = /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+    return {
+      ios,
+      android: /android/i.test(ua),
+      inApp: /FBAN|FBAV|Instagram|Line\/|WhatsApp|GSA\//i.test(ua),
+      iosOther: ios && /CriOS|FxiOS|EdgiOS/i.test(ua),
+    };
   }
 
   function installTip() {
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-    if (standalone || store.get("hide-install-tip", false)) return "";
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isStandalone() || store.get("app-installed", false)) return "";
+    const hidden = store.get("hide-install-tip", 0);
+    // Dismissed? Ask again in a fortnight, in case they change their mind.
+    if (hidden && (hidden === true || Date.now() - hidden < 14 * 864e5)) return "";
     return `
-      <div class="card install-tip small">
-        <div class="row"><strong>Put this on your home screen</strong><span class="spacer"></span>
-          <button class="icon-btn" style="color:var(--ink-soft)" data-action="hide-tip" aria-label="Dismiss">×</button></div>
-        <div class="muted">${ios
-          ? "In Safari, tap the Share button, then <b>Add to Home Screen</b>."
-          : "In Chrome, tap the ⋮ menu, then <b>Add to Home screen</b> or <b>Install app</b>."}</div>
+      <div class="card install-tip">
+        <img src="icons/icon-192.png" alt="" class="it-icon">
+        <div class="it-text"><strong>Get the app</strong>
+          <div class="small muted">Add it to your home screen</div></div>
+        <button class="btn gold" style="min-height:38px" data-action="install-help">Show me</button>
+        <button class="it-x" data-action="hide-tip" aria-label="Not now">×</button>
       </div>`;
+  }
+
+  const SHARE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>`;
+  const DOTS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
+  const ADD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>`;
+
+  function installSheet() {
+    if (isStandalone()) { openSheet(`<h2>You're all set</h2><p>You're already using the app from your home screen.</p><button class="btn block" data-action="close-sheet">Done</button>`); return; }
+    const pf = platform();
+    const step = (n, html) => `<li class="i-step"><span class="i-num">${n}</span><div>${html}</div></li>`;
+    let steps;
+    if (pf.inApp) {
+      steps = step(1, `This page has opened inside another app (WhatsApp, Facebook or similar), which can't add it to your home screen.`) +
+        step(2, `Tap <b>⋯</b> or the compass and choose <b>Open in ${pf.ios ? "Safari" : "Chrome"}</b>, or copy this address into ${pf.ios ? "Safari" : "Chrome"}:<div class="i-url">thefalknersarmsgolfsociety.co.uk/app</div>`) +
+        step(3, `Then tap <b>Show me</b> again for the last two steps.`);
+    } else if (pf.ios) {
+      steps = step(1, `Tap the <b>Share</b> button <span class="i-ico">${SHARE_ICON}</span> ${pf.iosOther ? "at the top right, by the address bar" : "at the bottom of Safari (at the top on an iPad)"}.`) +
+        step(2, `Scroll down and tap <b>Add to Home Screen</b> <span class="i-ico">${ADD_ICON}</span>.`) +
+        step(3, `Tap <b>Add</b>. The Falkners crest appears on your home screen — open it from there from now on.`);
+    } else {
+      steps = step(1, `Tap the <b>⋮</b> menu <span class="i-ico">${DOTS_ICON}</span> at the top right of Chrome.`) +
+        step(2, `Tap <b>Install app</b> or <b>Add to Home screen</b>.`) +
+        step(3, `Tap <b>Install</b>. The Falkners crest appears with your other apps — open it from there from now on.`);
+    }
+    openSheet(`
+      <div class="i-head"><img src="icons/icon-192.png" alt=""><div><h2 style="margin:0">Falkners Golf</h2><div class="small muted">Add it to your home screen</div></div></div>
+      ${!pf.ios ? `<button class="btn gold block" id="install-now" data-action="install-now" ${installEvent ? "" : "hidden"}>Install now</button>` : ""}
+      <ol class="i-steps">${steps}</ol>
+      <p class="small muted">You sign in once with your society website email and password. It works with patchy signal on the course, and scores you enter with no signal send when it's back.</p>
+      <button class="btn ghost block" data-action="close-sheet">Done</button>`);
   }
 
   // ---------- loading a round ----------
@@ -560,18 +706,18 @@
     const r = app.round;
     const st = r.setup ? r.setup.status : null;
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
-    const tabs = [["score", "Score"], ["board", "Individual"]];
+    const tabs = [["score", "Score"], ["board", "Leaderboard"]];
     if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
     if (r.canManage) tabs.push(["setup", "Setup"]);
     view.innerHTML = `
       <div class="round-head">
+        <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
         <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${badge}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
       </div>
-      <div class="tabs" role="tablist">
-        ${tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${l}</button>`).join("")}
-      </div>
-      <div id="round-body"></div>`;
+      <div id="round-body" class="${r.anim ? "anim-" + r.anim : ""}"></div>`;
+    r.anim = null;
+    showTabbar(tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span></button>`).join(""));
     const body = $("#round-body");
     if (r.tab === "score") {
       body.innerHTML = scoreView(r);
@@ -581,6 +727,28 @@
     else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || pairsTable(r);
     else body.innerHTML = boardView(r);
   }
+
+  const icon = d => `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const TAB_ICONS = {
+    score: icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>'),
+    board: icon('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 6h3a3 3 0 0 1-3 4M7 6H4a3 3 0 0 0 3 4"/>'),
+    pairs: icon('<circle cx="8.5" cy="8" r="3"/><circle cx="16" cy="9" r="2.5"/><path d="M3 20c0-3 2.5-5.5 5.5-5.5S14 17 14 20M14.5 14.6c2.8-.4 5.5 1.6 5.5 5.4"/>'),
+    setup: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+  };
+
+  function showTabbar(html) {
+    const bar = $("#tabbar");
+    bar.innerHTML = html;
+    bar.hidden = false;
+    document.body.classList.add("has-tabbar");
+  }
+  function hideTabbar() {
+    $("#tabbar").hidden = true;
+    document.body.classList.remove("has-tabbar");
+  }
+
+  // A tiny tap on phones that support it, so a score feels entered.
+  function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms || 8); } catch (e) { /* not supported */ } } }
 
   function notReady(r) {
     if (!r.setup || !r.tee || r.holes.length !== 18) {
@@ -679,21 +847,35 @@
       const pts = sc ? S.stablefordPoints(h.par, sc.strokes, shots, sc.picked_up) : null;
       const dots = shots > 0 ? `<span class="shots" aria-label="${shots} shot${shots > 1 ? "s" : ""}">${"<i></i>".repeat(Math.min(shots, 4))}</span>`
         : shots < 0 ? `<span class="shots" aria-label="gives a shot back"><i class="minus"></i></span>` : "";
+      // Quick picks: one under par to three over, with − and + either side
+      // for anything else. Tapping a number sets it outright.
+      const cur = sc && !sc.picked_up ? sc.strokes : null;
+      const lo = Math.max(1, h.par - 1);
+      const chips = [];
+      for (let v = lo; v <= lo + 4; v++) {
+        const d = v - h.par;
+        chips.push(`<button class="chip ${d < 0 ? "c-under" : d > 0 ? "c-over" : "c-par"}${cur === v ? " on" : ""}" data-action="set" data-player="${p.id}" data-val="${v}" aria-label="${v} for ${esc(p.name)}" aria-pressed="${cur === v}" ${lock ? "disabled" : ""}>${v}</button>`);
+      }
       return `
-        <div class="score-card">
-          <div class="score-name">
-            <strong>${esc(p.name)}${dots}</strong>
-            <div class="sub">PH ${p.ph == null ? "?" : p.ph} · ${sum.points} pts thru ${sum.thru}${pts != null ? ` · <span class="pts">${pts} here</span>` : ""}</div>
-            ${lock ? `<div class="sub"><span class="tick">✓</span> Card submitted</div>` : `<div class="mini-actions">
-              <button data-action="pickup" data-player="${p.id}">Pick up</button>
-              ${myEntry(r, p.id, h.hole) ? `<button data-action="clear" data-player="${p.id}">Clear</button>` : ""}
-            </div>`}
-          </div>
-          <div class="stepper">
-            <button data-action="minus" data-player="${p.id}" aria-label="One fewer for ${esc(p.name)}" ${lock ? "disabled" : ""}>−</button>
+        <div class="score-card${lock ? " is-locked" : ""}">
+          <div class="score-top">
+            <span class="avatar${r.me && p.id === r.me.id ? " me" : ""}" aria-hidden="true">${initials(p.name)}</span>
+            <div class="score-name">
+              <strong>${esc(p.name)}${dots}</strong>
+              <div class="sub">PH ${p.ph == null ? "?" : p.ph} · ${sum.points} pts · thru ${sum.thru}${pts != null ? ` · <span class="pts">${pts} pt${pts === 1 ? "" : "s"} here</span>` : ""}</div>
+            </div>
             <button class="${valClass}" data-action="tap-val" data-player="${p.id}" aria-label="Score for ${esc(p.name)}" ${lock ? "disabled" : ""}>${valText}</button>
-            <button data-action="plus" data-player="${p.id}" aria-label="One more for ${esc(p.name)}" ${lock ? "disabled" : ""}>+</button>
           </div>
+          ${lock ? `<div class="sub locked-note"><span class="tick">✓</span> Card submitted</div>` : `
+          <div class="chips">
+            <button class="chip step" data-action="minus" data-player="${p.id}" aria-label="One fewer for ${esc(p.name)}">−</button>
+            ${chips.join("")}
+            <button class="chip step" data-action="plus" data-player="${p.id}" aria-label="One more for ${esc(p.name)}">+</button>
+          </div>
+          <div class="mini-actions">
+            <button data-action="pickup" data-player="${p.id}"${sc && sc.picked_up ? ' class="on"' : ""}>Pick up</button>
+            ${myEntry(r, p.id, h.hole) ? `<button data-action="clear" data-player="${p.id}">Clear</button>` : ""}
+          </div>`}
           ${disputeBox(r, p, h.hole)}
         </div>`;
     }).join("");
@@ -704,20 +886,30 @@
       ${picker}
       ${disputeBanner(r, players)}
       <div class="hole-strip">${strip}</div>
+      <div class="swipe-zone">
       <div class="hole-head">
+        <button class="hh-arrow" data-action="prev-hole" aria-label="Previous hole" ${r.hole === 1 ? "disabled" : ""}>‹</button>
         <div class="num"><small>HOLE</small>${h.hole}</div>
         <div class="facts">
           <div>Par<b>${h.par}</b></div>
           <div>SI<b>${h.stroke_index}</b></div>
           ${h.yards ? `<div>Yds<b>${h.yards}</b></div>` : ""}
         </div>
+        <button class="hh-arrow" data-action="next-hole" aria-label="Next hole">›</button>
       </div>
       ${gpsBar(r, h.hole)}
-      <div class="card">${cards}</div>
+      <div class="card score-list">${cards}</div>
+      <p class="swipe-hint small muted">Swipe left or right to change hole</p>
+      </div>
       <div class="hole-nav">
         <button class="btn ghost" data-action="prev-hole" ${r.hole === 1 ? "disabled" : ""}>← Hole ${r.hole - 1 || ""}</button>
         <button class="btn" data-action="next-hole">${r.hole === 18 ? "Review & submit" : "Hole " + (r.hole + 1) + " →"}</button>
       </div>`;
+  }
+
+  function initials(name) {
+    const w = String(name || "?").trim().split(/\s+/);
+    return esc(((w[0] || "?")[0] + (w.length > 1 ? w[w.length - 1][0] : "")).toUpperCase());
   }
 
   const hasScore = (p, hole) => { const s = p.scores[hole]; return !!s && (s.strokes != null || s.picked_up); };
@@ -761,6 +953,7 @@
       applyEntry(r, { ...row, entered_by: app.user.id, updated_at: new Date().toISOString() });
     }
     recomputeCell(r, playerId, h.hole);
+    buzz();
     queueScore(row);
     buildPlayers(r);
     renderRoundBody();
@@ -1151,37 +1344,86 @@
       (r.submitted.has(p.id) ? ' <span class="tick" title="Card submitted">✓</span>' : "");
   }
 
-  const posCell = pos => pos == null ? "" : `<span class="medal ${pos <= 3 ? "p" + pos : ""}">${pos}</span>`;
+  const posCell = (pos, tied) => pos == null ? "" : `<span class="medal ${pos <= 3 ? "p" + pos : ""}">${tied ? "T" : ""}${pos}</span>`;
   const thruText = sum => sum.complete ? "F" : sum.thru ? "Thru " + sum.thru : "–";
   const meClass = p => app.round.me && p.id === app.round.me.id ? "me" : "";
 
+  // Who's moved since the last score came in. Positions are kept on the
+  // phone per round, so arrows survive closing the app; they compare the
+  // board now with the board before the latest change.
+  function movement(r, key, rows, idOf) {
+    const sig = Object.values(r.scores).reduce((t, h) => t + Object.keys(h || {}).length, 0);
+    const k = `moves-${r.id}-${key}`;
+    const saved = store.get(k, null);
+    const now = {};
+    rows.forEach(x => { if (x.pos != null && x.started !== false) now[idOf(x)] = x.pos; });
+    let base = saved ? saved.base : {};
+    if (!saved || saved.sig !== sig) { base = saved ? saved.pos : {}; store.set(k, { sig, pos: now, base }); }
+    return id => {
+      const was = base[id], is = now[id];
+      if (was == null || is == null || was === is) return "";
+      const n = was - is;
+      return `<span class="move ${n > 0 ? "up" : "down"}" aria-label="${n > 0 ? "up" : "down"} ${Math.abs(n)}">${n > 0 ? "▲" : "▼"}${Math.abs(n)}</span>`;
+    };
+  }
+
+  function liveLine(r) {
+    if (!r.setup || r.setup.status !== "live") return "";
+    const t = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    return `<div class="live-line"><span class="dot"></span>Live · updated ${t}</div>`;
+  }
+
+  // The top of the board, Golfify style: who's leading and by how much.
+  function leaderCard(label, name, big, unit, sub) {
+    return `<div class="leader-card">
+      <div class="lc-label">${label}</div>
+      <div class="lc-name">${name}</div>
+      <div class="lc-score"><b>${big}</b> ${unit}</div>
+      <div class="lc-sub">${sub}</div>
+    </div>`;
+  }
+
   function stablefordTable(r) {
     const rows = S.stablefordBoard(r.holes, r.players);
-    return `<div class="card"><table class="board">
-      <thead><tr><th></th><th>Player</th><th class="num">Thru</th><th class="num">Pts</th></tr></thead>
+    const started = rows.filter(x => x.sum.thru);
+    const move = movement(r, "stableford", rows.map(x => ({ ...x, started: !!x.sum.thru })), x => x.player.id);
+    let hero = "";
+    if (started.length) {
+      const top = started.filter(x => x.pos === 1);
+      const next = started.find(x => x.pos > 1);
+      const lead = next ? top[0].sum.points - next.sum.points : 0;
+      hero = leaderCard(top.length > 1 ? "Joint leaders" : "Leader",
+        top.map(x => esc(x.player.name)).join(" &amp; "), top[0].sum.points, "pts",
+        `${top.length > 1 ? "" : thruText(top[0].sum) + (lead > 0 ? ` · ${lead} clear` : "")}`);
+    }
+    return `${liveLine(r)}${hero}<div class="card board-card"><table class="board">
+      <thead><tr><th></th><th colspan="2">Player</th><th class="num">Thru</th><th class="num">Pts</th></tr></thead>
       <tbody>${rows.map(x => `
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
-          <td class="pos">${x.sum.thru ? posCell(x.pos) : ""}</td>
+          <td class="pos">${x.sum.thru ? posCell(x.pos, x.tied) : ""}${move(x.player.id)}</td>
+          <td class="av"><span class="avatar${meClass(x.player) ? " me" : ""}">${initials(x.player.name)}</span></td>
           <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
-      <p class="small muted" style="margin:10px 0 0">Ties on a finished card go to countback: last 9, 6, 3, then 1.</p></div>`;
+      <p class="small muted" style="margin:10px 0 0">Tap a player for their card. Ties on a finished card go to countback: last 9, 6, 3, then 1.</p></div>`;
   }
 
   function medalTable(r) {
     const gross = !!r.gross;
     const rows = S.medalBoard(r.holes, r.players, gross);
-    return `
+    const move = movement(r, gross ? "gross" : "net", rows.map(x => ({ ...x, started: !!x.sum.thru && !x.nr })), x => x.player.id);
+    return `${liveLine(r)}
       <div class="subtabs">
         <button data-action="gross" data-gross="0" aria-selected="${!gross}">Net</button>
         <button data-action="gross" data-gross="1" aria-selected="${gross}">Gross</button>
       </div>
       <div class="card"><table class="board">
-      <thead><tr><th></th><th>Player</th><th class="num">Thru</th><th class="num">${gross ? "Gross" : "Net"}</th><th class="num">To par</th></tr></thead>
+      <thead><tr><th></th><th colspan="2">Player</th><th class="num">Thru</th><th class="num">${gross ? "Gross" : "Net"}</th><th class="num">To par</th></tr></thead>
       <tbody>${rows.map(x => `
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
-          <td class="pos">${posCell(x.pos)}</td>
+          <td class="pos">${posCell(x.pos)}${move(x.player.id)}</td>
+          <td class="av"><span class="avatar${meClass(x.player) ? " me" : ""}">${initials(x.player.name)}</span></td>
           <td><strong>${esc(x.player.name)}</strong><div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num">${x.nr ? "NR" : x.sum.thru ? (gross ? x.sum.gross : x.sum.net) : "–"}</td>
@@ -1214,12 +1456,18 @@
     const rows = S.pairsBoard(r.holes, r.pairs || []);
     const doubled = r.players.filter(p => (p.pairs || []).length > 1);
     const mine = r.me ? new Set((r.me.pairs || [])) : new Set();
-    return `
-      <div class="card"><table class="board">
+    const move = movement(r, "pairs", rows, x => "p" + x.pair.number);
+    const top = rows.filter(x => x.started && x.pos === 1);
+    const hero = top.length ? leaderCard(top.length > 1 ? "Joint leading pairs" : "Leading pair",
+      top.map(x => x.pair.players.map(p => esc(p.name)).join(" &amp; ")).join("<br>"), top[0].points, "pts",
+      top.length > 1 ? "" : (top[0].complete ? "Both finished" : `Thru ${top[0].thru}`)) : "";
+    return `${liveLine(r)}${hero}
+      <div class="card board-card"><table class="board">
       <thead><tr><th></th><th>Pair</th><th class="num">Thru</th><th class="num">Pts</th></tr></thead>
       <tbody>${rows.map(x => `
         <tr data-pair="${x.pair.number}" class="${mine.has(x.pair.number) ? "me" : ""}">
-          <td class="pos">${x.started ? posCell(x.pos) : ""}</td>
+          <td class="pos">${x.started ? posCell(x.pos, x.tied) : ""}${move("p" + x.pair.number)}</td>
+
           <td><strong>${x.pair.players.map(p => esc(p.name)).join(" & ")}</strong>
             <div class="thru">Pair ${x.pair.number} · ${x.pair.players.map((p, i) => esc(p.name.split(" ")[0]) + " " + x.sums[i].points).join(" + ")}${x.pair.players.length < 2 ? " · needs a partner" : ""}</div></td>
           <td class="num thru">${x.complete ? "F" : x.thru ? "Thru " + x.thru : "–"}</td>
@@ -1801,7 +2049,11 @@
     const a = el.dataset.action;
     switch (a) {
       case "close-sheet": closeSheet(); break;
-      case "hide-tip": store.set("hide-install-tip", true); el.closest(".install-tip").remove(); break;
+      case "hide-tip": store.set("hide-install-tip", Date.now()); el.closest(".install-tip").remove(); break;
+      case "install-help": $("#menu").hidden = true; installSheet(); break;
+      case "install-now":
+        if (installEvent) { installEvent.prompt(); const c = await installEvent.userChoice.catch(() => null); installEvent = null; if (c && c.outcome === "accepted") { closeSheet(); toast("Installed — open it from your home screen"); } }
+        break;
       case "tab": r.tab = el.dataset.tab; savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
       case "board": r.board = el.dataset.board; savePrefs(); renderRoundBody(); break;
       case "gross": r.gross = el.dataset.gross === "1"; renderRoundBody(); break;
@@ -1814,18 +2066,19 @@
         break;
       }
       case "hole": r.hole = Number(el.dataset.hole); savePrefs(); renderRoundBody(); break;
-      case "prev-hole": r.hole = Math.max(1, r.hole - 1); savePrefs(); renderRoundBody(); break;
+      case "prev-hole": if (r.hole > 1) { r.hole -= 1; r.anim = "back"; savePrefs(); renderRoundBody(); } break;
+      case "set": setStroke(el.dataset.player, Number(el.dataset.val)); break;
       case "next-hole": {
         const missing = selectedPlayers(r).filter(p => !hasScore(p, r.hole));
         if (missing.length && canScore(r)) { missingSheet(r, missing, r.hole, r.hole === 18 ? "submit" : r.hole + 1); break; }
         if (r.hole === 18) submitSheet(r);
-        else { r.hole += 1; savePrefs(); renderRoundBody(); }
+        else { r.hole += 1; r.anim = "fwd"; savePrefs(); renderRoundBody(); }
         break;
       }
       case "carry-on":
         closeSheet();
         if (el.dataset.to === "submit") submitSheet(r);
-        else { r.hole = Number(el.dataset.to); savePrefs(); renderRoundBody(); }
+        else { r.hole = Number(el.dataset.to); r.anim = "fwd"; savePrefs(); renderRoundBody(); }
         break;
       case "tap-val": {
         const cur = currentStroke(el.dataset.player);
@@ -1887,6 +2140,24 @@
     }
   });
 
+  // Swipe across the hole to move between holes, like turning a page.
+  let swipe = null;
+  document.addEventListener("touchstart", e => {
+    const z = e.target.closest(".swipe-zone");
+    if (!z || e.touches.length !== 1 || e.target.closest("input, select, .gps-bar")) { swipe = null; return; }
+    swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (!swipe || !app.round || app.round.tab !== "score") return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    const quick = Date.now() - swipe.t < 700;
+    swipe = null;
+    if (!quick || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    const btn = document.querySelector(`.hole-nav [data-action=${dx < 0 ? "next-hole" : "prev-hole"}]`);
+    if (btn && !btn.disabled) btn.click();
+  }, { passive: true });
+
   $("#menu-btn").addEventListener("click", () => { $("#menu").hidden = !$("#menu").hidden; });
   document.addEventListener("click", e => {
     if (!e.target.closest("#menu") && !e.target.closest("#menu-btn")) $("#menu").hidden = true;
@@ -1905,6 +2176,7 @@
     const hash = location.hash || "#/";
     const parts = hash.slice(2).split("/");
     if (!(parts[0] === "round" && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
+    if (parts[0] !== "round") hideTabbar();
     if (!app.user) return renderSignIn();
     if (!app.approved) return renderNotApproved();
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
