@@ -136,7 +136,7 @@
             </div>
             <form id="profile-form" style="flex:1; min-width:220px;">
               <div class="form-field"><label>Display name</label><input id="display-name-input" required></div>
-              <div class="form-field"><label for="handicap-input">Playing handicap</label><input id="handicap-input" type="number" step="0.1" min="0" max="54" placeholder="e.g. 18.4"></div>
+              <div class="form-field"><label for="handicap-input">Handicap index</label><input id="handicap-input" type="text" readonly tabindex="-1" aria-describedby="handicap-note" style="background:var(--paper);cursor:default;"><p id="handicap-note" class="small" style="margin:4px 0 0;">Set by the committee. If it's out of date, let a committee member know.</p></div>
               <div class="form-field"><label for="england-golf-id-input">England Golf ID (optional)</label><input id="england-golf-id-input" type="text" autocomplete="off" placeholder="Your CDH / England Golf number"></div>
               <div class="form-field"><label for="bio-input">About you</label><textarea id="bio-input" rows="4" maxlength="600" placeholder="Home club, how long you've played, a memorable round — anything you'd like other members to know."></textarea></div>
               <button class="btn btn-brass" type="submit">Save profile</button>

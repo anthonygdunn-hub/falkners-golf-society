@@ -223,37 +223,12 @@
         </a>`;
     };
 
-    const next = upcoming[0];
-    const nudge = next ? await confirmNudge(next) : "";
     view.innerHTML = `
       ${installTip()}
-      ${nudge}
       ${live.length ? `<div class="section-label">Live now</div>${live.map(item).join("")}` : ""}
       <div class="section-label">Coming up</div>
       ${upcoming.length ? upcoming.map(item).join("") : `<p class="empty">No rounds scheduled.</p>`}
       ${past.length ? `<div class="section-label">Played</div>${past.map(item).join("")}` : ""}`;
-  }
-
-  // "Confirm your handicap" on the home screen for the next round you're on.
-  async function confirmNudge(ev) {
-    try {
-      const [{ data: field }, { data: setup }] = await Promise.all([
-        client.rpc("scoring_field", { target: ev.id }),
-        client.from("event_scoring").select("status").eq("event_id", ev.id).maybeSingle(),
-      ]);
-      if (setup && (setup.status === "live" || setup.status === "final")) return "";
-      const mine = (field || []).find(f => f.profile_id === app.user.id);
-      if (!mine) return "";
-      if (mine.player_id) {
-        const { data: h } = await client.from("event_handicaps").select("confirmed_at")
-          .eq("event_id", ev.id).eq("player_id", mine.player_id).maybeSingle();
-        if (h && h.confirmed_at) return "";
-      }
-      return `<a class="card install-tip round-item" href="#/round/${ev.id}" style="text-decoration:none">
-        <div class="round-meta"><strong>Confirm your handicap</strong>
-        <span class="small muted">You're on ${esc(ev.name)} at ${esc(ev.venue || "TBC")}. Check your index so the scoring's right on the day.</span></div>
-        <span class="badge">Confirm</span></a>`;
-    } catch (e) { return ""; }
   }
 
   function installTip() {
@@ -360,7 +335,7 @@
         ? S.courseHandicap(index, tee.slope, tee.course_rating, par) : null;
       return {
         id: f.player_id, profileId: f.profile_id, name: f.name, index, ph, ch,
-        confirmed: !!h.confirmed_at, overridden: h.playing_handicap != null,
+        overridden: h.playing_handicap != null,
         guest: f.is_guest, group: f.tee_group, pairs: (f.pair_groups || []).map(Number),
         scores: r.scores[f.player_id] || {},
       };
@@ -460,10 +435,7 @@
       <div class="tabs" role="tablist">
         ${tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${l}</button>`).join("")}
       </div>
-      ${confirmCard(r)}
       <div id="round-body"></div>`;
-    const cf = $("#confirm-hcp");
-    if (cf) cf.addEventListener("submit", e => { e.preventDefault(); submitConfirm(r, cf); });
     const body = $("#round-body");
     if (r.tab === "score") body.innerHTML = scoreView(r);
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
@@ -809,54 +781,6 @@
     return tee ? { ...tee, courseName: course.name } : null;
   }
 
-  // ---------- members confirm their handicap ----------
-
-  function myEntry(r) {
-    if (!app.user) return null;
-    if (r.me) return r.me;
-    const u = r.unlinked.find(f => f.profile_id === app.user.id);
-    return u ? { id: null, name: u.name, index: u.handicap != null ? Number(u.handicap) : null, confirmed: false, unlinked: true } : null;
-  }
-
-  function canConfirm(r) {
-    const st = r.setup ? r.setup.status : "setup";
-    return st !== "live" && st !== "final" && r.event.event_date >= todayISO();
-  }
-
-  function confirmCard(r) {
-    const me = myEntry(r);
-    if (!me || !canConfirm(r)) return "";
-    const pre = r.tee ? `On the ${esc(r.tee.name)} tees you'll play off <b>${me.ph == null ? "?" : me.ph}</b>${me.ch != null ? ` (course handicap ${me.ch}, ${esc(String(r.setup.allowance))}%)` : ""}.` : "Your playing handicap is worked out once the course is set.";
-    if (me.confirmed && !r.changeHcp) {
-      return `<div class="card small row" style="gap:8px">
-        <span class="tick">✓</span><span>Handicap index <b>${me.index}</b> confirmed. ${pre}</span>
-        <span class="spacer"></span><button class="btn ghost" style="min-height:34px" data-action="change-hcp">Change</button></div>`;
-    }
-    return `<form id="confirm-hcp" class="card install-tip">
-      <strong>Confirm your handicap for ${esc(r.event.name)}</strong>
-      <p class="small muted" style="margin:4px 0 10px">Check it matches your England Golf app, so the scoring's right on the day. ${me.confirmed ? "" : pre}</p>
-      <div class="row">
-        <label class="field" style="flex:1;margin:0">Handicap index
-          <input name="index" type="number" step="0.1" inputmode="decimal" min="-10" max="54" value="${me.index == null ? "" : me.index}" required></label>
-        <button class="btn" type="submit" style="align-self:flex-end">Confirm</button>
-      </div>
-      <p class="small muted" style="margin:8px 0 0">For a plus handicap, type it as a minus (e.g. +1.2 is −1.2).</p>
-    </form>`;
-  }
-
-  async function submitConfirm(r, form) {
-    const v = form.index.value.trim();
-    if (v === "") return;
-    const btn = form.querySelector("button");
-    btn.disabled = true;
-    const { error } = await client.rpc("confirm_my_handicap", { p_event: r.id, p_index: Number(v) });
-    btn.disabled = false;
-    if (error) { toast(error.message, true); return; }
-    r.changeHcp = false;
-    toast("Handicap confirmed");
-    await reloadRound();
-  }
-
   function setupView(r) {
     if (!setupCache) { loadCourses().then(() => { if (app.round && app.round.tab === "setup") renderRoundBody(); }); return `<div class="loading">Loading courses…</div>`; }
     const s = r.setup || { handicap_method: "whs", allowance: DEFAULT_ALLOWANCE, formats: ["stableford", "medal", "skins"], skins_mode: "net", status: "setup" };
@@ -871,13 +795,13 @@
     }).join("");
     const fmts = new Set(s.formats || []);
 
-    const editing = !!r.editHcp;
+    const editing = !!r.editHcp && app.committee;
     const hcpRows = r.players.map(p => {
       const h = r.hcps.get(p.id) || {};
       const who = `<td>${esc(p.name)}${p.guest ? ' <span class="muted small">guest</span>' : ""}<div class="thru">${p.group ? "Group " + p.group : "No group"}${(p.pairs || []).length ? " · Pair " + p.pairs.join(" & ") : ""}</div></td>`;
       if (!editing) {
         return `<tr>${who}
-          <td>${p.index == null ? "?" : p.index}${p.confirmed ? ' <span class="tick" title="Confirmed by the player">✓</span>' : p.guest ? "" : ' <span class="muted small">unconfirmed</span>'}</td>
+          <td>${p.index == null ? "?" : p.index}</td>
           <td class="muted">${p.ch == null ? "–" : p.ch}</td>
           <td class="ph">${p.ph == null ? "?" : p.ph}${p.overridden ? '<div class="thru">set by hand</div>' : ""}</td></tr>`;
       }
@@ -887,8 +811,7 @@
         <td class="ph">${p.ph == null ? "?" : p.ph}</td>
       </tr>`;
     }).join("");
-    const members = r.players.filter(p => !p.guest);
-    const confirmedCount = members.filter(p => p.confirmed).length;
+
 
     const missingPh = r.players.filter(p => p.ph == null).length;
     const statusBtns = s.status === "setup" || !r.setup
@@ -950,10 +873,9 @@
 
       <div class="card">
         <div class="row"><h2 style="margin:0">Playing handicaps</h2><span class="spacer"></span>
-          <button class="btn ghost" style="min-height:36px" data-action="toggle-hcp-edit">${editing ? "Done" : "Adjust"}</button></div>
-        <p class="small muted">Worked out automatically for ${teeRow ? esc(teeRow.name) + " tees" : "the chosen tee"}: index × slope ÷ 113 + (course rating − par), then ${esc(String(s.allowance))}%.
-          ${members.length ? `<b>${confirmedCount} of ${members.length}</b> member${members.length > 1 ? "s have" : " has"} confirmed their index.` : ""}
-          ${editing ? "Change an index, or type a playing handicap to set it by hand — clear it to go back to automatic." : ""}</p>
+          ${app.committee ? `<button class="btn ghost" style="min-height:36px" data-action="toggle-hcp-edit">${editing ? "Done" : "Adjust"}</button>` : ""}</div>
+        <p class="small muted">Worked out automatically for ${teeRow ? esc(teeRow.name) + " tees" : "the chosen tee"}: index × slope ÷ 113 + (course rating − par), then ${esc(String(s.allowance))}%. Indexes come from the player list on the <a href="../admin.html">admin page</a>; only the committee can change them.
+          ${editing ? "Change an index for this round, or type a playing handicap to set it by hand — clear it to go back to automatic." : ""}</p>
         ${r.unlinked.length ? `<div class="status-msg err">${r.unlinked.length} member${r.unlinked.length > 1 ? "s aren't" : " isn't"} on the player list yet, so can't be scored:
           ${r.unlinked.map(u => `<div class="row" style="margin-top:6px"><span>${esc(u.name)}</span><span class="spacer"></span>
           <button class="btn ghost" style="min-height:34px" data-action="link-player" data-profile="${u.profile_id}">Add</button></div>`).join("")}</div>` : ""}
@@ -1052,7 +974,7 @@
       event_id: r.id, player_id: p.id, handicap_index: p.index, playing_handicap: null,
     }));
     if (rows.length) {
-      const { error } = await client.from("event_handicaps").upsert(rows, { onConflict: "event_id,player_id" });
+      const { error } = await client.from("event_handicaps").insert(rows);
       if (error) { toast(error.message, true); return; }
     }
     await setStatus(r, "live");
@@ -1264,7 +1186,6 @@
       case "clear": setStroke(el.dataset.player, "clear"); break;
       case "go-live": goLive(r); break;
       case "toggle-hcp-edit": r.editHcp = !r.editHcp; renderRoundBody(); break;
-      case "change-hcp": r.changeHcp = true; renderRoundBody(); break;
       case "set-status": setStatus(r, el.dataset.status); break;
       case "finalise": finalise(r); break;
       case "link-player": {

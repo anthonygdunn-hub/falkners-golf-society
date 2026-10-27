@@ -50,7 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                 if (intendedEventId) { await registerForEventAndRedirect(intendedEventId); return; }
                                                                 show("approved-panel");
                                                                     document.getElementById("display-name-input").value = profile?.display_name || "";
-                                                                    document.getElementById("handicap-input").value = profile?.handicap ?? "";
+                                                                    showCommitteeHandicap(profile);
                                                                     document.getElementById("bio-input").value = profile?.bio || ""; const egEl = document.getElementById("england-golf-id-input"); if (egEl) egEl.value = profile?.england_golf_id || "";
                                                                         document.getElementById("current-avatar").src = profile?.avatar_url || "assets/logo.jpeg";
                                                                             document.getElementById("welcome-name").textContent = profile?.display_name || "there";
@@ -122,18 +122,27 @@ document.addEventListener("DOMContentLoaded", () => {
                                                                                                                                                                                                                                                                                 });
                                                                                                                                                                                                                                                                                 }
                                                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                function wireProfileForms() {
+                                                                                                                                                                                                                                                                                // The handicap is the committee's (admin page → Players); members only see it.
+async function showCommitteeHandicap(profile) {
+  const el = document.getElementById("handicap-input");
+  if (!el) return;
+  el.value = profile?.handicap ?? "";
+  if (!currentUser) return;
+  const { data: player } = await client.from("players").select("handicap").eq("profile_id", currentUser.id).maybeSingle();
+  if (player && player.handicap != null) el.value = player.handicap;
+  if (el.value === "") el.value = "Not set yet";
+}
+
+function wireProfileForms() {
                                                                                                                                                                                                                                                                                   document.getElementById("profile-form").addEventListener("submit", async (e) => {
                                                                                                                                                                                                                                                                                       e.preventDefault();
                                                                                                                                                                                                                                                                                           const name = document.getElementById("display-name-input").value.trim();
-    const handicapRaw = document.getElementById("handicap-input").value.trim();
     const bio = document.getElementById("bio-input").value.trim();
                                                                                                                                                                                                                                                                                               const statusEl = document.getElementById("profile-status");
                                                                                                                                                                                                                                                                                                   if (!name) return;
                                                                                                                                                                                                                                                                                                   
                                                                                                                                                                                                                                                                                                       const { error } = await client.from("profiles").update({
       display_name: name,
-      handicap: handicapRaw === "" ? null : Number(handicapRaw),
       bio: bio || null, england_golf_id: ((document.getElementById("england-golf-id-input") || {}).value || "").trim() || null
     }).eq("id", currentUser.id);
                                                                                                                                                                                                                                                                                                           statusEl.textContent = error ? error.message : "Saved.";

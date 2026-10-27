@@ -1256,7 +1256,7 @@ function renderPlayerManageList() {
     el.innerHTML = currentPlayers.map(p => `
         <div class="small" style="padding:8px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line);" data-player-row="${p.id}">
               <input type="text" value="${escapeHtml(p.name)}" data-player-name="${p.id}" style="flex:1; min-width:140px;">
-                    <input type="number" step="0.1" value="${p.handicap ?? ''}" placeholder="Hcap" data-player-handicap="${p.id}" style="width:80px;">
+                    <input type="number" step="0.1" value="${p.handicap ?? ''}" placeholder="Index" title="England Golf handicap index" data-player-handicap="${p.id}" style="width:80px;">
                           <label style="display:flex; align-items:center; gap:4px; white-space:nowrap;">
                                   <input type="checkbox" data-player-active="${p.id}" ${p.active ? "checked" : ""}> Active
                                         </label>

@@ -68,9 +68,10 @@ from Safari or Chrome.
 - **Handicaps** work themselves out: each player's index × slope ÷ 113 +
   (course rating − par), then the round's allowance (75% unless changed),
   rounded once at the end as WHS does. Change the course and everyone's
-  playing handicap changes with it. Members confirm their index before
-  each round (it updates their profile too); the committee sees who has
-  confirmed
+  playing handicap changes with it. The index is the committee's figure
+  on the admin page (Players). Only the committee changes handicaps:
+  members see theirs read-only on My Account, and
+  `sql/lock-member-handicap.sql` makes the database refuse their changes
 - **Setup** (committee): the Yellow tee at the fixture's venue is picked
   automatically; handicap method, allowance and formats; overrides sit
   behind Adjust. Starting the round saves the setup and snapshots every
@@ -105,6 +106,7 @@ it again.
 17. `sql/round-competitions.sql` — the hole each side competition is played on, and the nearest the pin in 2 winners
 18. `sql/live-scoring.sql` — courses, tees, holes and hole-by-hole scores for the app
 19. `sql/course-milford.sql` — Milford Golf Club's White and Yellow tees (check against the card)
+21. `sql/lock-member-handicap.sql` — only the committee can change a handicap
 20. `sql/course-venues.sql` — Hurtmore, Clandon Golf and Tylney Park (check against the cards; Tylney needs its rating and slope adding)
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
