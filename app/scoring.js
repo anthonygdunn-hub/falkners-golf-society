@@ -12,11 +12,19 @@
 
   // WHS course handicap: Index × (Slope ÷ 113) + (Course Rating − Par),
   // rounded to the nearest whole number.
-  function courseHandicap(index, slope, rating, par) {
+  // Unrounded, because WHS applies the allowance to the unrounded figure
+  // and rounds once at the end. A tee missing its slope uses 113 (neutral);
+  // one missing its course rating skips the rating-minus-par adjustment.
+  function courseHandicapRaw(index, slope, rating, par) {
     if (index == null || index === "") return null;
     const i = Number(index);
-    if (!slope || rating == null || par == null) return round(i);
-    return round(i * (Number(slope) / 113) + (Number(rating) - Number(par)));
+    const s = slope ? Number(slope) : 113;
+    const adj = rating != null && rating !== "" && par != null ? Number(rating) - Number(par) : 0;
+    return i * (s / 113) + adj;
+  }
+  function courseHandicap(index, slope, rating, par) {
+    const raw = courseHandicapRaw(index, slope, rating, par);
+    return raw == null ? null : round(raw);
   }
 
   // The handicap a player actually plays off on the day.
@@ -30,7 +38,7 @@
     const pct = allowance == null ? 100 : Number(allowance);
     if (method === "manual") return null;
     if (method === "profile") return round(Number(index) * pct / 100);
-    const ch = courseHandicap(index, tee && tee.slope, tee && tee.course_rating, par);
+    const ch = courseHandicapRaw(index, tee && tee.slope, tee && tee.course_rating, par);
     return round(ch * pct / 100);
   }
 
@@ -257,7 +265,7 @@
   }
 
   const api = {
-    courseHandicap, playingHandicap, shotsOnHole, stablefordPoints, summarise,
+    courseHandicap, courseHandicapRaw, playingHandicap, shotsOnHole, stablefordPoints, summarise,
     stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, validateCourseHoles,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -241,3 +241,5 @@ label.field input, label.field select, label.field textarea {
 .toast.err { background: var(--bad); }
 
 .install-tip { background: #fff8e6; border: 1px solid var(--gold-light); }
+
+.tick { color: var(--good); font-weight: 700; }

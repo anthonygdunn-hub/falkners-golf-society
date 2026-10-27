@@ -65,10 +65,15 @@ from Safari or Chrome.
   countback on the pair's combined last 9/6/3/1. A player holding two pair
   numbers on an odd turnout counts in full for both. Finishing the round
   fills in the winning pair on Results (left blank on an unbroken tie)
-- **Setup** (committee): course and tee, handicap method (full WHS, the
-  handicap on file, or set by hand), allowance, formats, per-player
-  overrides; start the round, then finish it to copy Stableford points
-  into Results for the Order of Merit
+- **Handicaps** work themselves out: each player's index × slope ÷ 113 +
+  (course rating − par), then the round's allowance (75% unless changed),
+  rounded once at the end as WHS does. Change the course and everyone's
+  playing handicap changes with it. Members confirm their index before
+  each round (it updates their profile too); the committee sees who has
+- **Setup** (committee): the Yellow tee at the fixture's venue is picked
+  automatically; handicap method, allowance and formats; overrides sit
+  behind Adjust. Starting the round saves the setup and snapshots every
+  index; finishing it copies Stableford points into Results
 - **Courses** (committee): add courses and tees, with par, stroke index,
   yardage, course rating and slope
 
@@ -99,6 +104,7 @@ it again.
 17. `sql/round-competitions.sql` — the hole each side competition is played on, and the nearest the pin in 2 winners
 18. `sql/live-scoring.sql` — courses, tees, holes and hole-by-hole scores for the app
 19. `sql/course-milford.sql` — Milford Golf Club's White and Yellow tees (check against the card)
+20. `sql/course-venues.sql` — Hurtmore, Clandon Golf and Tylney Park (check against the cards; Tylney needs its rating and slope adding)
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain

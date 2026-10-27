@@ -58,7 +58,7 @@ create table if not exists event_scoring (
   tee_id uuid references course_tees(id) on delete set null,
   handicap_method text not null default 'whs'
     check (handicap_method in ('whs', 'profile', 'manual')),
-  allowance numeric not null default 95 check (allowance between 0 and 100),
+  allowance numeric not null default 75 check (allowance between 0 and 100),
   formats text[] not null default array['stableford', 'medal', 'skins'],
   skins_mode text not null default 'net' check (skins_mode in ('net', 'gross')),
   status text not null default 'setup' check (status in ('setup', 'live', 'final')),
@@ -75,6 +75,8 @@ create table if not exists event_handicaps (
   playing_handicap integer check (playing_handicap is null or playing_handicap between -10 and 60),
   primary key (event_id, player_id)
 );
+-- When the member themselves confirmed their index for this round.
+alter table event_handicaps add column if not exists confirmed_at timestamptz;
 
 -- ---------- Hole-by-hole scores ----------
 
@@ -154,6 +156,56 @@ begin
     returning id into pid;
   end if;
   return pid;
+end;
+$$;
+
+-- A member confirms (or corrects) their own handicap index before a
+-- round. Updates their profile too, so the next round starts from it.
+-- Closed once the round is live or finished: from then the committee
+-- owns the figures.
+create or replace function confirm_my_handicap(p_event uuid, p_index numeric)
+returns numeric language plpgsql security definer set search_path = public as $$
+declare
+  pid uuid;
+  ev events%rowtype;
+  st text;
+begin
+  if auth.uid() is null or not is_approved_member() then
+    raise exception 'Sign in as an approved member first.';
+  end if;
+  if p_index is null or p_index < -10 or p_index > 54 then
+    raise exception 'A handicap index is between +10 and 54.';
+  end if;
+  select * into ev from events where id = p_event;
+  if not found then raise exception 'That round no longer exists.'; end if;
+  select status into st from event_scoring where event_id = p_event;
+  if st in ('live', 'final') or ev.event_date < current_date then
+    raise exception 'This round has started — ask the committee to change your handicap.';
+  end if;
+  if not exists (select 1 from attendance a
+                  where a.event_id = p_event and a.status = 'playing'
+                    and (a.profile_id = auth.uid()
+                         or a.player_id in (select id from players where profile_id = auth.uid()))) then
+    raise exception 'You are not on this round.';
+  end if;
+
+  -- Members who have never been scored get a player row now.
+  select id into pid from players where profile_id = auth.uid() order by created_at limit 1;
+  if pid is null then
+    insert into players (name, handicap, profile_id)
+    select display_name, p_index, id from profiles where id = auth.uid()
+    returning id into pid;
+  end if;
+
+  update profiles set handicap = round(p_index, 1) where id = auth.uid();
+  update players set handicap = round(p_index, 1) where id = pid;
+
+  insert into event_handicaps (event_id, player_id, handicap_index, confirmed_at)
+  values (p_event, pid, round(p_index, 1), now())
+  on conflict (event_id, player_id)
+  do update set handicap_index = excluded.handicap_index, confirmed_at = excluded.confirmed_at;
+
+  return round(p_index, 1);
 end;
 $$;
 
@@ -246,6 +298,8 @@ create trigger hole_scores_stamp before insert or update on hole_scores
 
 grant execute on function scoring_field(uuid) to authenticated;
 grant execute on function link_member_player(uuid) to authenticated;
+grant execute on function confirm_my_handicap(uuid, numeric) to authenticated;
+revoke execute on function confirm_my_handicap(uuid, numeric) from anon;
 revoke execute on function scoring_field(uuid) from anon;
 revoke execute on function link_member_player(uuid) from anon;
 
