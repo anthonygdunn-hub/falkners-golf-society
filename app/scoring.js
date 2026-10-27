@@ -247,6 +247,103 @@
     return { up, played, finished: left === 0, leader: up > 0 ? a : up < 0 ? b : null, status, log };
   }
 
+  // Ryder Cup matches. side1/side2 are arrays of { ph, scores } (scores by
+  // hole: { strokes, picked_up }). Shots are taken off the lowest
+  // handicap in the match. Foursomes: one ball per side, scored under the
+  // side's first player, playing off half the pair's combined handicap.
+  function sideHandicaps(format, side1, side2) {
+    const phOf = p => (p && p.ph != null ? p.ph : 0);
+    if (format === "foursome") {
+      const team = side => round(side.reduce((t, p) => t + phOf(p), 0) / Math.max(1, side.length));
+      // half the combined handicap = the average for a pair
+      const a = round(side1.reduce((t, p) => t + phOf(p), 0) / 2), b = round(side2.reduce((t, p) => t + phOf(p), 0) / 2);
+      const low = Math.min(a, b);
+      return { s1: [a - low], s2: [b - low], team };
+    }
+    const all = side1.concat(side2).map(phOf);
+    const low = Math.min.apply(null, all);
+    return { s1: side1.map(p => phOf(p) - low), s2: side2.map(p => phOf(p) - low) };
+  }
+
+  function teamMatch(holes, format, side1, side2) {
+    const shots = sideHandicaps(format, side1, side2);
+    const has = s => s && (s.strokes != null || s.picked_up);
+    const balls = (side, gets) => format === "foursome" ? [{ p: side[0], gets: gets[0] }] : side.map((p, i) => ({ p, gets: gets[i] }));
+    const b1 = balls(side1, shots.s1), b2 = balls(side2, shots.s2);
+    let up = 0, played = 0;
+    const log = [];
+    const n = holes.length;
+    for (const h of holes) {
+      const sc = b => b.p && b.p.scores ? b.p.scores[h.hole] : null;
+      // A side's hole is in once every ball it plays has a score (or a pick-up).
+      const ready = bs => bs.every(b => has(sc(b)));
+      if (!ready(b1) || !ready(b2)) { log.push({ hole: h.hole, res: null }); continue; }
+      const best = bs => Math.min.apply(null, bs.map(b => { const s = sc(b); return s.picked_up ? Infinity : s.strokes - shotsOnHole(b.gets, h.stroke_index, n); }));
+      const x = best(b1), y = best(b2);
+      const res = x < y ? 1 : y < x ? -1 : 0;
+      played++; up += res;
+      log.push({ hole: h.hole, res, net1: x, net2: y });
+    }
+    // Holes count in order: the match is decided once one side can't be caught.
+    let run = 0, count = 0, decidedAt = null;
+    for (const l of log) {
+      if (l.res == null) break;
+      run += l.res; count++;
+      if (Math.abs(run) > n - count) { decidedAt = { up: run, played: count, left: n - count }; break; }
+    }
+    if (decidedAt) {
+      return { up: decidedAt.up, played: decidedAt.played, finished: true, leader: decidedAt.up > 0 ? 1 : 2,
+        status: decidedAt.left === 0 ? `${Math.abs(decidedAt.up)} up` : `${Math.abs(decidedAt.up)}&${decidedAt.left}`,
+        points: decidedAt.up > 0 ? [1, 0] : [0, 1], log, shots };
+    }
+    const thru = (() => { let t = 0; for (const l of log) { if (l.res == null) break; t++; } return t; })();
+    const upThru = log.slice(0, thru).reduce((t, l) => t + l.res, 0);
+    const finished = thru === n;
+    const left = n - thru;
+    let status;
+    if (finished) status = upThru === 0 ? "Halved" : `${Math.abs(upThru)} up`;
+    else if (thru === 0) status = "Not started";
+    else if (upThru === 0) status = "All square";
+    else status = Math.abs(upThru) === left ? `Dormie ${Math.abs(upThru)}` : `${Math.abs(upThru)} UP`;
+    return { up: upThru, played: thru, finished, leader: upThru > 0 ? 1 : upThru < 0 ? 2 : null, status,
+      points: finished ? (upThru > 0 ? [1, 0] : upThru < 0 ? [0, 1] : [0.5, 0.5]) : null, log, shots };
+  }
+
+  // ---------- World Handicap System, for the society's own index ----------
+  // Adjusted gross: each hole capped at net double bogey (par + 2 + shots
+  // from the full course handicap); a pick-up or a missing hole counts as
+  // net double bogey too.
+  function adjustedGross(holes, scores, courseHcp) {
+    const s = scores || {};
+    let total = 0, counted = 0;
+    holes.forEach(h => {
+      const cap = h.par + 2 + shotsOnHole(courseHcp, h.stroke_index, holes.length);
+      const sc = s[h.hole];
+      if (!sc || sc.picked_up || sc.strokes == null) { total += cap; return; }
+      counted++;
+      total += Math.min(sc.strokes, cap);
+    });
+    return { ags: total, holesPlayed: counted };
+  }
+
+  // Score differential = (113 / slope) x (adjusted gross - course rating), to 1dp.
+  function differential(ags, slope, rating) {
+    return Math.round((113 / slope) * (ags - rating) * 10) / 10;
+  }
+
+  // Index from up to the last 20 differentials (oldest first), WHS table.
+  function whsIndex(diffs) {
+    const last = diffs.slice(-20);
+    const n = last.length;
+    if (n < 3) return null;
+    const sorted = last.slice().sort((a, b) => a - b);
+    const rule = n <= 3 ? [1, -2] : n === 4 ? [1, -1] : n === 5 ? [1, 0] : n === 6 ? [2, -1] : n <= 8 ? [2, 0]
+      : n <= 11 ? [3, 0] : n <= 14 ? [4, 0] : n <= 16 ? [5, 0] : n <= 18 ? [6, 0] : n === 19 ? [7, 0] : [8, 0];
+    const best = sorted.slice(0, rule[0]);
+    const avg = best.reduce((a, b) => a + b, 0) / best.length + rule[1];
+    return { index: Math.min(54, Math.round(avg * 10) / 10), used: rule[0], of: n, adjust: rule[1] };
+  }
+
   function validateCourseHoles(holes) {
     const errors = [];
     if (holes.length !== 18) errors.push("A course needs all 18 holes.");
@@ -266,7 +363,7 @@
 
   const api = {
     courseHandicap, courseHandicapRaw, playingHandicap, shotsOnHole, stablefordPoints, summarise,
-    stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, validateCourseHoles,
+    stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, teamMatch, sideHandicaps, adjustedGross, differential, whsIndex, validateCourseHoles,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Scoring = api;

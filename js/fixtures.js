@@ -99,7 +99,22 @@ function toggleItem(item, open) {
     renderRegisterControl(eventId);
     refreshAttendees(eventId);
     refreshGroups(eventId);
+    renderForecast(item, eventId);
   }
+}
+
+// The forecast for the first tee, once it's within about a fortnight.
+async function renderForecast(item, eventId) {
+  const ev = eventsById.get(eventId);
+  if (!ev || !window.FalknersWeather) return;
+  const f = await window.FalknersWeather.forRound({ venue: ev.venue, date: ev.event_date, time: ev.tee_time });
+  if (!f) return;
+  const panel = item.querySelector(".fixture-panel");
+  if (!panel || panel.querySelector(".wx")) return;
+  const box = document.createElement("div");
+  box.className = "fixture-forecast";
+  box.innerHTML = `<div class="detail-label">Forecast</div>${window.FalknersWeather.html(f)}`;
+  panel.insertBefore(box, panel.firstChild);
 }
 
 // If we've just come back from registering via the join/sign-in page,

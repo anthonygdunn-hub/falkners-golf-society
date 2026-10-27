@@ -1175,3 +1175,16 @@ body.lb-lock { overflow: hidden; }
 /* "Start round" on the day, in an expanded fixture */
 .start-round { background: var(--navy); color: #fff; border-radius: var(--radius); padding: 14px 16px; margin: 12px 0; }
 .start-round .small { color: rgba(255,255,255,.85); }
+
+/* Forecast on a fixture card (js/weather.js) */
+.fixture-forecast { margin: 0 0 18px; }
+.wx { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.wx-head { display: flex; align-items: center; gap: 12px; }
+.wx-icon { font-size: 2rem; line-height: 1; }
+.wx-head b { font-family: var(--font-display); font-size: 1.4rem; color: var(--navy); font-weight: 600; }
+.wx-head small { display: block; color: var(--ink-soft); font-size: .82rem; }
+.wx-hours { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; }
+.wx-hours span { flex: 1; min-width: 52px; display: flex; flex-direction: column; align-items: center; gap: 2px; background: #fff; border-radius: 8px; padding: 6px 4px; font-size: 1.1rem; }
+.wx-hours small { font-size: .7rem; color: var(--ink-soft); }
+.wx-hours b { font-size: .85rem; color: var(--ink); }
+.wx-src { font-size: .7rem; color: var(--ink-soft); margin-top: 6px; }

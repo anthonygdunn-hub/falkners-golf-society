@@ -76,6 +76,20 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
   };
 
+  // ---------- text size ----------
+  const TEXT_SIZES = [["normal", "Normal", "Aa"], ["lg", "Large", "Aa"], ["xl", "Extra large", "Aa"]];
+  function applyTextSize(size) {
+    document.documentElement.classList.remove("text-lg", "text-xl");
+    if (size === "lg" || size === "xl") document.documentElement.classList.add("text-" + size);
+  }
+  applyTextSize(store.get("text-size", "normal"));
+  function textSizeSheet() {
+    const cur = store.get("text-size", "normal");
+    openSheet(`<h2>Text size</h2><p class="small muted">Makes the writing bigger all through the app, on this phone.</p>
+      ${TEXT_SIZES.map(([k, l, a], i) => `<button class="ts-opt${cur === k ? " on" : ""}" data-action="set-text-size" data-size="${k}"><b style="font-size:${[1, 1.25, 1.5][i]}rem">${a}</b><span>${l}</span>${cur === k ? '<span class="spacer"></span><span class="tick">✓</span>' : ""}</button>`).join("")}
+      <button class="btn ghost block" style="margin-top:6px" data-action="close-sheet">Done</button>`);
+  }
+
   // ---------- offline score queue ----------
   // Every score goes into the queue first, then out to the database as
   // this phone's own entry (score_entries). The database works out the
@@ -209,7 +223,7 @@
     view.innerHTML = `<div class="loading">Loading rounds…</div>`;
     const me = app.user.id;
     const [{ data: events, error }, { data: setups }, { data: prof }, { data: mine }] = await Promise.all([
-      client.from("events").select("id, name, venue, event_date, tee_time, format, hidden").eq("hidden", false).order("event_date"),
+      client.from("events").select("id, name, venue, event_date, tee_time, format, hidden, is_trip").eq("hidden", false).order("event_date"),
       client.from("event_scoring").select("event_id, status"),
       client.from("profiles").select("display_name").eq("id", me).maybeSingle(),
       client.from("players").select("id").eq("profile_id", me),
@@ -250,6 +264,11 @@
       ${past.length ? `<div class="section-label">Played</div>${past.slice(0, 4).map(e => roundItem(e, status, playing)).join("")}
         ${past.length > 4 ? `<details class="more-rounds"><summary>All ${past.length} played rounds</summary>${past.slice(4).map(e => roundItem(e, status, playing)).join("")}</details>` : ""}` : ""}`;
     loadLastScoreRank(myResults.data || [], events, myPlayers);
+    const heroEv = live[0] || upcoming[0];
+    if (heroEv && window.FalknersWeather) window.FalknersWeather.forRound({ venue: heroEv.venue, date: heroEv.event_date, time: heroEv.tee_time }).then(f => {
+      const slot = document.getElementById("hero-wx");
+      if (f && slot) slot.innerHTML = `<div class="hero-wx">${f.first.w.icon} <b>${f.first.temp}°C</b> ${esc(f.text)} · ${f.maxRain}% rain · wind ${f.maxWind} mph</div>`;
+    }).catch(() => {});
     seasonCard();
   }
 
@@ -262,7 +281,7 @@
   function roundItem(e, status, playing) {
     const d = new Date(e.event_date + "T12:00:00");
     return `
-      <a class="card round-item" href="#/round/${e.id}">
+      <a class="card round-item" href="${e.is_trip ? "#/ryder/" : "#/round/"}${e.id}">
         <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
         <div class="round-meta">
           <strong>${esc(e.name)}</strong>
@@ -286,7 +305,8 @@
     const onDay = e.event_date === today;
     const youre = playing.has(e.id);
     let cta;
-    if (isLive && youre) cta = `<a class="btn gold block" href="#/round/${e.id}/start">Score now</a>`;
+    if (e.is_trip) cta = `<a class="btn gold block" href="#/ryder/${e.id}">Teams &amp; matches</a>`;
+    else if (isLive && youre) cta = `<a class="btn gold block" href="#/round/${e.id}/start">Score now</a>`;
     else if (isLive) cta = `<a class="btn gold block" href="#/round/${e.id}">Live leaderboard</a>`;
     else if (onDay && youre && st) cta = `<a class="btn gold block" href="#/round/${e.id}/start">Start round</a>`;
     else if (st) cta = `<a class="btn gold block" href="#/round/${e.id}">View round</a>`;
@@ -301,6 +321,7 @@
         ${e.tee_time ? `<div><span>First tee</span><b>${esc(e.tee_time.slice(0, 5))}</b></div>` : ""}
         <div><span>You</span><b>${youre ? "Playing" : "Not entered"}</b></div>
       </div>
+      <div id="hero-wx"></div>
       ${cta}
       ${youre ? "" : `<a class="hero-link" href="../fixtures.html">Register on the website ›</a>`}
     </div>`;
@@ -961,6 +982,7 @@
       refreshQueued = false;
       if (!app.round) return;
       buildPlayers(app.round);
+      if (document.body.classList.contains("presenting")) { if (present.tv) { buildSlides(app.round); drawPresent(); } return; }
       // Don't redraw a form under somebody's thumbs.
       const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && view.contains(document.activeElement);
       if (app.round.tab !== "setup" && !typing) renderRoundBody();
@@ -970,7 +992,7 @@
 
   async function reloadRound(quiet) {
     if (!app.round) return;
-    const keep = { tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments };
+    const keep = { hc: app.round.hc, wx: app.round.wx, tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments };
     try {
       const r = await loadRound(app.round.id);
       Object.assign(r, keep);
@@ -1025,9 +1047,20 @@
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
         <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${badge}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
+        ${r.tab === "score" || r.tab === "setup" ? `<div id="wx-slot">${r.wx ? weatherChip(r.wx) : ""}</div>` : ""}
       </div>
       <div id="round-body" class="${r.anim ? "anim-" + r.anim : ""}"></div>`;
     r.anim = null;
+    if (r.wx === undefined && window.FalknersWeather) {
+      r.wx = null;
+      window.FalknersWeather.forRound({ venue: r.course ? r.course.name : r.event.venue, date: r.event.event_date, time: r.event.tee_time,
+        lat: r.course && r.course.lat, lng: r.course && r.course.lng }).then(f => {
+        if (!f || !app.round || app.round.id !== r.id) return;
+        app.round.wx = f; r.wx = f;
+        const slot = document.getElementById("wx-slot");
+        if (slot) slot.innerHTML = weatherChip(f);
+      }).catch(() => {});
+    }
     showTabbar(tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span>${k === "feed" ? `<i class="tab-badge" id="feed-badge" hidden></i>` : ""}</button>`).join(""));
     updateFeedBadge();
     const body = $("#round-body");
@@ -1790,6 +1823,752 @@
     await reloadRound();
   }
 
+
+
+
+
+  // ---------- Ryder Cup ----------
+  // Two teams, sessions of fourballs, foursomes and singles, match play
+  // with shots off the lowest handicap in each match (75% playing
+  // handicaps; foursomes pairs play off half their combined handicap).
+  // 1 point for a win, ½ each for a half.
+
+  const RC_FORMATS = { fourball: "Fourballs", foursome: "Foursomes", single: "Singles" };
+  const rcPerSide = f => f === "single" ? 1 : 2;
+  const rc = { data: null, tab: "matches", channel: null };
+  const RC_QUEUE = "falkners-rc-queue";
+
+  async function loadRyder(eventId) {
+    const [ev, cup, team, sessions, matches, pls, manage, att] = await Promise.all([
+      client.from("events").select("*").eq("id", eventId).maybeSingle(),
+      client.from("rc_cups").select("*").eq("event_id", eventId).maybeSingle(),
+      client.from("rc_players").select("player_id, side").eq("event_id", eventId),
+      client.from("rc_sessions").select("*").eq("event_id", eventId).order("position"),
+      client.from("rc_matches").select("*").eq("event_id", eventId).order("match_no"),
+      client.from("players").select("id, name, handicap, profile_id, active"),
+      client.rpc("can_manage_round", { target: eventId }),
+      client.from("attendance").select("profile_id, player_id, status").eq("event_id", eventId),
+    ]);
+    if (ev.error) throw ev.error;
+    if (!ev.data) throw new Error("That fixture doesn't exist.");
+    if (cup.error) throw new Error("The Ryder Cup tables aren't set up in the database yet.");
+    const d = {
+      id: eventId, event: ev.data, cup: cup.data, canManage: !!manage.data,
+      team: new Map((team.data || []).map(t => [t.player_id, t.side])),
+      sessions: sessions.data || [], matches: matches.data || [],
+      players: pls.data || [], scores: new Map(), tees: new Map(), allTees: [],
+      onTrip: new Set(),
+    };
+    const playersByProfile = new Map(d.players.filter(p => p.profile_id).map(p => [p.profile_id, p.id]));
+    (att.data || []).filter(a => !a.status || a.status === "playing").forEach(a => {
+      const pid = a.player_id || playersByProfile.get(a.profile_id);
+      if (pid) d.onTrip.add(pid);
+    });
+    const ids = d.matches.map(m => m.id);
+    if (ids.length) {
+      const { data: sc } = await client.from("rc_scores").select("*").in("match_id", ids);
+      (sc || []).forEach(s => rcApplyScore(d, s));
+    }
+    rcOverlayQueue(d);
+    const teeIds = [...new Set(d.sessions.map(s => s.tee_id).filter(Boolean))];
+    if (teeIds.length) {
+      const [t, h] = await Promise.all([
+        client.from("course_tees").select("*, courses(*)").in("id", teeIds),
+        client.from("course_holes").select("*").in("tee_id", teeIds).order("hole"),
+      ]);
+      (t.data || []).forEach(tee => d.tees.set(tee.id, { tee, holes: (h.data || []).filter(x => x.tee_id === tee.id) }));
+    }
+    return d;
+  }
+
+  function rcApplyScore(d, s) {
+    if (!d.scores.has(s.match_id)) d.scores.set(s.match_id, {});
+    const m = d.scores.get(s.match_id);
+    if (!m[s.player_id]) m[s.player_id] = {};
+    if (s._delete) delete m[s.player_id][s.hole];
+    else m[s.player_id][s.hole] = { strokes: s.strokes, picked_up: !!s.picked_up, entered_by: s.entered_by };
+  }
+
+  // Scores entered with no signal wait on the phone, like normal rounds.
+  function rcQueue() { return store.get(RC_QUEUE, []); }
+  function rcOverlayQueue(d) { rcQueue().forEach(q => { if (d.matches.some(m => m.id === q.match_id)) rcApplyScore(d, q.clear ? { ...q, _delete: true } : q); }); }
+  let rcFlushing = false;
+  async function rcFlush() {
+    if (rcFlushing || !navigator.onLine || !app.user) return;
+    const q = rcQueue(); if (!q.length) return;
+    rcFlushing = true;
+    try {
+      for (const row of q) {
+        const res = row.clear
+          ? await client.from("rc_scores").delete().eq("match_id", row.match_id).eq("player_id", row.player_id).eq("hole", row.hole)
+          : await client.from("rc_scores").upsert({ match_id: row.match_id, player_id: row.player_id, hole: row.hole, strokes: row.strokes, picked_up: row.picked_up, entered_by: app.user.id, updated_at: new Date().toISOString() }, { onConflict: "match_id,player_id,hole" });
+        if (res.error) {
+          if (res.error.code === "42501" || /row-level security/i.test(res.error.message || "")) { toast("That score couldn't be saved — the session may be closed, or you're not in this match.", true); }
+          else throw res.error;
+        }
+        store.set(RC_QUEUE, rcQueue().filter(x => x.ts !== row.ts));
+      }
+    } catch (e) { /* try again when signal's back */ }
+    finally { rcFlushing = false; }
+  }
+  window.addEventListener("online", rcFlush);
+  setInterval(rcFlush, 15000);
+
+  function rcSubscribe(d) {
+    if (rc.channel) client.removeChannel(rc.channel);
+    rc.channel = client.channel("ryder-" + d.id)
+      .on("postgres_changes", { event: "*", schema: "public", table: "rc_scores" }, p => {
+        if (!rc.data || rc.data.id !== d.id) return;
+        const row = p.eventType === "DELETE" ? { ...(p.old || {}), _delete: true } : p.new;
+        if (!rc.data.matches.some(m => m.id === row.match_id)) return;
+        rcApplyScore(rc.data, row);
+        rcRedraw();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "rc_sessions", filter: `event_id=eq.${d.id}` }, () => rcReload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "rc_matches", filter: `event_id=eq.${d.id}` }, () => rcReload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "rc_players", filter: `event_id=eq.${d.id}` }, () => rcReload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "rc_cups", filter: `event_id=eq.${d.id}` }, () => rcReload())
+      .subscribe();
+  }
+
+  let rcReloadTimer = null;
+  function rcReload() {
+    clearTimeout(rcReloadTimer);
+    rcReloadTimer = setTimeout(async () => {
+      if (!rc.data) return;
+      try { rc.data = await loadRyder(rc.data.id); rcRedraw(); } catch (e) { /* keep what's on screen */ }
+    }, 300);
+  }
+  function rcRedraw() {
+    const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && view.contains(document.activeElement);
+    if (typing) return;
+    const parts = (location.hash || "").slice(2).split("/");
+    if (parts[0] === "ryder") drawRyder();
+    else if (parts[0] === "rc") drawRcMatch(parts[1]);
+  }
+
+  const rcPlayer = (d, id) => d.players.find(p => p.id === id) || { id, name: "?" };
+  const rcTeamName = (d, side) => d.cup ? d.cup[side === 1 ? "team1_name" : "team2_name"] : "Team " + side;
+  const rcColour = (d, side) => d.cup ? d.cup[side === 1 ? "team1_colour" : "team2_colour"] : side === 1 ? "#1B3A6C" : "#B3261E";
+
+  function rcPh(d, session, pid) {
+    const t = d.tees.get(session.tee_id);
+    const p = rcPlayer(d, pid);
+    if (!t || p.handicap == null) return p.handicap == null ? null : Math.round(Number(p.handicap) * (d.cup ? d.cup.allowance : 75) / 100);
+    const par = t.holes.reduce((a, h) => a + h.par, 0);
+    return S.playingHandicap({ method: "whs", allowance: d.cup ? d.cup.allowance : 75, index: Number(p.handicap), tee: t.tee, par });
+  }
+
+  function rcEval(d, m) {
+    const session = d.sessions.find(s => s.id === m.session_id);
+    const t = session && d.tees.get(session.tee_id);
+    const holes = t && t.holes.length === 18 ? t.holes : Array.from({ length: 18 }, (_, i) => ({ hole: i + 1, par: 4, stroke_index: i + 1 }));
+    const sc = d.scores.get(m.id) || {};
+    const per = rcPerSide(session.format);
+    const side = ids => ids.slice(0, per).map(pid => ({ id: pid, ph: rcPh(d, session, pid), scores: sc[pid] || {} }));
+    const res = S.teamMatch(holes, session.format, side(m.side1), side(m.side2));
+    return { ...res, holes, session, real: !!(t && t.holes.length === 18) };
+  }
+
+  function rcTotals(d) {
+    let t1 = 0, t2 = 0, p1 = 0, p2 = 0, n = 0;
+    d.matches.forEach(m => {
+      if (!m.side1.length || !m.side2.length) return;
+      const ses = d.sessions.find(s => s.id === m.session_id);
+      if (!ses) return;
+      n++;
+      const e = rcEval(d, m);
+      if (e.points) { t1 += e.points[0]; t2 += e.points[1]; p1 += e.points[0]; p2 += e.points[1]; }
+      else if (e.played) { if (e.leader === 1) p1 += 1; else if (e.leader === 2) p2 += 1; else { p1 += .5; p2 += .5; } }
+    });
+    return { t1, t2, p1, p2, n, toWin: n ? n / 2 + .5 : 0 };
+  }
+  const half = n => (Math.floor(n) === n ? String(n) : (Math.floor(n) || "") + "½");
+
+  function rcStatusText(d, e) {
+    if (e.played === 0) return "Not started";
+    if (e.finished) {
+      if (!e.leader) return "Halved";
+      return `${esc(rcTeamName(d, e.leader))} win ${e.status}`;
+    }
+    if (!e.leader) return `All square · thru ${e.played}`;
+    return `${esc(rcTeamName(d, e.leader))} ${e.status} · thru ${e.played}`;
+  }
+
+  async function renderRyder(eventId, tab) {
+    view.innerHTML = `<div class="loading">Loading the Ryder Cup…</div>`;
+    try { rc.data = await loadRyder(eventId); }
+    catch (e) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    if (tab) rc.tab = tab;
+    if (!rc.data.canManage) rc.tab = "matches";
+    if (rc.tab === "setup") await rcEnsureTees();
+    rcSubscribe(rc.data);
+    rcFlush();
+    drawRyder();
+  }
+
+  function drawRyder() {
+    const d = rc.data;
+    if (!d) return;
+    const tabs = [["matches", "Matches", TAB_ICONS.board]];
+    if (d.canManage) tabs.push(["setup", "Setup", TAB_ICONS.setup]);
+    showTabbar(tabs.map(([k, l, ic]) => `<button role="tab" data-action="rc-tab" data-tab="${k}" aria-selected="${rc.tab === k}">${ic}<span>${l}</span></button>`).join(""));
+    const head = `<div class="round-head"><a class="back-link" href="#/">‹ Rounds</a>
+      <h1>${esc(d.event.name)}</h1><div class="muted small">${esc(d.event.venue || "")} · ${fmtDate(d.event.event_date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</div></div>`;
+    if (!d.cup) {
+      view.innerHTML = head + (d.canManage
+        ? `<div class="card"><h2>Set up the Ryder Cup</h2><p class="small muted">Name the two teams, pick the players, then add the sessions and matches. Players score their own matches live, and the team board keeps itself up to date.</p>
+            <button class="btn gold block" data-action="rc-create">Set up the Ryder Cup</button></div>`
+        : `<div class="card empty"><p>The teams haven't been announced yet.</p><p class="small">The committee will put the teams and matches up here before the weekend.</p></div>`);
+      return;
+    }
+    view.innerHTML = head + (rc.tab === "setup" && d.canManage ? rcSetupView(d) : rcBoardView(d));
+  }
+
+  function rcNames(d, ids, colour) {
+    return ids.length ? ids.map(id => `<span class="rc-pl">${avatar(rcPlayer(d, id).name, rcPlayer(d, id).profile_id)}<span>${esc(shortName(rcPlayer(d, id).name))}</span></span>`).join("") : `<span class="muted small">TBC</span>`;
+  }
+
+  function rcBoardView(d) {
+    const t = rcTotals(d);
+    const c1 = rcColour(d, 1), c2 = rcColour(d, 2);
+    const mine = new Set(d.players.filter(p => p.profile_id === app.user.id).map(p => p.id));
+    const board = `<div class="rc-score">
+      <div class="rc-team" style="background:${esc(c1)}"><small>${esc(rcTeamName(d, 1))}</small><b>${half(t.t1)}</b></div>
+      <div class="rc-mid">${t.n ? `${half(t.toWin)} to win` : ""}<br><span>${t.n} match${t.n === 1 ? "" : "es"}</span></div>
+      <div class="rc-team" style="background:${esc(c2)}"><small>${esc(rcTeamName(d, 2))}</small><b>${half(t.t2)}</b></div></div>
+      ${t.p1 !== t.t1 || t.p2 !== t.t2 ? `<p class="small muted rc-proj">If it finished as it stands: ${esc(rcTeamName(d, 1))} ${half(t.p1)} – ${half(t.p2)} ${esc(rcTeamName(d, 2))}</p>` : ""}`;
+    const sessions = d.sessions.map(s => {
+      const ms = d.matches.filter(m => m.session_id === s.id);
+      const tee = d.tees.get(s.tee_id);
+      return `<div class="card rc-session">
+        <div class="row"><h2 style="margin:0">${esc(s.name)}</h2><span class="spacer"></span>${s.status === "live" ? `<span class="badge live">Live</span>` : s.status === "final" ? `<span class="badge final">Final</span>` : `<span class="badge">Not started</span>`}</div>
+        <div class="thru">${RC_FORMATS[s.format]}${tee ? ` · ${esc(tee.tee.courses ? tee.tee.courses.name : "")} ${esc(tee.tee.name)} tees` : ""}${s.play_date ? " · " + fmtDate(s.play_date) : ""}</div>
+        ${ms.length ? ms.map(m => { const e = rcEval(d, m); const lead = e.leader ? rcColour(d, e.leader) : "#57617A";
+          const isMine = m.side1.concat(m.side2).some(id => mine.has(id));
+          return `<a class="rc-match${isMine ? " mine" : ""}" href="#/rc/${m.id}">
+            <div class="rc-side" style="border-color:${esc(c1)}">${rcNames(d, m.side1)}</div>
+            <div class="rc-status" style="background:${e.played ? esc(lead) : "#e6eaf2"};color:${e.played ? "#fff" : "var(--ink-soft)"}">${e.finished && e.leader ? e.status : e.finished ? "½" : e.played ? (e.leader ? e.status : "AS") : "–"}<small>${e.finished ? "Final" : e.played ? "thru " + e.played : ""}</small></div>
+            <div class="rc-side right" style="border-color:${esc(c2)}">${rcNames(d, m.side2)}</div></a>`; }).join("")
+          : `<p class="small muted">No matches yet.</p>`}
+      </div>`;
+    }).join("");
+    return board + (sessions || `<div class="card empty"><p>No sessions yet.</p>${d.canManage ? `<button class="btn" data-action="rc-tab" data-tab="setup">Add the sessions</button>` : ""}</div>`);
+  }
+
+  function rcSetupView(d) {
+    const c = d.cup;
+    const pool = d.players.filter(p => d.team.has(p.id) || d.onTrip.has(p.id) || (rc.showAll && p.active !== false))
+      .sort((a, b) => (d.team.get(a.id) || 3) - (d.team.get(b.id) || 3) || a.name.localeCompare(b.name));
+    const count = side => [...d.team.values()].filter(v => v === side).length;
+    const teeOpts = sel => `<option value="">Choose a course…</option>` + rc.allTees.map(t => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${esc(t.courses ? t.courses.name : "")} · ${esc(t.name)}</option>`).join("");
+    const team = side => pool.filter(p => d.team.get(p.id) === side);
+    const sel = (m, sideNo, i, s) => {
+      const opts = team(sideNo).map(p => `<option value="${p.id}" ${m[sideNo === 1 ? "side1" : "side2"][i] === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+      return `<select class="rc-sel" data-rc-pick="${m.id}" data-side="${sideNo}" data-i="${i}" ${s.status === "final" ? "disabled" : ""}><option value="">—</option>${opts}</select>`;
+    };
+    return `
+      <div class="card"><h2>Teams</h2>
+        <div class="rc-teams">
+          <label class="field">Team 1<input id="rc-n1" value="${esc(c.team1_name)}"></label><label class="field rc-col">Colour<input type="color" id="rc-c1" value="${esc(c.team1_colour)}"></label>
+          <label class="field">Team 2<input id="rc-n2" value="${esc(c.team2_name)}"></label><label class="field rc-col">Colour<input type="color" id="rc-c2" value="${esc(c.team2_colour)}"></label>
+        </div>
+        <label class="field">Allowance %<input id="rc-allow" type="number" min="0" max="100" value="${c.allowance}"></label>
+        <p class="small muted" style="margin-top:-4px">Playing handicaps are this % of course handicap. In every match the lowest plays off scratch and the others get the difference. Foursomes pairs play off half their combined handicap.</p>
+        <button class="btn block" data-action="rc-save-cup">Save teams</button></div>
+      <div class="card"><div class="row"><h2 style="margin:0">Players</h2><span class="spacer"></span><span class="small muted">${count(1)} v ${count(2)}</span></div>
+        <p class="small muted">${d.onTrip.size ? "Everyone registered for the fixture." : "Nobody's registered for the fixture yet."} <button class="mv-link" data-action="rc-show-all">${rc.showAll ? "Only show those registered" : "Show every player"}</button></p>
+        ${pool.map(p => { const sd = d.team.get(p.id); return `<div class="row rc-prow"><span class="rc-pname">${esc(p.name)} <span class="muted small">${p.handicap == null ? "" : p.handicap}</span></span><span class="spacer"></span>
+          <div class="rc-seg"><button data-action="rc-side" data-player="${p.id}" data-side="1" class="${sd === 1 ? "on" : ""}" style="${sd === 1 ? `background:${esc(c.team1_colour)}` : ""}">${esc(shortName(c.team1_name) || "1")}</button><button data-action="rc-side" data-player="${p.id}" data-side="0" class="${!sd ? "on0" : ""}">–</button><button data-action="rc-side" data-player="${p.id}" data-side="2" class="${sd === 2 ? "on" : ""}" style="${sd === 2 ? `background:${esc(c.team2_colour)}` : ""}">${esc(shortName(c.team2_name) || "2")}</button></div></div>`; }).join("") || `<p class="small muted">No players to show.</p>`}
+      </div>
+      ${d.sessions.map(s => { const ms = d.matches.filter(m => m.session_id === s.id); const per = rcPerSide(s.format);
+        return `<div class="card rc-sess-edit">
+          <div class="row"><input class="rc-sname" data-rc-sess="${s.id}" data-field="name" value="${esc(s.name)}"><span class="spacer"></span>
+            ${s.status === "live" ? `<span class="badge live">Live</span>` : s.status === "final" ? `<span class="badge final">Final</span>` : ""}</div>
+          <div class="rc-sess-row">
+            <select data-rc-sess="${s.id}" data-field="format">${Object.entries(RC_FORMATS).map(([k, l]) => `<option value="${k}" ${s.format === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+            <select data-rc-sess="${s.id}" data-field="tee_id">${teeOpts(s.tee_id)}</select>
+            <input type="date" data-rc-sess="${s.id}" data-field="play_date" value="${s.play_date || ""}"></div>
+          ${ms.map(m => `<div class="rc-medit"><span class="rc-mno">${m.match_no}</span>
+            <div class="rc-mside" style="border-color:${esc(c.team1_colour)}">${Array.from({ length: per }, (_, i) => sel(m, 1, i, s)).join("")}</div>
+            <span class="muted small">v</span>
+            <div class="rc-mside" style="border-color:${esc(c.team2_colour)}">${Array.from({ length: per }, (_, i) => sel(m, 2, i, s)).join("")}</div>
+            <button class="mv-link" data-action="rc-del-match" data-id="${m.id}" aria-label="Remove match">✕</button></div>`).join("")}
+          <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn ghost" style="min-height:38px" data-action="rc-add-match" data-session="${s.id}">+ Match</button>
+            <span class="spacer"></span>
+            ${s.status === "setup" ? `<button class="btn gold" style="min-height:38px" data-action="rc-sess-status" data-session="${s.id}" data-status="live">Open scoring</button>`
+              : s.status === "live" ? `<button class="btn" style="min-height:38px" data-action="rc-sess-status" data-session="${s.id}" data-status="final">Finish session</button>`
+              : `<button class="btn ghost" style="min-height:38px" data-action="rc-sess-status" data-session="${s.id}" data-status="live">Reopen</button>`}
+            <button class="mv-link" data-action="rc-del-session" data-session="${s.id}">Delete session</button>
+          </div></div>`; }).join("")}
+      <div class="card"><h2>Add a session</h2>
+        <label class="field">Name<input id="rc-new-name" placeholder="e.g. Friday fourballs"></label>
+        <label class="field">Format<select id="rc-new-format">${Object.entries(RC_FORMATS).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+        <label class="field">Course and tee<select id="rc-new-tee">${teeOpts(null)}</select></label>
+        <label class="field">Date<input id="rc-new-date" type="date" value="${d.event.event_date}"></label>
+        <button class="btn block" data-action="rc-add-session">Add session</button></div>`;
+  }
+
+  async function rcEnsureTees() {
+    if (rc.allTees.length) return;
+    const { data } = await client.from("course_tees").select("id, name, course_id, courses(name)").order("name");
+    rc.allTees = (data || []).sort((a, b) => ((a.courses && a.courses.name) || "").localeCompare((b.courses && b.courses.name) || ""));
+  }
+  rc.allTees = [];
+
+  async function rcDo(promise, ok) {
+    const { error } = await promise;
+    if (error) { toast(error.message, true); return false; }
+    if (ok) toast(ok);
+    rc.data = await loadRyder(rc.data.id);
+    drawRyder();
+    return true;
+  }
+
+  // ----- a match -----
+
+  async function renderRcMatch(matchId) {
+    if (!rc.data || !rc.data.matches.some(m => m.id === matchId)) {
+      view.innerHTML = `<div class="loading">Loading the match…</div>`;
+      const { data: m } = await client.from("rc_matches").select("event_id").eq("id", matchId).maybeSingle();
+      if (!m) { view.innerHTML = `<div class="card status-msg err">Couldn't find that match.</div>`; return; }
+      try { rc.data = await loadRyder(m.event_id); rcSubscribe(rc.data); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    }
+    rcFlush();
+    drawRcMatch(matchId);
+  }
+
+  function drawRcMatch(matchId) {
+    const d = rc.data;
+    const m = d.matches.find(x => x.id === matchId);
+    if (!m) return;
+    hideTabbar();
+    const e = rcEval(d, m);
+    const s = e.session;
+    const c1 = rcColour(d, 1), c2 = rcColour(d, 2);
+    const balls = s.format === "foursome"
+      ? [{ pid: m.side1[0], side: 1, label: m.side1.map(id => shortName(rcPlayer(d, id).name)).join(" & ") }, { pid: m.side2[0], side: 2, label: m.side2.map(id => shortName(rcPlayer(d, id).name)).join(" & ") }]
+      : m.side1.map(pid => ({ pid, side: 1 })).concat(m.side2.map(pid => ({ pid, side: 2 })));
+    const gets = [...e.shots.s1, ...e.shots.s2];
+    const sc = d.scores.get(m.id) || {};
+    const canScore = d.canManage || (s.status === "live" && m.side1.concat(m.side2).some(id => rcPlayer(d, id).profile_id === app.user.id));
+    const cols = `grid-template-columns: 30px 30px 32px repeat(${balls.length}, minmax(0, 1fr)) 34px;`;
+    const shotsFor = (i, h) => S.shotsOnHole(gets[i], h.stroke_index, 18);
+    const lead = e.leader ? rcColour(d, e.leader) : "var(--navy-dark)";
+    const row = h => {
+      const l = e.log.find(x => x.hole === h.hole) || {};
+      return `<div class="sg-row" style="${cols}"><span class="sg-hole">${h.hole}</span><span class="sg-par">${h.par}</span><span class="sg-si">${h.stroke_index}</span>
+        ${balls.map((b, i) => { const v = (sc[b.pid] || {})[h.hole]; const sh = shotsFor(i, h);
+          let cls = "sg-cell", txt = "+";
+          if (v && (v.strokes != null || v.picked_up)) { cls += " set"; if (v.picked_up) { cls += " pu"; txt = "P"; } else { const dd = v.strokes - h.par; cls += dd < 0 ? " under" : dd > 0 ? " over" : " par"; txt = v.strokes; } }
+          return `<button class="${cls}" data-action="rc-cell" data-match="${m.id}" data-player="${b.pid}" data-hole="${h.hole}" ${canScore ? "" : "disabled"}>${sh > 0 ? `<span class="sg-shots">${"•".repeat(Math.min(sh, 3))}</span>` : ""}<span class="sg-val">${txt}</span></button>`; }).join("")}
+        <span class="rc-res" style="${l.res === 1 ? `background:${c1}` : l.res === -1 ? `background:${c2}` : l.res === 0 ? "background:#c9ced8" : ""}">${l.res === 0 ? "½" : l.res ? "" : ""}</span></div>`;
+    };
+    view.innerHTML = `
+      <div class="round-head"><a class="back-link" href="#/ryder/${d.id}">‹ ${esc(d.event.name)}</a>
+        <h1>${esc(s.name)} · match ${m.match_no}</h1>
+        <div class="muted small">${RC_FORMATS[s.format]}${e.real ? ` · ${esc(d.tees.get(s.tee_id).tee.name)} tees` : " · course not chosen yet"}</div></div>
+      <div class="rc-banner" style="background:${lead}">${rcStatusText(d, e)}</div>
+      <div class="card rc-vs">
+        <div class="rc-vs-side" style="border-color:${esc(c1)}"><small>${esc(rcTeamName(d, 1))}</small>${m.side1.map((id, i) => `<div>${esc(rcPlayer(d, id).name)} <span class="muted small">${s.format === "foursome" ? "" : gets[i] ? `gets ${gets[i]}` : "scratch"}</span></div>`).join("")}${s.format === "foursome" ? `<span class="muted small">${e.shots.s1[0] ? `gets ${e.shots.s1[0]}` : "scratch"}</span>` : ""}</div>
+        <div class="rc-vs-side right" style="border-color:${esc(c2)}"><small>${esc(rcTeamName(d, 2))}</small>${m.side2.map((id, i) => `<div>${esc(rcPlayer(d, id).name)} <span class="muted small">${s.format === "foursome" ? "" : gets[m.side1.length + i] ? `gets ${gets[m.side1.length + i]}` : "scratch"}</span></div>`).join("")}${s.format === "foursome" ? `<span class="muted small">${e.shots.s2[0] ? `gets ${e.shots.s2[0]}` : "scratch"}</span>` : ""}</div>
+      </div>
+      ${!canScore && s.status !== "final" ? `<p class="small muted">Only the players in this match can score it${s.status === "setup" ? ", once the committee opens the session" : ""}.</p>` : ""}
+      <div class="card score-grid">
+        <div class="sg-sticky"><div class="sg-row sg-head" style="${cols}"><span>Hole</span><span>Par</span><span>SI</span>
+          ${balls.map(b => `<span class="sg-who">${s.format === "foursome" ? `<span class="rc-ball" style="background:${b.side === 1 ? c1 : c2}">${esc(b.label)}</span>` : `<span class="rc-av" style="box-shadow:0 0 0 2px ${b.side === 1 ? c1 : c2}">${avatar(rcPlayer(d, b.pid).name, rcPlayer(d, b.pid).profile_id)}</span>`}</span>`).join("")}<span></span></div></div>
+        ${e.holes.map(row).join("")}
+        <p class="small muted sg-key">Tap a box to put a score in · dots are shots · the coloured dot shows who won the hole</p>
+      </div>`;
+  }
+
+  function rcKeypad(matchId, pid, hole) {
+    const d = rc.data, m = d.matches.find(x => x.id === matchId);
+    const e = rcEval(d, m), h = e.holes.find(x => x.hole === hole);
+    const cur = ((d.scores.get(matchId) || {})[pid] || {})[hole];
+    const curV = cur ? (cur.picked_up ? "P" : cur.strokes) : null;
+    rc.kp = { matchId, pid, hole, pending: curV };
+    const name = e.session.format === "foursome" ? (m.side1[0] === pid ? m.side1 : m.side2).map(id => shortName(rcPlayer(d, id).name)).join(" & ") : rcPlayer(d, pid).name;
+    const keys = []; for (let v = 1; v <= 12; v++) { const dd = v - h.par; keys.push(`<button class="kp-key ${dd < 0 ? "k-under" : dd > 0 ? "k-over" : "k-par"}${curV === v ? " on" : ""}" data-action="rc-kp" data-val="${v}">${v}<small>${dd === -2 ? "Eagle" : dd === -1 ? "Birdie" : dd === 0 ? "Par" : dd === 1 ? "Bogey" : dd === 2 ? "Double" : ""}</small></button>`); }
+    openSheet(`<div class="kp-title">${esc(name)} – Hole ${hole}</div><div class="kp-facts">Par ${h.par} · SI ${h.stroke_index}</div>
+      <div class="kp-grid">${keys.join("")}
+        <button class="kp-key k-pu${curV === "P" ? " on" : ""}" data-action="rc-kp" data-val="P">P/U<small>Concede</small></button>
+        <button class="kp-key k-clear" data-action="rc-kp-clear" ${cur ? "" : "disabled"}>Clear</button>
+        <button class="kp-key k-ok" data-action="rc-kp-ok" ${curV == null ? "disabled" : ""}>✓</button></div>`);
+  }
+
+  function rcSave(row) {
+    const q = rcQueue().filter(x => !(x.match_id === row.match_id && x.player_id === row.player_id && x.hole === row.hole));
+    q.push({ ...row, ts: Date.now() + Math.random() });
+    store.set(RC_QUEUE, q);
+    rcApplyScore(rc.data, row.clear ? { ...row, _delete: true } : { ...row, entered_by: app.user.id });
+    buzz();
+    rcFlush();
+  }
+
+  function rcAfterKeypad(matchId, pid, hole) {
+    const d = rc.data, m = d.matches.find(x => x.id === matchId);
+    const fmt = d.sessions.find(s => s.id === m.session_id).format;
+    const order = fmt === "foursome" ? [m.side1[0], m.side2[0]] : m.side1.concat(m.side2);
+    const sc = d.scores.get(matchId) || {};
+    const next = order.slice(order.indexOf(pid) + 1).find(id => !((sc[id] || {})[hole]));
+    if (next) rcKeypad(matchId, next, hole); else closeSheet();
+    drawRcMatch(matchId);
+  }
+
+
+  // ---------- records & honours ----------
+
+  const records = { data: null, year: "all", a: null, b: null };
+
+  async function loadRecords() {
+    const [res, evs, prizes, hs, setups] = await Promise.all([
+      client.from("results").select("event_id, player_id, points, gross_score, players(name, profile_id)"),
+      client.from("events").select("id, name, venue, event_date, hidden, is_trip"),
+      client.from("event_prizes").select("*"),
+      client.from("hole_scores").select("event_id, player_id, hole, strokes, picked_up"),
+      client.from("event_scoring").select("event_id, tee_id"),
+    ]);
+    if (res.error) throw res.error;
+    const teeIds = [...new Set((setups.data || []).map(x => x.tee_id).filter(Boolean))];
+    const { data: ch } = teeIds.length ? await client.from("course_holes").select("tee_id, hole, par").in("tee_id", teeIds) : { data: [] };
+    const { data: pls } = await client.from("players").select("id, name, profile_id");
+    return { results: res.data || [], events: (evs.data || []).filter(e => !e.hidden), prizes: prizes.data || [], hs: hs.data || [],
+      teeOf: new Map((setups.data || []).map(x => [x.event_id, x.tee_id])), par: new Map((ch || []).map(h => [h.tee_id + ":" + h.hole, h.par])), players: pls || [] };
+  }
+
+  async function renderRecords() {
+    view.innerHTML = `<div class="loading">Digging out the records…</div>`;
+    try { if (!records.data) records.data = await loadRecords(); }
+    catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    drawRecords();
+  }
+
+  function drawRecords() {
+    const d = records.data;
+    const evById = new Map(d.events.map(e => [e.id, e]));
+    const years = [...new Set(d.events.map(e => e.event_date.slice(0, 4)))].sort().reverse();
+    const inYear = id => { const e = evById.get(id); return e && (records.year === "all" || e.event_date.startsWith(records.year)); };
+    const res = d.results.filter(r => r.points != null && inYear(r.event_id));
+    const nameOf = id => { const p = d.players.find(x => x.id === id); return p ? p.name : "?"; };
+    const profOf = id => { const p = d.players.find(x => x.id === id); return p ? p.profile_id : null; };
+    // winners per event: the prize sheet if filled in, otherwise top points
+    const byEvent = new Map();
+    res.forEach(r => { if (!byEvent.has(r.event_id)) byEvent.set(r.event_id, []); byEvent.get(r.event_id).push(r); });
+    const winners = [...byEvent.entries()].map(([eid, rs]) => {
+      const top = Math.max(...rs.map(r => Number(r.points)));
+      const pz = d.prizes.find(p => p.event_id === eid);
+      return { ev: evById.get(eid), names: pz && pz.first_place ? [pz.first_place] : rs.filter(r => Number(r.points) === top).map(r => nameOf(r.player_id)), ids: rs.filter(r => Number(r.points) === top).map(r => r.player_id), pts: top, pairs: pz && pz.winning_pair };
+    }).sort((a, b) => b.ev.event_date.localeCompare(a.ev.event_date));
+    const tally = (fn) => { const m = new Map(); fn(m); return [...m.entries()].sort((a, b) => b[1] - a[1]); };
+    const wins = tally(m => winners.forEach(w => w.ids.forEach(id => m.set(id, (m.get(id) || 0) + 1))));
+    const rounds = tally(m => res.forEach(r => m.set(r.player_id, (m.get(r.player_id) || 0) + 1)));
+    const best = res.slice().sort((a, b) => b.points - a.points).slice(0, 10);
+    const birdies = new Map(), eagles = new Map(), twos = new Map();
+    d.hs.filter(h => inYear(h.event_id) && !h.picked_up && h.strokes != null).forEach(h => {
+      const par = d.par.get(d.teeOf.get(h.event_id) + ":" + h.hole);
+      if (!par) return;
+      if (h.strokes <= par - 2) eagles.set(h.player_id, (eagles.get(h.player_id) || 0) + 1);
+      else if (h.strokes === par - 1) birdies.set(h.player_id, (birdies.get(h.player_id) || 0) + 1);
+      if (h.strokes <= par - 2 || h.strokes === 2) twos.set(h.player_id, (twos.get(h.player_id) || 0) + 1);
+    });
+    const top = (m, n) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n || 5);
+    const list = (rows, unit) => rows.length ? rows.map(([id, n], i) => `<div class="rec-row"><span class="rec-pos">${i + 1}</span>${avatar(nameOf(id), profOf(id))}<span class="rec-name">${esc(nameOf(id))}</span><b>${n}</b><small>${unit}</small></div>`).join("") : `<p class="small muted">Nothing yet.</p>`;
+    // head to head
+    const ppl = [...new Set(d.results.map(r => r.player_id))].map(id => ({ id, name: nameOf(id) })).sort((a, b) => a.name.localeCompare(b.name));
+    if (!records.a && r0()) records.a = r0();
+    function r0() { const me = d.players.find(p => p.profile_id === app.user.id); return me && ppl.some(x => x.id === me.id) ? me.id : (ppl[0] && ppl[0].id); }
+    if (!records.b) records.b = (ppl.find(x => x.id !== records.a) || {}).id;
+    let h2h = "";
+    if (records.a && records.b) {
+      const both = [...byEvent.entries()].map(([eid, rs]) => ({ eid, a: rs.find(r => r.player_id === records.a), b: rs.find(r => r.player_id === records.b) })).filter(x => x.a && x.b);
+      const aw = both.filter(x => Number(x.a.points) > Number(x.b.points)).length, bw = both.filter(x => Number(x.b.points) > Number(x.a.points)).length;
+      const avg = k => both.length ? (both.reduce((t, x) => t + Number(x[k].points), 0) / both.length).toFixed(1) : "–";
+      h2h = `<div class="h2h"><div class="h2h-side">${avatar(nameOf(records.a), profOf(records.a), "h2h-av")}<b>${aw}</b><small>avg ${avg("a")}</small></div>
+        <div class="h2h-mid">${both.length} round${both.length === 1 ? "" : "s"}<br>together${both.length - aw - bw ? `<br>${both.length - aw - bw} level` : ""}</div>
+        <div class="h2h-side">${avatar(nameOf(records.b), profOf(records.b), "h2h-av")}<b>${bw}</b><small>avg ${avg("b")}</small></div></div>`;
+    }
+    const opts = sel => ppl.map(p => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    view.innerHTML = `
+      <a class="back-link" href="#/">‹ Home</a>
+      <h1>Records &amp; honours</h1>
+      <div class="subtabs">${["all", ...years].map(y => `<button data-action="rec-year" data-year="${y}" aria-selected="${records.year === y}">${y === "all" ? "All time" : y}</button>`).join("")}</div>
+      <div class="card"><h2>Head to head</h2>
+        <div class="row" style="gap:8px"><select id="h2h-a" class="rec-sel">${opts(records.a)}</select><span class="muted">v</span><select id="h2h-b" class="rec-sel">${opts(records.b)}</select></div>
+        ${h2h}<p class="small muted" style="margin:8px 0 0">Rounds both played, by Stableford points.</p></div>
+      <div class="card"><h2>Roll of honour</h2>${winners.length ? winners.map(w => `<div class="hon-row"><div class="hon-date">${fmtDate(w.ev.event_date, { day: "numeric", month: "short", year: "numeric" })}</div>
+        <div class="hon-what"><b>${esc(w.ev.name)}</b><span class="thru">${esc(w.ev.venue || "")}</span></div>
+        <div class="hon-who">🏆 ${w.names.map(esc).join(" &amp; ")} <small>${w.pts} pts</small>${w.pairs ? `<div class="thru">🤝 ${esc(w.pairs)}</div>` : ""}</div></div>`).join("") : `<p class="small muted">No results yet.</p>`}</div>
+      <div class="card"><h2>Best rounds</h2>${best.map((r, i) => { const e = evById.get(r.event_id); return `<div class="rec-row"><span class="rec-pos">${i + 1}</span>${avatar(nameOf(r.player_id), profOf(r.player_id))}<span class="rec-name">${esc(nameOf(r.player_id))}<span class="thru">${esc(e.name)} · ${fmtDate(e.event_date, { day: "numeric", month: "short", year: "numeric" })}</span></span><b>${r.points}</b><small>pts</small></div>`; }).join("") || `<p class="small muted">No results yet.</p>`}</div>
+      <div class="rec-grid">
+        <div class="card"><h2>Most wins</h2>${list(wins.slice(0, 5), "")}</div>
+        <div class="card"><h2>Most rounds</h2>${list(rounds.slice(0, 5), "")}</div>
+        <div class="card"><h2>Most birdies</h2>${list(top(birdies), "")}</div>
+        <div class="card"><h2>Eagles &amp; 2s</h2>${list(top(twos), "")}</div>
+      </div>
+      <p class="small muted" style="text-align:center">Birdies, eagles and 2s count from rounds scored in the app.</p>`;
+  }
+
+  // ---------- print pack ----------
+
+  function teeTimeFor(r, group) {
+    const t = r.event.tee_time, gap = r.setup && r.setup.tee_interval;
+    if (!t) return "";
+    if (!gap) return group === 1 ? t.slice(0, 5) : "";
+    const [h, m] = t.split(":").map(Number);
+    const mins = h * 60 + m + (group - 1) * gap;
+    return String(Math.floor(mins / 60) % 24).padStart(2, "0") + ":" + String(mins % 60).padStart(2, "0");
+  }
+
+  async function renderPrint(eventId) {
+    hideTabbar();
+    view.innerHTML = `<div class="loading">Making the print pack…</div>`;
+    let r;
+    try { r = (app.round && app.round.id === eventId) ? app.round : await loadRound(eventId); }
+    catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    if (!r.tee || r.holes.length !== 18) { view.innerHTML = `<div class="card empty">Set the round up (course and tee) first.</div>`; return; }
+    const ev = r.event;
+    const groups = groupsOf(r);
+    const ungrouped = r.players.filter(p => p.group == null);
+    const allGroups = groups.length ? groups : [[1, r.players]];
+    if (groups.length && ungrouped.length) allGroups.push(["–", ungrouped]);
+    const head = (t) => `<div class="pp-head"><img src="icons/icon-192.png" alt=""><div><div class="pp-kick">The Falkners Arms Golf Society</div><h1>${t}</h1>
+      <div class="pp-sub">${esc(ev.name)} · ${esc(r.course ? r.course.name : ev.venue || "")} · ${esc(r.tee.name)} tees · ${fmtDate(ev.event_date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div></div></div>`;
+    const cs = contestsOn(r);
+    const start = `<section class="pp-page">${head("Start sheet")}
+      <div class="pp-facts"><span>First tee <b>${ev.tee_time ? ev.tee_time.slice(0, 5) : "—"}</b></span><span>Par <b>${parTotal(r)}</b></span>${r.tee.slope ? `<span>Slope <b>${r.tee.slope}</b></span>` : ""}${r.tee.course_rating ? `<span>CR <b>${r.tee.course_rating}</b></span>` : ""}<span>Allowance <b>${esc(String(r.setup.allowance))}%</b></span></div>
+      <table class="pp-table"><thead><tr><th>Group</th><th>Tee time</th><th>Player</th><th>Index</th><th>Plays off</th><th>Pair</th><th>Here</th></tr></thead>
+      <tbody>${allGroups.map(([n, ps]) => ps.map((p, i) => `<tr class="${i === 0 ? "pp-first" : ""}"><td>${i === 0 ? n : ""}</td><td>${i === 0 && n !== "–" ? teeTimeFor(r, n) : ""}</td><td>${esc(p.name)}${p.guest ? " (guest)" : ""}</td><td>${p.index == null ? "" : p.index}</td><td><b>${p.ph == null ? "" : p.ph}</b></td><td>${(p.pairs || []).join(", ")}</td><td class="pp-box"></td></tr>`).join("")).join("")}</tbody></table>
+      ${cs.length ? `<h3>Side contests</h3><p>${cs.map(c => `${esc(c.label)} — hole ${c.holeNo}`).join(" · ")}</p>` : ""}
+      <p class="pp-note">Playing handicaps are ${esc(String(r.setup.allowance))}% of course handicap for the ${esc(r.tee.name)} tees. A dot on a card means a shot on that hole.</p></section>`;
+    const card = ([n, ps]) => {
+      const sums = ps.map(p => S.summarise(r.holes, {}, p.ph));
+      const row = h => `<tr><td class="pp-h">${h.hole}</td><td>${h.yards || ""}</td><td>${h.par}</td><td>${h.stroke_index}</td>${ps.map((p, i) => { const sh = sums[i].holes[h.hole].shots; return `<td class="pp-sc"><span class="pp-dots">${sh > 0 ? "•".repeat(Math.min(sh, 3)) : sh < 0 ? "+" : ""}</span></td><td class="pp-pt"></td>`; }).join("")}</tr>`;
+      const tot = (label, hs) => `<tr class="pp-tot"><td>${label}</td><td>${hs.reduce((t, h) => t + (h.yards || 0), 0) || ""}</td><td>${hs.reduce((t, h) => t + h.par, 0)}</td><td></td>${ps.map(() => `<td></td><td></td>`).join("")}</tr>`;
+      return `<section class="pp-page">${head(n === "–" ? "Scorecard" : "Scorecard · Group " + n)}
+        <table class="pp-card"><thead><tr><th>Hole</th><th>Yds</th><th>Par</th><th>SI</th>${ps.map(p => `<th colspan="2">${esc(p.name)}<small>plays off ${p.ph == null ? "?" : p.ph}</small></th>`).join("")}</tr>
+          <tr class="pp-sub2"><th></th><th></th><th></th><th></th>${ps.map(() => `<th>Score</th><th>Pts</th>`).join("")}</tr></thead>
+          <tbody>${r.holes.slice(0, 9).map(row).join("")}${tot("Out", r.holes.slice(0, 9))}${r.holes.slice(9).map(row).join("")}${tot("In", r.holes.slice(9))}${tot("Total", r.holes)}</tbody></table>
+        <div class="pp-sign"><span>Marker's signature</span><span>Player's signature</span></div>
+        ${n !== "–" && teeTimeFor(r, n) ? `<p class="pp-note">Tee time ${teeTimeFor(r, n)}</p>` : ""}</section>`;
+    };
+    const stakes = cs.map(c => `<section class="pp-page">${head(esc(c.label))}
+      <div class="pp-facts"><span>Hole <b>${c.holeNo}</b></span><span>${esc(c.nine)}</span></div>
+      <p>Write your name under the last one if you're in front. The last group brings this back to the clubhouse.</p>
+      <table class="pp-table pp-stake"><thead><tr><th>#</th><th>Name</th><th>Group</th></tr></thead><tbody>${Array.from({ length: 14 }, (_, i) => `<tr><td>${i + 1}</td><td></td><td></td></tr>`).join("")}</tbody></table></section>`).join("");
+    view.innerHTML = `<div class="pp-toolbar no-print"><a class="back-link" href="#/round/${r.id}">‹ Back to the round</a>
+        <p class="small muted">${allGroups.length} scorecard${allGroups.length > 1 ? "s" : ""}${cs.length ? `, ${cs.length} stake sheet${cs.length > 1 ? "s" : ""}` : ""} and the start sheet. On a phone, Print lets you save it as a PDF or share it.</p>
+        <button class="btn gold block" data-action="print">🖨️ Print or save as PDF</button></div>
+      <div class="print-pack">${start}${allGroups.map(card).join("")}${stakes}</div>`;
+    document.body.classList.add("printing-pack");
+  }
+
+  // ---------- prize-giving screen ----------
+  // Full screen for the clubhouse TV or a laptop: the contests, the pairs,
+  // third, second and then the winner, the final board and the Order of
+  // Merit. Tap, click or use the arrow keys to move on. "TV" mode is a
+  // live leaderboard that keeps itself up to date and swaps boards.
+
+  const present = { slides: [], i: 0, timer: null, tv: false, eventId: null };
+
+  async function renderPresent(eventId, tv) {
+    hideTabbar();
+    view.innerHTML = `<div class="loading">Getting the results ready…</div>`;
+    let r;
+    try { r = (app.round && app.round.id === eventId) ? app.round : await loadRound(eventId); }
+    catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    present.eventId = eventId; present.tv = !!tv; present.i = 0;
+    if (!app.round || app.round.id !== eventId) { app.round = r; subscribe(r); }
+    let season = null;
+    try { season = await loadSeason(); } catch (e) { /* the season slide is skipped */ }
+    present.season = season;
+    buildSlides(r);
+    document.body.classList.add("presenting");
+    drawPresent();
+    clearInterval(present.timer);
+    if (tv) present.timer = setInterval(() => { if (!document.body.classList.contains("presenting")) return clearInterval(present.timer);
+      buildSlides(app.round); present.i = (present.i + 1) % present.slides.length; drawPresent(); }, 15000);
+  }
+
+  function buildSlides(r) {
+    const ev = r.event;
+    const title = `<div class="pz-kicker">${esc(ev.name)} · ${esc(r.course ? r.course.name : ev.venue || "")}</div>`;
+    const slides = [];
+    const board = r.holes.length ? S.stablefordBoard(r.holes, r.players).filter(x => x.sum.thru) : [];
+    const pairs = r.holes.length && r.pairs && r.pairs.length ? S.pairsBoard(r.holes, r.pairs).filter(x => x.started) : [];
+    const name = p => esc(p.name);
+    const boardSlide = (rows, label, isPairs) => `${title}<h2 class="pz-h">${label}</h2>
+      <div class="pz-board">${rows.slice(0, 12).map(x => `<div class="pz-row${x.pos === 1 ? " gold" : ""}"><span class="pz-pos">${x.tied ? "T" : ""}${x.pos}</span>
+        ${isPairs ? `<span class="pz-name">${x.pair.players.map(name).join(" &amp; ")}</span><span class="pz-thru">${x.complete ? "F" : "Thru " + x.thru}</span><span class="pz-pts">${x.points}</span>`
+                  : `<span class="pz-av">${avatar(x.player.name, x.player.profileId)}</span><span class="pz-name">${name(x.player)}</span><span class="pz-thru">${x.sum.complete ? "F" : "Thru " + x.sum.thru}</span><span class="pz-pts">${x.sum.points}</span>`}</div>`).join("")}</div>`;
+    if (present.tv) {
+      if (board.length) slides.push(boardSlide(board, r.setup && r.setup.status === "live" ? "Live leaderboard" : "Leaderboard"));
+      if (pairs.length) slides.push(boardSlide(pairs, "Pairs", true));
+      const cs = contestsOn(r);
+      if (cs.length) slides.push(`${title}<h2 class="pz-h">Side contests</h2><div class="pz-contests">${cs.map(c => { const lead = leaderOf(r, c.id); const conf = confirmedOf(r, c);
+        return `<div class="pz-ct"><span>${COMP_ICON[compKind(c)]}</span><div><small>${esc(c.label)} · hole ${c.holeNo}</small><b>${esc(conf || (lead ? playerName(r, lead.player_id) : "No name yet"))}</b></div></div>`; }).join("")}</div>`);
+      if (!slides.length) slides.push(`${title}<h2 class="pz-h">Scores will appear here</h2>`);
+      present.slides = slides; return;
+    }
+    slides.push(`<div class="pz-title"><img src="icons/icon-512.png" alt=""><div class="pz-kicker">The Falkners Arms Golf Society</div>
+      <h1>${esc(ev.name)}</h1><div class="pz-sub">${esc(r.course ? r.course.name : ev.venue || "")} · ${fmtDate(ev.event_date, { weekday: "long", day: "numeric", month: "long" })}</div></div>`);
+    contestsOn(r).forEach(c => {
+      const lead = leaderOf(r, c.id); const conf = confirmedOf(r, c);
+      const who = conf || (lead ? playerName(r, lead.player_id) : null);
+      slides.push(`${title}<div class="pz-award"><div class="pz-ico">${COMP_ICON[compKind(c)]}</div><div class="pz-label">${esc(c.label)}</div><div class="pz-meta">Hole ${c.holeNo} · ${esc(c.nine)}</div>
+        <div class="pz-winner">${who ? esc(who) : "Not awarded"}</div>${!conf && who ? `<div class="pz-meta">Still to be confirmed</div>` : ""}</div>`);
+    });
+    if (pairs.length && pairs[0].pair.players.length > 1) {
+      const top = pairs.filter(x => x.pos === 1);
+      slides.push(`${title}<div class="pz-award"><div class="pz-ico">🤝</div><div class="pz-label">Pairs winners</div>
+        <div class="pz-winner">${top.map(x => x.pair.players.map(name).join(" &amp; ")).join("<br>")}</div><div class="pz-pts-big">${top[0].points} <small>points</small></div></div>`);
+    }
+    const place = (pos, label, medal) => {
+      const xs = board.filter(x => x.pos === pos);
+      if (!xs.length) return;
+      slides.push(`${title}<div class="pz-award${pos === 1 ? " pz-first" : ""}"><div class="pz-medal ${medal}">${pos}</div><div class="pz-label">${label}</div>
+        <div class="pz-winner">${xs.map(x => `${avatar(x.player.name, x.player.profileId, "pz-big-av")}<span>${name(x.player)}</span>`).join("")}</div>
+        <div class="pz-pts-big">${xs[0].sum.points} <small>points</small></div>${xs.length > 1 ? `<div class="pz-meta">Tied after countback</div>` : ""}</div>`);
+    };
+    place(3, "Third place", "bronze"); place(2, "Runner-up", "silver"); place(1, "Winner", "gold");
+    if (board.length) slides.push(boardSlide(board, "Final leaderboard"));
+    if (pairs.length) slides.push(boardSlide(pairs, "Pairs", true));
+    if (present.season && present.season.table.length) {
+      slides.push(`<div class="pz-kicker">The Falkners Arms Golf Society</div><h2 class="pz-h">Order of Merit</h2>
+        <div class="pz-board">${present.season.table.slice(0, 10).map((e, i) => `<div class="pz-row${i === 0 ? " gold" : ""}"><span class="pz-pos">${i + 1}</span>
+          <span class="pz-av">${avatar(e.name, e.profileId)}</span><span class="pz-name">${esc(e.name)}</span>
+          <span class="pz-thru">${e.move ? `<span class="move ${e.move > 0 ? "up" : "down"}" style="display:inline">${e.move > 0 ? "▲" : "▼"}${Math.abs(e.move)}</span>` : ""}</span><span class="pz-pts">${e.totalPoints}</span></div>`).join("")}</div>`);
+    }
+    slides.push(`<div class="pz-title"><img src="icons/icon-512.png" alt=""><h1>Thanks for playing</h1><div class="pz-sub">See you at the next one</div></div>`);
+    present.slides = slides;
+  }
+
+  function drawPresent() {
+    const n = present.slides.length;
+    view.innerHTML = `<div class="present${present.tv ? " tv" : ""}" data-action="present-next">
+      <div class="pz-slide" key="${present.i}">${present.slides[present.i] || ""}</div>
+      <div class="pz-bar">
+        <button data-action="present-exit" aria-label="Close">✕</button>
+        ${present.tv ? `<span class="pz-live"><i></i>Live · changes every 15 seconds</span>` : `<button data-action="present-prev" ${present.i === 0 ? "disabled" : ""}>‹</button><span>${present.i + 1} / ${n}</span><button data-action="present-next" ${present.i === n - 1 ? "disabled" : ""}>›</button>`}
+        <button data-action="present-full">Full screen</button>
+      </div></div>`;
+  }
+
+  function exitPresent() {
+    clearInterval(present.timer);
+    document.body.classList.remove("presenting");
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    location.hash = "#/round/" + present.eventId;
+  }
+
+  document.addEventListener("keydown", e => {
+    if (!document.body.classList.contains("presenting")) return;
+    if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { if (present.i < present.slides.length - 1) { present.i++; drawPresent(); } e.preventDefault(); }
+    if (e.key === "ArrowLeft" || e.key === "PageUp") { if (present.i > 0) { present.i--; drawPresent(); } e.preventDefault(); }
+    if (e.key === "Escape" && !document.fullscreenElement) exitPresent();
+  });
+
+  // ---------- the forecast ----------
+  function weatherChip(f) {
+    return `<button class="wx-chip" data-action="weather">${f.first.w.icon} <b>${f.first.temp}°C</b> · ${f.maxRain}% rain · ${f.maxWind} mph${f.days === 0 ? "" : ` <span class="muted">· ${f.days === 1 ? "tomorrow" : "in " + f.days + " days"}</span>`}</button>`;
+  }
+
+
+  // ---------- handicap review after the round (committee) ----------
+  // England Golf's way of working out an index (score differentials, best
+  // 8 of the last 20) on the society's own cards, plus the society's cuts
+  // for the winners. Nothing changes until the committee approves it.
+
+  async function loadHcReview(r) {
+    const ids = r.players.map(p => p.id);
+    const { data, error } = ids.length ? await client.from("handicap_reviews").select("*, events(event_date)").in("player_id", ids) : { data: [] };
+    r.hc = { prior: error ? null : (data || []), cuts: r.hc && r.hc.cuts || { w: 2, r: 1 }, edits: {}, off: !!error };
+    if (app.round && app.round.id === r.id && app.round.tab === "setup") renderRoundBody();
+  }
+
+  function hcSuggest(r, p, board) {
+    const hc = r.hc;
+    const old = p.index;
+    const t = r.tee, par = parTotal(r);
+    const sum = S.summarise(r.holes, p.scores, p.ph);
+    const done = hc.prior.find(x => x.event_id === r.id && x.player_id === p.id);
+    const out = { p, old, done, notes: [] };
+    let diff = null;
+    if (sum.thru === 18 && t && t.slope && t.course_rating != null && old != null) {
+      const ch = S.courseHandicap(old, t.slope, t.course_rating, par);
+      const ag = S.adjustedGross(r.holes, p.scores, ch);
+      diff = S.differential(ag.ags, t.slope, Number(t.course_rating));
+      out.ags = ag.ags;
+    } else if (sum.thru !== 18) out.notes.push("card not complete");
+    else if (!t || !t.slope || t.course_rating == null) out.notes.push("tee has no slope or rating");
+    out.diff = diff;
+    const prior = hc.prior.filter(x => x.player_id === p.id && x.event_id !== r.id && x.differential != null)
+      .sort((a, b) => String((a.events || {}).event_date || a.approved_at).localeCompare(String((b.events || {}).event_date || b.approved_at)));
+    const diffs = prior.map(x => Number(x.differential)).concat(diff != null ? [diff] : []);
+    const whs = S.whsIndex(diffs);
+    out.whs = whs;
+    const pos = (board.find(x => x.player.id === p.id) || {}).pos;
+    const cut = pos === 1 ? Number(hc.cuts.w) || 0 : pos === 2 ? Number(hc.cuts.r) || 0 : 0;
+    out.cut = cut;
+    const yearAgo = new Date(Date.now() - 365 * 864e5).toISOString();
+    const cum = hc.prior.filter(x => x.player_id === p.id && x.event_id !== r.id && x.approved_at >= yearAgo).reduce((t2, x) => t2 + (Number(x.cut) || 0), 0);
+    let esr = 0;
+    if (diff != null && old != null) { const gap = old - diff; esr = gap >= 10 ? 2 : gap >= 7 ? 1 : 0; }
+    let next;
+    if (whs) { next = whs.index - cum - cut - esr; out.notes.unshift(`best ${whs.used} of ${whs.of}${whs.adjust ? ` ${whs.adjust}` : ""}${cum ? ` · −${cum} earlier cuts` : ""}`); }
+    else { next = old == null ? null : old - cut - esr; out.notes.unshift(`${diffs.length} of 3 cards needed for a WHS index`); }
+    if (cut) out.notes.push(`−${cut} for ${pos === 1 ? "winning" : "runner-up"}`);
+    if (esr) out.notes.push(`−${esr} exceptional score`);
+    out.next = next == null ? null : Math.max(-10, Math.min(54, Math.round(next * 10) / 10));
+    return out;
+  }
+
+  function hcReviewCard(r) {
+    if (!app.committee || !r.setup || r.setup.status !== "final") return "";
+    if (!r.hc) { loadHcReview(r); return `<div class="card"><h2>Handicap review</h2><p class="small muted">Working out the new indexes…</p></div>`; }
+    if (r.hc.off) return `<div class="card"><h2>Handicap review</h2><p class="small muted">Handicap reviews aren't switched on in the database yet.</p></div>`;
+    const board = S.stablefordBoard(r.holes, r.players);
+    const rows = r.players.map(p => hcSuggest(r, p, board));
+    // Every card is approved, even when the index stays the same: the saved
+    // differential is what the next round's calculation is built on.
+    const pending = rows.filter(x => !x.done && x.next != null);
+    return `<div class="card" id="hc-review"><h2>Handicap review</h2>
+      <p class="small muted" style="margin-top:0">The England Golf method on the society's cards: each card's score differential (holes capped at net double bogey, adjusted for slope and rating), then the best 8 of the last 20 — fewer when there aren't 20 yet. Society cuts are taken off on top and last a year. Soft and hard caps aren't applied. Nothing changes until you approve it.</p>
+      <div class="row" style="gap:10px;margin-bottom:8px"><label class="small">Winner cut <input class="hc-cut" data-cut="w" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.w}"></label>
+        <label class="small">Runner-up cut <input class="hc-cut" data-cut="r" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.r}"></label></div>
+      ${rows.map(x => `<div class="hc-row">
+        <div class="hc-who"><b>${esc(x.p.name)}</b><span class="thru">${x.diff != null ? `Differential ${x.diff.toFixed(1)} · ` : ""}${x.notes.map(esc).join(" · ")}</span>${!x.done && x.next != null && x.old != null && Math.abs(x.next - x.old) >= 3 ? `<span class="hc-big">Big change — worth a second look</span>` : ""}</div>
+        <div class="hc-vals"><span class="hc-old">${x.old == null ? "?" : x.old}</span><span class="muted">→</span>
+          ${x.done ? `<span class="hc-new">${x.done.new_index}</span><span class="tick">✓</span>`
+            : `<input class="hc-input" data-hc="${x.p.id}" type="number" step="0.1" value="${r.hc.edits[x.p.id] != null ? r.hc.edits[x.p.id] : x.next == null ? "" : x.next}">
+               <button class="btn ghost" style="min-height:34px" data-action="hc-approve" data-player="${x.p.id}">Approve</button>`}</div></div>`).join("")}
+      ${pending.length > 1 ? `<button class="btn gold block" style="margin-top:10px" data-action="hc-approve-all">Approve all ${pending.length}</button>` : ""}
+      <p class="small muted" style="margin:8px 0 0">Approve every card, even when the index doesn't change — each one is kept for the next round's calculation.</p>
+    </div>`;
+  }
+
+  async function hcApprove(r, ids) {
+    const board = S.stablefordBoard(r.holes, r.players);
+    for (const pid of ids) {
+      const p = r.players.find(x => x.id === pid);
+      const x = hcSuggest(r, p, board);
+      if (x.done) continue;
+      const input = document.querySelector(`[data-hc="${pid}"]`);
+      const val = input && input.value !== "" ? Math.round(Number(input.value) * 10) / 10 : x.next;
+      if (val == null || isNaN(val)) continue;
+      const row = { event_id: r.id, player_id: pid, old_index: x.old, differential: x.diff, whs_index: x.whs ? x.whs.index : null, cut: x.cut,
+        new_index: val, note: x.notes.join(" · "), approved_by: app.user.id, approved_at: new Date().toISOString() };
+      const a = await client.from("handicap_reviews").upsert(row, { onConflict: "event_id,player_id" });
+      if (a.error) { toast(a.error.message, true); return; }
+      const b = await client.from("players").update({ handicap: val }).eq("id", pid);
+      if (b.error) { toast(b.error.message, true); return; }
+    }
+    toast(ids.length > 1 ? "Handicaps updated" : "Handicap updated");
+    r.hc = null;
+    loadHcReview(r);
+  }
+
   // ---------- side contests: the stake on the hole ----------
   // The committee picks the holes on the admin page. A group names whoever
   // is in front; a later group that beats them adds their player under it,
@@ -2234,7 +3013,10 @@
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
       <p class="small muted" style="margin:10px 0 0">Tap a player for their card. Ties on a finished card go to countback: last 9, 6, 3, then 1.</p></div>
-      ${started.length ? `<button class="btn ghost block share-btn" data-action="share-board" data-kind="stableford">Share leaderboard</button>` : ""}`;
+      ${started.length ? `<button class="btn ghost block share-btn" data-action="share-board" data-kind="stableford">Share leaderboard</button>` : ""}
+      ${started.length ? `<div class="row" style="gap:8px;margin-bottom:14px">
+        <a class="btn ghost" style="flex:1" href="#/present/${r.id}/tv">📺 TV leaderboard</a>
+        ${r.canManage ? `<a class="btn gold" style="flex:1" href="#/present/${r.id}">🏆 Prize-giving</a>` : ""}</div>` : ""}`;
   }
 
   function medalTable(r) {
@@ -2431,6 +3213,9 @@
             ${Object.entries(FORMAT_LABELS).map(([k, l]) => `<label class="check-chip"><input type="checkbox" name="formats" value="${k}" ${fmts.has(k) ? "checked" : ""}> ${l}</label>`).join("")}
           </div>
         </div>
+        <label class="field">Minutes between tee groups
+          <input type="number" name="tee_interval" min="0" max="30" step="1" inputmode="numeric" value="${s.tee_interval != null ? s.tee_interval : ""}" placeholder="e.g. 8 — leave blank if not known">
+        </label>
         <label class="field">Skins
           <select name="skins_mode">
             <option value="net" ${s.skins_mode === "net" ? "selected" : ""}>Net</option>
@@ -2448,9 +3233,12 @@
         ${statusBtns}
       </div>
 
+      ${r.setup && r.tee ? `<div class="card"><h2>Print pack</h2><p class="small muted" style="margin-top:0">The start sheet, a paper card for every group with the shots marked, and a sheet for each stake. A backup if phones or signal fail.</p>
+        <a class="btn ghost block" href="#/print/${r.id}">🖨️ Open the print pack</a></div>` : ""}
       ${checkinsSetupCard(r)}
       ${r.contestsOff ? "" : contestsSetupCard(r)}
       ${adminsCard(r)}
+      ${hcReviewCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
       <div class="card">
@@ -2538,6 +3326,7 @@
         skins_mode: f.get("skins_mode"),
         updated_at: new Date().toISOString(),
       };
+      if (f.has("tee_interval") && !r.noTeeInterval) row.tee_interval = f.get("tee_interval") === "" ? null : Math.max(0, Math.min(30, Number(f.get("tee_interval"))));
       if (!row.formats.length) row.formats = ["stableford"];
       if (!r.setup) row.status = "setup";
       if (!row.tee_id) { st.hidden = false; st.className = "status-msg err"; st.textContent = "Choose a course and tee first."; return false; }
@@ -2902,6 +3691,48 @@
       case "hide-tip": store.set("hide-install-tip", Date.now()); el.closest(".install-tip").remove(); break;
       case "install-help": $("#menu").hidden = true; installSheet(); break;
       case "push-help": $("#menu").hidden = true; pushSheet(); break;
+      case "weather": if (r && r.wx) openSheet(`<h2>Forecast</h2><p class="small muted" style="margin-top:-4px">${esc(r.course ? r.course.name : r.event.venue || "")} · ${fmtDate(r.event.event_date)}</p>${window.FalknersWeather.html(r.wx)}<button class="btn ghost block" style="margin-top:12px" data-action="close-sheet">Done</button>`); break;
+      case "present-next": if (present.i < present.slides.length - 1 && !present.tv) { present.i++; drawPresent(); } break;
+      case "present-prev": if (present.i > 0) { present.i--; drawPresent(); } break;
+      case "present-exit": exitPresent(); break;
+      case "present-full": { const el2 = document.documentElement; if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el2.requestFullscreen) el2.requestFullscreen().catch(() => toast("Full screen isn't available here — use the browser's own full-screen option.", true)); else toast("Use your browser's full-screen option (on an iPad: Share → Add to Home Screen).", true); break; }
+      case "print": window.print(); break;
+      case "rec-year": records.year = el.dataset.year; drawRecords(); break;
+      case "rc-tab": rc.tab = el.dataset.tab; if (rc.tab === "setup") await rcEnsureTees(); drawRyder(); window.scrollTo(0, 0); break;
+      case "rc-create": await rcDo(client.from("rc_cups").insert({ event_id: rc.data.id }), "Ryder Cup set up — now name the teams"); rc.tab = "setup"; await rcEnsureTees(); drawRyder(); break;
+      case "rc-save-cup": await rcDo(client.from("rc_cups").update({ team1_name: $("#rc-n1").value.trim() || "Team 1", team2_name: $("#rc-n2").value.trim() || "Team 2",
+        team1_colour: $("#rc-c1").value, team2_colour: $("#rc-c2").value, allowance: Math.max(0, Math.min(100, Number($("#rc-allow").value) || 75)), updated_at: new Date().toISOString() }).eq("event_id", rc.data.id), "Teams saved"); break;
+      case "rc-show-all": rc.showAll = !rc.showAll; drawRyder(); break;
+      case "rc-side": {
+        const side = Number(el.dataset.side), pid = el.dataset.player;
+        if (side) await rcDo(client.from("rc_players").upsert({ event_id: rc.data.id, player_id: pid, side }, { onConflict: "event_id,player_id" }));
+        else await rcDo(client.from("rc_players").delete().eq("event_id", rc.data.id).eq("player_id", pid));
+        break;
+      }
+      case "rc-add-session": {
+        const name = $("#rc-new-name").value.trim();
+        if (!name) { toast("Give the session a name.", true); break; }
+        await rcDo(client.from("rc_sessions").insert({ event_id: rc.data.id, name, format: $("#rc-new-format").value, tee_id: $("#rc-new-tee").value || null, play_date: $("#rc-new-date").value || null, position: rc.data.sessions.length }), "Session added");
+        break;
+      }
+      case "rc-add-match": { const sid = el.dataset.session; const n = rc.data.matches.filter(m => m.session_id === sid).length + 1;
+        await rcDo(client.from("rc_matches").insert({ session_id: sid, event_id: rc.data.id, match_no: n })); break; }
+      case "rc-del-match": if (confirm("Remove this match and any scores in it?")) await rcDo(client.from("rc_matches").delete().eq("id", el.dataset.id), "Match removed"); break;
+      case "rc-del-session": if (confirm("Delete this session, its matches and their scores?")) await rcDo(client.from("rc_sessions").delete().eq("id", el.dataset.session), "Session deleted"); break;
+      case "rc-sess-status": await rcDo(client.from("rc_sessions").update({ status: el.dataset.status }).eq("id", el.dataset.session),
+        el.dataset.status === "live" ? "Scoring's open for this session" : "Session finished"); break;
+      case "rc-cell": rcKeypad(el.dataset.match, el.dataset.player, Number(el.dataset.hole)); break;
+      case "rc-kp": { const k = rc.kp; if (!k) break; k.pending = el.dataset.val === "P" ? "P" : Number(el.dataset.val);
+        document.querySelectorAll("#sheet-body .kp-key[data-action=rc-kp]").forEach(b => b.classList.toggle("on", b === el));
+        const ok = document.querySelector("#sheet-body .k-ok"); if (ok) ok.disabled = false; buzz(6); break; }
+      case "rc-kp-ok": { const k = rc.kp; if (!k || k.pending == null) break;
+        rcSave({ match_id: k.matchId, player_id: k.pid, hole: k.hole, strokes: k.pending === "P" ? null : k.pending, picked_up: k.pending === "P" });
+        rcAfterKeypad(k.matchId, k.pid, k.hole); break; }
+      case "rc-kp-clear": { const k = rc.kp; if (!k) break; rcSave({ match_id: k.matchId, player_id: k.pid, hole: k.hole, clear: true }); closeSheet(); drawRcMatch(k.matchId); break; }
+      case "hc-approve": hcApprove(r, [el.dataset.player]); break;
+      case "hc-approve-all": hcApprove(r, r.players.filter(p => document.querySelector(`[data-hc="${p.id}"]`)).map(p => p.id)); break;
+      case "text-size": $("#menu").hidden = true; textSizeSheet(); break;
+      case "set-text-size": store.set("text-size", el.dataset.size); applyTextSize(el.dataset.size); textSizeSheet(); break;
       case "push-on":
         el.disabled = true;
         try { await enablePush(); toast("Notifications on"); const tip = el.closest(".install-tip"); if (tip) tip.remove(); if (!$("#sheet").hidden) pushSheet(); }
@@ -3078,6 +3909,25 @@
   });
 
   document.addEventListener("change", async e => {
+    if (e.target && e.target.classList && e.target.classList.contains("hc-cut") && app.round && app.round.hc) { app.round.hc.cuts[e.target.dataset.cut] = Number(e.target.value) || 0; renderRoundBody(); return; }
+    if (e.target && e.target.dataset && e.target.dataset.hc && app.round && app.round.hc) { app.round.hc.edits[e.target.dataset.hc] = e.target.value; return; }
+    const t = e.target;
+    if (t && t.dataset && t.dataset.rcPick && rc.data) {
+      const m = rc.data.matches.find(x => x.id === t.dataset.rcPick);
+      const key = t.dataset.side === "1" ? "side1" : "side2";
+      const arr = m[key].slice(); arr[Number(t.dataset.i)] = t.value || null;
+      const clean = arr.filter(Boolean);
+      if (new Set(clean).size !== clean.length) { toast("That player's already in this match.", true); drawRyder(); return; }
+      await rcDo(client.from("rc_matches").update({ [key]: clean }).eq("id", m.id));
+      return;
+    }
+    if (t && t.dataset && t.dataset.rcSess && rc.data) {
+      const v = t.value === "" ? null : t.value;
+      if (t.dataset.field === "name" && !v) { drawRyder(); return; }
+      await rcDo(client.from("rc_sessions").update({ [t.dataset.field]: v }).eq("id", t.dataset.rcSess));
+      return;
+    }
+    if (e.target && (e.target.id === "h2h-a" || e.target.id === "h2h-b")) { records[e.target.id === "h2h-a" ? "a" : "b"] = e.target.value; drawRecords(); return; }
     if (e.target && e.target.id === "avatar-file") {
       const f = e.target.files && e.target.files[0];
       if (!f) return;
@@ -3140,13 +3990,21 @@
     closeSheet();
     const hash = location.hash || "#/";
     const parts = hash.slice(2).split("/");
-    if (!(parts[0] === "round" && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
-    if (parts[0] !== "round") hideTabbar();
+    if (parts[0] !== "present") { document.body.classList.remove("presenting"); clearInterval(present.timer); }
+    if (parts[0] !== "print") document.body.classList.remove("printing-pack");
+    if (!((parts[0] === "round" || parts[0] === "present") && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
+    if (parts[0] !== "round" && parts[0] !== "ryder") hideTabbar();
+    if (parts[0] !== "ryder" && parts[0] !== "rc" && rc.channel) { client.removeChannel(rc.channel); rc.channel = null; rc.data = null; }
     if (!app.user) return renderSignIn();
     if (!app.approved) return renderNotApproved();
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return renderCourses();
     if (parts[0] === "season") return renderSeason();
+    if (parts[0] === "records") return renderRecords();
+    if (parts[0] === "ryder" && parts[1]) return renderRyder(parts[1], parts[2]);
+    if (parts[0] === "rc" && parts[1]) return renderRcMatch(parts[1]);
+    if (parts[0] === "print" && parts[1]) return renderPrint(parts[1]);
+    if (parts[0] === "present" && parts[1]) return renderPresent(parts[1], parts[2] === "tv");
     if (parts[0] === "me") return renderStats(null);
     if (parts[0] === "stats" && parts[1]) return renderStats(parts[1]);
     if (parts[0] === "course" && parts[1]) return renderTeeEditor(parts[1]);

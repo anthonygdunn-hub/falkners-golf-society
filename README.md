@@ -146,6 +146,9 @@ it again.
 27. `sql/round-extras.sql` — side contest stakes, the live feed, putts & fairways, front/back of the green
 28. `sql/push-notifications.sql` — phone notifications (needs the `push-notify` Edge Function)
 29. `sql/round-admins.sql` — a player made admin for one round can run it when the committee can't
+30. `sql/ryder-cup.sql` — Ryder Cup teams, sessions, matches and live match-play scoring
+31. `sql/handicap-reviews.sql` — handicap reviews after each round (WHS differentials and society cuts, approved by the committee)
+32. `sql/reminders.sql` — hourly reminders (entries closing, unpaid, the day before). Redeploy `push-notify` first
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).
