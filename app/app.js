@@ -43,6 +43,8 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   const todayISO = () => new Date().toISOString().slice(0, 10);
+  // The UK date, so "on the day" is the golfer's day whatever the clock change.
+  const londonToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
   function fmtDate(iso, opts) {
     return new Date(iso + "T12:00:00").toLocaleDateString("en-GB", opts || { weekday: "short", day: "numeric", month: "short" });
   }
@@ -256,7 +258,7 @@
   // ---------- loading a round ----------
 
   async function loadRound(eventId) {
-    const [ev, setup, field, hcps, scores, manage, entries, subs] = await Promise.all([
+    const [ev, setup, field, hcps, scores, manage, entries, subs, checks] = await Promise.all([
       client.from("events").select("*").eq("id", eventId).maybeSingle(),
       client.from("event_scoring").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("scoring_field", { target: eventId }),
@@ -265,7 +267,9 @@
       client.rpc("can_manage_round", { target: eventId }),
       client.from("score_entries").select("player_id, hole, entered_by, strokes, picked_up, updated_at").eq("event_id", eventId),
       client.from("card_submissions").select("player_id, submitted_by, submitted_at").eq("event_id", eventId),
+      client.from("round_checkins").select("player_id, checked_in_by, checked_in_at").eq("event_id", eventId),
     ]);
+    // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
     if (!ev.data) throw new Error("That round doesn't exist.");
@@ -294,6 +298,8 @@
       scores: {},
       entries: new Map(),
       submitted: new Map((subs.data || []).map(x => [x.player_id, x])),
+      checkins: new Map((checks.error ? [] : checks.data || []).map(x => [x.player_id, x])),
+      checkinsOff: !!checks.error,
       canManage: !!manage.data,
     };
     (scores.data || []).forEach(s => applyScore(r, s));
@@ -450,6 +456,12 @@
         refreshRound();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "card_submissions", filter: `event_id=eq.${r.id}` }, () => reloadRound(true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "round_checkins", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round || app.round.id !== r.id) return;
+        if (payload.eventType === "DELETE") { if (payload.old && payload.old.player_id) app.round.checkins.delete(payload.old.player_id); }
+        else app.round.checkins.set(payload.new.player_id, payload.new);
+        refreshRound();
+      })
       .on("postgres_changes", { event: "*", schema: "public", table: "event_scoring", filter: `event_id=eq.${r.id}` }, () => reloadRound())
       .subscribe();
     // Belt and braces: phones drop sockets when the screen locks.
@@ -503,7 +515,7 @@
 
   async function reloadRound(quiet) {
     if (!app.round) return;
-    const keep = { tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp };
+    const keep = { tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived };
     try {
       const r = await loadRound(app.round.id);
       Object.assign(r, keep);
@@ -514,7 +526,7 @@
 
   // ---------- round page ----------
 
-  async function renderRound(eventId) {
+  async function renderRound(eventId, arrived) {
     view.innerHTML = `<div class="loading">Loading round…</div>`;
     let r;
     try { r = await loadRound(eventId); }
@@ -525,6 +537,14 @@
     r.hole = prefs.hole || 1;
     r.groupKey = prefs.groupKey || (r.me && r.me.group ? "g" + r.me.group : null);
     r.board = prefs.board || null;
+    // Arriving from "Start round" on the fixture page: straight to your group's card.
+    if (arrived) {
+      r.tab = "score";
+      r.arrived = true;
+      if (r.me && r.me.group) r.groupKey = "g" + r.me.group;
+      else if (r.me) r.groupKey = "me";
+      history.replaceState(null, "", "#/round/" + eventId);
+    }
     app.round = r;
     subscribe(r);
     renderRoundBody();
@@ -600,13 +620,14 @@
   }
 
   function scoreView(r) {
+    const ci = checkinCard(r);
     const nr = notReady(r);
-    if (nr) return nr;
+    if (nr) return ci + nr;
     if (!canScore(r)) {
       const why = r.setup.status === "final" ? "This round is finished — scores are locked."
         : r.setup.status === "setup" ? "Scoring opens when the committee starts the round."
         : "Only players on this round can enter scores.";
-      return `<div class="card empty"><p>${why}</p><button class="btn ghost" data-action="tab" data-tab="board">See the leaderboard</button></div>`;
+      return ci + `<div class="card empty"><p>${why}</p><button class="btn ghost" data-action="tab" data-tab="board">See the leaderboard</button></div>`;
     }
 
     const groups = groupsOf(r);
@@ -619,7 +640,7 @@
 
     const players = selectedPlayers(r);
     if (!players.length) {
-      return personalSummary(r) + picker + `<div class="card empty"><p>Choose the group you're marking for, or just your own card.</p>
+      return ci + personalSummary(r) + picker + `<div class="card empty"><p>Choose the group you're marking for, or just your own card.</p>
         <p class="small muted">One phone can score the whole group — nobody else needs the app. If two phones put in different numbers, everyone's told and it's flagged to agree.</p></div>`;
     }
 
@@ -666,6 +687,7 @@
     }).join("");
 
     return `
+      ${ci}
       ${personalSummary(r)}
       ${picker}
       ${disputeBanner(r, players)}
@@ -755,6 +777,74 @@
       const el = document.getElementById("gps-yds");
       if (el && app.round && store.get("gps-on", false)) el.innerHTML = gpsText(app.round, app.round.hole);
     });
+  }
+
+  // ---------- checking in on the day ----------
+
+  const isToday = r => r.event.event_date === londonToday();
+
+  // Who this phone can check in: your tee group (or everyone, before the
+  // draw is set). The committee checks people in from Setup as well.
+  function checkinGroup(r) {
+    if (!r.me) return app.committee ? selectedPlayers(r) : [];
+    if (r.me.group == null) {
+      const drawSet = r.players.some(p => p.group != null);
+      return drawSet ? [r.me] : r.players;
+    }
+    return r.players.filter(p => p.group === r.me.group);
+  }
+
+  function checkinCard(r) {
+    if (r.checkinsOff || !isToday(r) || (r.setup && r.setup.status === "final")) return "";
+    const group = checkinGroup(r);
+    if (!group.length) return "";
+    const here = group.filter(p => r.checkins.has(p.id));
+    const label = r.me && r.me.group != null ? `Group ${r.me.group}` : "Your group";
+    if (here.length === group.length && !r.showCheckin) {
+      return `<div class="card small row checkin-done"><span class="tick">✓</span>
+        <span>${group.length === 1 ? "You're checked in." : `${label}: all ${group.length} checked in.`}</span>
+        <span class="spacer"></span><button class="mv-link" data-action="show-checkin">Change</button></div>`;
+    }
+    const me = r.me;
+    return `<div class="card checkin-card">
+      <h2 style="margin-bottom:4px">Check in</h2>
+      <p class="small muted" style="margin:0 0 10px">${r.arrived && me && !r.checkins.has(me.id) ? "Welcome — tap to say you're here and ready to play. " : ""}Anyone in the group can check the others in, so nobody needs the app.</p>
+      ${group.map(p => {
+        const inNow = r.checkins.has(p.id);
+        return `<div class="row checkin-row">
+          <div><strong>${esc(p.name)}</strong>${me && p.id === me.id ? ' <span class="muted small">(you)</span>' : ""}
+            <div class="thru">${p.ph == null ? "" : "Plays off " + p.ph}</div></div>
+          <span class="spacer"></span>
+          <button class="btn ${inNow ? "ghost" : "gold"}" style="min-height:40px" data-action="checkin" data-player="${p.id}" data-here="${inNow ? 0 : 1}">${inNow ? "✓ Here" : "Check in"}</button>
+        </div>`;
+      }).join("")}
+      ${group.length > 1 && here.length < group.length ? `<button class="btn block" style="margin-top:10px" data-action="checkin-all">Check in all ${group.length}</button>` : ""}
+      ${r.showCheckin ? `<button class="mv-link" style="margin-top:8px" data-action="hide-checkin">Done</button>` : ""}
+    </div>`;
+  }
+
+  async function setCheckin(r, ids, here) {
+    for (const id of ids) {
+      const { error } = await client.rpc("check_in", { p_event: r.id, p_player: id, p_here: here });
+      if (error) { toast(error.message, true); return; }
+      if (here) r.checkins.set(id, { player_id: id, checked_in_by: app.user.id }); else r.checkins.delete(id);
+    }
+    if (here && ids.length) toast(ids.length > 1 ? `${ids.length} checked in` : "Checked in");
+    renderRoundBody();
+  }
+
+  // Committee view: who's here, and who isn't yet.
+  function checkinsSetupCard(r) {
+    if (r.checkinsOff || !r.players.length) return "";
+    const here = r.players.filter(p => r.checkins.has(p.id));
+    const missing = r.players.filter(p => !r.checkins.has(p.id));
+    const today = isToday(r);
+    return `<div class="card">
+      <h2>Check-in</h2>
+      <p class="small" style="margin:0"><b>${here.length} of ${r.players.length}</b> checked in${today ? "" : " — players can check in on the day, from the fixture page or the app"}.</p>
+      ${missing.length ? `<div style="margin-top:8px">${missing.map(p => `<div class="row checkin-row"><span>${esc(p.name)}${p.group ? ` <span class="muted small">Grp ${p.group}</span>` : ""}</span><span class="spacer"></span>
+        <button class="btn ghost" style="min-height:34px" data-action="checkin" data-player="${p.id}" data-here="1">Check in</button></div>`).join("")}</div>` : ""}
+    </div>`;
   }
 
   // ---------- personal card ----------
@@ -1199,6 +1289,7 @@
         ${statusBtns}
       </div>
 
+      ${checkinsSetupCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
       <div class="card">
@@ -1682,6 +1773,10 @@
         if (error) toast(error.message, true); else { toast("Settled"); await reloadRound(); }
         break;
       }
+      case "checkin": setCheckin(r, [el.dataset.player], el.dataset.here === "1"); break;
+      case "checkin-all": setCheckin(r, checkinGroup(r).filter(p => !r.checkins.has(p.id)).map(p => p.id), true); break;
+      case "show-checkin": r.showCheckin = true; renderRoundBody(); break;
+      case "hide-checkin": r.showCheckin = false; renderRoundBody(); break;
       case "toggle-hcp-edit": r.editHcp = !r.editHcp; renderRoundBody(); break;
       case "set-status": setStatus(r, el.dataset.status); break;
       case "finalise": finalise(r); break;
@@ -1721,7 +1816,7 @@
     if (!(parts[0] === "round" && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
     if (!app.user) return renderSignIn();
     if (!app.approved) return renderNotApproved();
-    if (parts[0] === "round" && parts[1]) return renderRound(parts[1]);
+    if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return renderCourses();
     if (parts[0] === "course" && parts[1]) return renderTeeEditor(parts[1]);
     if (parts[0] === "course-map" && parts[1]) return renderCourseMap(parts[1]);

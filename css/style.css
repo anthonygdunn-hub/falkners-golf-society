@@ -1171,3 +1171,7 @@ body.lb-lock { overflow: hidden; }
    .lb, .gallery-item img { transition: none; }
    .gallery-item:hover img { transform: none; }
 }
+
+/* "Start round" on the day, in an expanded fixture */
+.start-round { background: var(--navy); color: #fff; border-radius: var(--radius); padding: 14px 16px; margin: 12px 0; }
+.start-round .small { color: rgba(255,255,255,.85); }

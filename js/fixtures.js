@@ -312,6 +312,22 @@ async function renderRegisterControl(eventId) {
     client.from("attendance").select("id, status, created_at").eq("event_id", eventId).order("created_at", { ascending: true })
   ]);
 
+  // On the day, registered players get a button straight into the round
+  // in the scoring app — same login, so no second sign-in in the browser.
+  if (event && event.event_date === ukToday()) {
+    let playing = !!(myRow && myRow.status === "playing");
+    if (!playing) {
+      // The committee may have put them on as a player rather than by profile.
+      const mine = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || [];
+      if (mine.length) {
+        const { data: viaPlayer } = await client.from("attendance").select("id")
+          .eq("event_id", eventId).eq("status", "playing").in("player_id", mine.map(p => p.id)).limit(1);
+        playing = !!(viaPlayer && viaPlayer.length);
+      }
+    }
+    if (playing) slot.insertAdjacentHTML("beforebegin", startRoundBlock(eventId));
+  }
+
   let guests = myGuests || [];
   if (guests.length) {
     const { data: gp } = await client.from("players").select("id, name").in("id", guests.map(g => g.player_id));
@@ -323,6 +339,19 @@ async function renderRegisterControl(eventId) {
   const taken = all.filter(r => r.status !== "waiting").length;
   const waitingOrder = all.filter(r => r.status === "waiting").map(r => r.id);
   drawAttendanceButton(slot, eventId, myRow || null, { event, taken, cap: capFor(event), guests, waitingOrder });
+}
+
+// Today's date in the UK, as YYYY-MM-DD.
+function ukToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}
+
+function startRoundBlock(eventId) {
+  return `<div class="start-round">
+    <a class="btn btn-brass" href="app/#/round/${eventId}/start">Start round</a>
+    <p class="small" style="margin:8px 0 0;">Opens the scoring app for today's round. Check yourself in there — and anyone in your group who isn't using the app.
+    On an iPhone with the app on your home screen, you'll sign in to it once with your usual details.</p>
+  </div>`;
 }
 
 function drawAttendanceButton(slot, eventId, myRow, ctx) {

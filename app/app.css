@@ -296,3 +296,9 @@ label.field input, label.field select, label.field textarea {
 /* ---------- committee pin editor ---------- */
 .pe-host { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
 .pe-map { height: 62vh; min-height: 340px; }
+
+/* ---------- check-in ---------- */
+.checkin-card { border-left: 4px solid var(--gold); }
+.checkin-row { border-top: 1px solid var(--line); padding: 8px 0; }
+.checkin-row:first-of-type { border-top: 0; }
+.checkin-done { gap: 8px; }
