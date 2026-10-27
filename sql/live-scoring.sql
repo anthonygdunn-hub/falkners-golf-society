@@ -232,28 +232,8 @@ create policy "Round managers snapshot handicaps" on event_handicaps for insert
 
 drop policy if exists "Members read scores" on hole_scores;
 create policy "Members read scores" on hole_scores for select using (is_approved_member());
-drop policy if exists "Players enter scores" on hole_scores;
-create policy "Players enter scores" on hole_scores for insert
-  with check (can_score_event(event_id) and in_field(event_id, player_id));
-drop policy if exists "Players correct scores" on hole_scores;
-create policy "Players correct scores" on hole_scores for update
-  using (can_score_event(event_id)) with check (can_score_event(event_id) and in_field(event_id, player_id));
-drop policy if exists "Players clear scores" on hole_scores;
-create policy "Players clear scores" on hole_scores for delete using (can_score_event(event_id));
-
--- Stamp who changed a score and when, whatever the client sends.
-create or replace function hole_scores_stamp()
-returns trigger language plpgsql set search_path = public as $$
-begin
-  new.entered_by := auth.uid();
-  new.updated_at := now();
-  return new;
-end;
-$$;
-
-drop trigger if exists hole_scores_stamp on hole_scores;
-create trigger hole_scores_stamp before insert or update on hole_scores
-  for each row execute function hole_scores_stamp();
+-- Scores are written as entries (sql/score-disputes.sql); hole_scores
+-- is worked out from them, so nobody writes it directly.
 
 grant execute on function scoring_field(uuid) to authenticated;
 grant execute on function link_member_player(uuid) to authenticated;

@@ -243,3 +243,56 @@ label.field input, label.field select, label.field textarea {
 .install-tip { background: #fff8e6; border: 1px solid var(--gold-light); }
 
 .tick { color: var(--good); font-weight: 700; }
+
+/* ---------- personal card & disputes ---------- */
+.me-card { border-left: 4px solid var(--gold); }
+.dispute-banner { border: 1.5px solid var(--bad); background: #fff6f5; }
+.dispute-banner strong { color: var(--bad); }
+.dispute-row { display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left; gap: 2px;
+  padding: 8px 10px; margin-top: 6px; border-radius: 8px; border: 1px solid #f1c7c3; background: #fff; }
+.dispute-box { grid-column: 1 / -1; background: #fff6f5; border: 1px solid #f1c7c3; border-radius: 8px; padding: 8px 10px; font-size: .85rem; }
+.dispute-box b { color: var(--bad); }
+.hole-strip button.disputed { box-shadow: inset 0 0 0 2px var(--bad); }
+.hole-strip button.disputed::after { content: "!"; color: var(--bad); font-size: .7rem; vertical-align: super; }
+.stepper .val.disputed { box-shadow: 0 0 0 3px var(--bad); }
+.stepper button:disabled { opacity: .4; }
+.flag-disputed { color: var(--bad); font-weight: 700; }
+.sc-disputed { color: var(--bad); font-weight: 700; }
+.sc-edit { width: 30px; height: 30px; text-align: center; border: 1.5px solid var(--line); border-radius: 6px; padding: 0; font: inherit; }
+.sc-edit.disputed { border-color: var(--bad); background: #fff6f5; }
+.settle-row, .submit-row { border-top: 1px solid var(--line); padding: 10px 0; }
+.settle-row { display: flex; flex-direction: column; gap: 6px; }
+.submit-row { gap: 8px; }
+.submit-row:first-child, .settle-row:first-of-type { border-top: 0; }
+
+/* ---------- yardage strip ---------- */
+.gps-bar { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px 12px; margin: -4px 0 12px; }
+.gps-yds b { font-family: var(--font-display); font-size: 1.5rem; color: var(--navy); }
+.mv-link { background: none; border: 0; color: var(--navy); font-weight: 600; text-decoration: underline; padding: 0; }
+
+/* ---------- full-screen hole map ---------- */
+.map-view { position: fixed; inset: 0; z-index: 60; background: #0b1626; display: flex; flex-direction: column; }
+.mv-top, .mv-bottom { display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: #fff; background: var(--navy-dark); }
+.mv-top { padding-top: calc(10px + var(--safe-top)); }
+.mv-title { flex: 1; text-align: center; font-size: .95rem; }
+.mv-title b { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: .03em; }
+.mv-btn { min-width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08);
+  color: #fff; font-size: 1.1rem; font-weight: 600; padding: 0 12px; }
+.mv-map { flex: 1; min-height: 0; }
+.mv-map .loading { color: #c9d3e3; }
+.mv-yds { flex: 1; text-align: center; }
+.mv-big { font-family: var(--font-display); font-size: 2.6rem; line-height: 1; color: var(--gold-light); }
+.mv-big small { font-size: 1rem; color: #fff; }
+.mv-note { font-size: .78rem; color: #c9d3e3; }
+.mv-foot { background: var(--navy-dark); text-align: center; padding: 0 12px calc(10px + var(--safe-bottom)); }
+.mv-foot .mv-link { color: var(--gold-light); font-size: .8rem; }
+.pin { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-weight: 700; font-size: .8rem;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.pin-tee { background: var(--navy); color: #fff; }
+.pin-green { background: #1E7A46; color: #fff; }
+.pin-icon { background: none; border: 0; }
+
+/* ---------- committee pin editor ---------- */
+.pe-host { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
+.pe-map { height: 62vh; min-height: 340px; }

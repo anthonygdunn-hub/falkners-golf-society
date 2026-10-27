@@ -72,6 +72,22 @@ from Safari or Chrome.
   on the admin page (Players). Only the committee changes handicaps:
   members see theirs read-only on My Account, and
   `sql/lock-member-handicap.sql` makes the database refuse their changes
+- **Personal cards and disputes**: "Just me" shows your own card; your
+  points, position and pairs standing sit at the top. One phone can still
+  score the whole group. Every phone's entry is kept separately — if two
+  phones put in different numbers for the same hole, everyone is told,
+  it's flagged on the group's screens and the leaderboard, and that card
+  can't be submitted until the phones agree (or a group asks the
+  committee, who are emailed and settle it under Setup → Disputes).
+  Submitted cards are locked; the committee can still change any score
+  from the scorecard
+- **Hole maps**: a satellite (or map) view of each hole with your GPS
+  position and the yardage to the middle of the green. Distances are
+  worked out on the phone; locations aren't sent anywhere. The committee
+  places a tee and green pin per hole once, under Courses → Map the
+  holes (or imports them from OpenStreetMap where the course is drawn).
+  "Save this course's maps for offline" keeps the satellite tiles on the
+  phone. Imagery © Esri; map © OpenStreetMap contributors
 - **Setup** (committee): the Yellow tee at the fixture's venue is picked
   automatically; handicap method, allowance and formats; overrides sit
   behind Adjust. Starting the round saves the setup and snapshots every
@@ -108,6 +124,12 @@ it again.
 19. `sql/course-milford.sql` — Milford Golf Club's White and Yellow tees (check against the card)
 20. `sql/course-venues.sql` — Hurtmore, Clandon Golf and Tylney Park (check against the cards; Tylney needs its rating and slope adding)
 21. `sql/lock-member-handicap.sql` — only the committee can change a handicap
+22. `sql/score-disputes.sql` — each phone's own entries, disputes, submitted cards, committee settling
+23. `sql/course-maps.sql` — tee and green pins for the hole maps
+
+Then redeploy the `member-alerts` Edge Function from
+`supabase/functions/member-alerts/index.ts` — it adds the "disputed score"
+email to the committee.
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain

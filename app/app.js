@@ -19,7 +19,7 @@
   const $ = sel => document.querySelector(sel);
   const view = $("#view");
 
-  const QUEUE_KEY = "falkners-score-queue";
+  const QUEUE_KEY = "falkners-entry-queue";
   const DEFAULT_ALLOWANCE = 75;   // society default; the committee can change it per round
   const DEFAULT_TEE = "yellow";   // the society plays off the yellows
   // Individual formats the committee can switch on. Pairs isn't one of
@@ -75,8 +75,11 @@
   };
 
   // ---------- offline score queue ----------
-  // Every score goes into the queue first, then out to the database.
-  // No signal on the 14th? It waits on the phone and goes when it can.
+  // Every score goes into the queue first, then out to the database as
+  // this phone's own entry (score_entries). The database works out the
+  // result, and flags a dispute if another phone put in a different
+  // number. No signal on the 14th? It waits on the phone and goes when
+  // it can.
 
   function queue() { return store.get(QUEUE_KEY, []); }
   function setQueue(q) { store.set(QUEUE_KEY, q); updateSyncPill(); }
@@ -96,15 +99,17 @@
     flushing = true;
     try {
       const clears = q.filter(r => r.clear);
+      const me = app.user && app.user.id;
+      if (!me) return;
       const ups = q.filter(r => !r.clear).map(({ event_id, player_id, hole, strokes, picked_up }) =>
-        ({ event_id, player_id, hole, strokes, picked_up }));
+        ({ event_id, player_id, hole, strokes, picked_up, entered_by: me }));
       if (ups.length) {
-        const { error } = await client.from("hole_scores").upsert(ups, { onConflict: "event_id,player_id,hole" });
+        const { error } = await client.from("score_entries").upsert(ups, { onConflict: "event_id,player_id,hole,entered_by" });
         if (error) throw error;
       }
       for (const c of clears) {
-        const { error } = await client.from("hole_scores").delete()
-          .eq("event_id", c.event_id).eq("player_id", c.player_id).eq("hole", c.hole);
+        const { error } = await client.from("score_entries").delete()
+          .eq("event_id", c.event_id).eq("player_id", c.player_id).eq("hole", c.hole).eq("entered_by", me);
         if (error) throw error;
       }
       // Only drop what we sent — anything added meanwhile stays.
@@ -113,7 +118,10 @@
     } catch (err) {
       // A permission error won't fix itself by retrying: say so.
       if (err && (err.code === "42501" || /row-level security/i.test(err.message || ""))) {
-        toast("Scores couldn't be saved — the round may not be live, or you're not on it.", true);
+        toast("Scores couldn't be saved — the round may not be live, the card may be submitted, or you're not on it.", true);
+        // Those entries will never go: drop them so the phone matches the card.
+        setQueue([]);
+        if (app.round) reloadRound(true);
       }
     } finally {
       flushing = false;
@@ -248,15 +256,17 @@
   // ---------- loading a round ----------
 
   async function loadRound(eventId) {
-    const [ev, setup, field, hcps, scores, manage] = await Promise.all([
+    const [ev, setup, field, hcps, scores, manage, entries, subs] = await Promise.all([
       client.from("events").select("*").eq("id", eventId).maybeSingle(),
       client.from("event_scoring").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("scoring_field", { target: eventId }),
       client.from("event_handicaps").select("*").eq("event_id", eventId),
-      client.from("hole_scores").select("player_id, hole, strokes, picked_up, updated_at").eq("event_id", eventId),
+      client.from("hole_scores").select("player_id, hole, strokes, picked_up, updated_at, disputed, escalated, settled_by").eq("event_id", eventId),
       client.rpc("can_manage_round", { target: eventId }),
+      client.from("score_entries").select("player_id, hole, entered_by, strokes, picked_up, updated_at").eq("event_id", eventId),
+      client.from("card_submissions").select("player_id, submitted_by, submitted_at").eq("event_id", eventId),
     ]);
-    const err = ev.error || setup.error || field.error || hcps.error || scores.error;
+    const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
     if (!ev.data) throw new Error("That round doesn't exist.");
 
@@ -268,34 +278,99 @@
       ]);
       tee = t.data; course = t.data && t.data.courses; holes = h.data || [];
     }
+    let geo = new Map();
+    if (course) {
+      const { data: g } = await client.from("course_hole_geo").select("*").eq("course_id", course.id);
+      geo = new Map((g || []).map(x => [x.hole, x]));
+    }
 
     const r = {
       id: eventId,
       event: ev.data,
       setup: setup.data,
-      tee, course, holes,
+      tee, course, holes, geo,
       field: field.data || [],
       hcps: new Map((hcps.data || []).map(h => [h.player_id, h])),
       scores: {},
+      entries: new Map(),
+      submitted: new Map((subs.data || []).map(x => [x.player_id, x])),
       canManage: !!manage.data,
     };
     (scores.data || []).forEach(s => applyScore(r, s));
+    (entries.data || []).forEach(e => applyEntry(r, e));
     buildPlayers(r);
     return r;
   }
 
   function applyScore(r, s) {
     if (!r.scores[s.player_id]) r.scores[s.player_id] = {};
-    r.scores[s.player_id][s.hole] = { strokes: s.strokes, picked_up: s.picked_up };
+    const prev = r.scores[s.player_id][s.hole] || {};
+    r.scores[s.player_id][s.hole] = {
+      strokes: s.strokes, picked_up: s.picked_up,
+      disputed: s.disputed != null ? !!s.disputed : !!prev.disputed,
+      escalated: s.escalated != null ? !!s.escalated : !!prev.escalated,
+      settled: s.settled_by !== undefined ? !!s.settled_by : !!prev.settled,
+    };
+  }
+
+  // ---------- entries: who put in what ----------
+
+  const cellKey = (pid, hole) => pid + ":" + hole;
+  const sameScore = (a, b) => !!a && !!b && !!a.picked_up === !!b.picked_up && (a.picked_up || a.strokes === b.strokes);
+  const scoreText = e => e.picked_up ? "P/U" : String(e.strokes);
+
+  function applyEntry(r, e) {
+    const k = cellKey(e.player_id, e.hole);
+    const list = (r.entries.get(k) || []).filter(x => x.entered_by !== e.entered_by);
+    list.push({ entered_by: e.entered_by, strokes: e.strokes, picked_up: !!e.picked_up, updated_at: e.updated_at || new Date().toISOString() });
+    r.entries.set(k, list);
+  }
+
+  function removeEntry(r, pid, hole, by) {
+    const k = cellKey(pid, hole);
+    const list = (r.entries.get(k) || []).filter(x => x.entered_by !== by);
+    if (list.length) r.entries.set(k, list); else r.entries.delete(k);
+  }
+
+  function entriesFor(r, pid, hole) { return r.entries.get(cellKey(pid, hole)) || []; }
+  function myEntry(r, pid, hole) { return entriesFor(r, pid, hole).find(e => app.user && e.entered_by === app.user.id) || null; }
+
+  // The same rule the database uses: all entries agree, or it's disputed
+  // and the most recent one shows. Used for this phone's unsent entries.
+  function recomputeCell(r, pid, hole) {
+    const list = entriesFor(r, pid, hole);
+    if (!list.length) { if (r.scores[pid]) delete r.scores[pid][hole]; return; }
+    const latest = list.slice().sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0];
+    const disputed = list.some(e => !sameScore(e, list[0]));
+    const prev = (r.scores[pid] || {})[hole] || {};
+    applyScore(r, { player_id: pid, hole, strokes: latest.strokes, picked_up: latest.picked_up, disputed,
+                    escalated: disputed ? !!prev.escalated : false, settled_by: disputed ? null : (prev.settled ? true : null) });
+  }
+
+  // Who put an entry in, in words.
+  function entrant(r, by) {
+    if (app.user && by === app.user.id) return "You";
+    const f = r.field.find(x => x.profile_id === by);
+    return f ? f.name.split(" ")[0] : "Committee";
   }
 
   // Overlay anything still waiting to send, so your own phone always
   // shows what you entered even before it reaches the server.
   function overlayQueue(r) {
+    if (!app.user) return;
     queue().filter(q => q.event_id === r.id).forEach(q => {
-      if (q.clear) { if (r.scores[q.player_id]) delete r.scores[q.player_id][q.hole]; }
-      else applyScore(r, q);
+      if (q.clear) removeEntry(r, q.player_id, q.hole, app.user.id);
+      else applyEntry(r, { ...q, entered_by: app.user.id, updated_at: new Date(q.ts || Date.now()).toISOString() });
+      recomputeCell(r, q.player_id, q.hole);
     });
+  }
+
+  function disputesFor(r, players) {
+    const out = [];
+    players.forEach(p => Object.entries(p.scores || {}).forEach(([hole, sc]) => {
+      if (sc && sc.disputed) out.push({ player: p, hole: Number(hole), sc, entries: entriesFor(r, p.id, Number(hole)) });
+    }));
+    return out.sort((a, b) => a.hole - b.hole || a.player.name.localeCompare(b.player.name));
   }
 
   // The pairs draw as [{ number, players }], from the numbers set on the
@@ -355,13 +430,53 @@
         if (payload.eventType === "DELETE") {
           const o = payload.old || {};
           if (o.player_id && app.round.scores[o.player_id]) delete app.round.scores[o.player_id][o.hole];
-        } else applyScore(app.round, payload.new);
+        } else {
+          const n = payload.new;
+          const before = (app.round.scores[n.player_id] || {})[n.hole];
+          applyScore(app.round, n);
+          notifyChange(app.round, before, n);
+        }
         refreshRound();
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "score_entries", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round || app.round.id !== r.id) return;
+        if (payload.eventType === "DELETE") {
+          const o = payload.old || {};
+          if (o.player_id) removeEntry(app.round, o.player_id, o.hole, o.entered_by);
+        } else {
+          applyEntry(app.round, payload.new);
+          notifyClash(app.round, payload.new);
+        }
+        refreshRound();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_submissions", filter: `event_id=eq.${r.id}` }, () => reloadRound(true))
       .on("postgres_changes", { event: "*", schema: "public", table: "event_scoring", filter: `event_id=eq.${r.id}` }, () => reloadRound())
       .subscribe();
     // Belt and braces: phones drop sockets when the screen locks.
     app.pollTimer = setInterval(() => { if (document.visibilityState === "visible") reloadRound(true); }, 30000);
+  }
+
+  // Everyone is told when somebody else's number clashes with theirs, or
+  // changes a score in the group they're marking.
+  const told = new Set();
+  function notifyClash(r, e) {
+    if (!app.user || e.entered_by === app.user.id) return;
+    const mine = myEntry(r, e.player_id, e.hole);
+    if (!mine || sameScore(mine, e)) return;
+    const key = [e.player_id, e.hole, e.entered_by, e.strokes, e.picked_up].join("|");
+    if (told.has(key)) return;
+    told.add(key);
+    const p = r.players.find(x => x.id === e.player_id);
+    toast(`${entrant(r, e.entered_by)} put ${scoreText(e)} for ${p ? p.name : "a player"} on hole ${e.hole} — you have ${scoreText(mine)}. Agree it before the card goes in.`, true);
+  }
+
+  function notifyChange(r, before, n) {
+    if (!app.user || !before || n.entered_by === app.user.id) return;
+    if (sameScore(before, n) || n.disputed) return; // disputes are told by notifyClash
+    const inView = selectedPlayers(r).some(p => p.id === n.player_id);
+    if (!inView || myEntry(r, n.player_id, n.hole)) return;
+    const p = r.players.find(x => x.id === n.player_id);
+    toast(`${entrant(r, n.entered_by)} changed ${p ? p.name : "a player"}'s hole ${n.hole} to ${scoreText(n)}.`);
   }
 
   function unsubscribe() {
@@ -437,7 +552,10 @@
       </div>
       <div id="round-body"></div>`;
     const body = $("#round-body");
-    if (r.tab === "score") body.innerHTML = scoreView(r);
+    if (r.tab === "score") {
+      body.innerHTML = scoreView(r);
+      if (store.get("gps-on", false) && r.geo && r.geo.size && window.HoleMaps) window.HoleMaps.startGps();
+    }
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
     else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || pairsTable(r);
     else body.innerHTML = boardView(r);
@@ -467,6 +585,7 @@
 
   function selectedPlayers(r) {
     if (!r.groupKey) return [];
+    if (r.groupKey === "me") return r.me ? [r.me] : [];
     if (r.groupKey.startsWith("g")) {
       const n = Number(r.groupKey.slice(1));
       return r.players.filter(p => p.group === n);
@@ -493,27 +612,31 @@
     const groups = groupsOf(r);
     const picker = `
       <div class="group-picker">
+        ${r.me ? `<button data-action="group" data-key="me" aria-selected="${r.groupKey === "me"}">Just me</button>` : ""}
         ${groups.map(([n, ps]) => `<button data-action="group" data-key="g${n}" aria-selected="${r.groupKey === "g" + n}">Group ${n}${ps.some(p => r.me && p.id === r.me.id) ? " ★" : ""}</button>`).join("")}
         <button data-action="custom-group" aria-selected="${r.groupKey === "custom"}">Pick players</button>
       </div>`;
 
     const players = selectedPlayers(r);
     if (!players.length) {
-      return picker + `<div class="card empty"><p>Choose the group you're marking for.</p>
-        <p class="small muted">Only one phone per group needs to score — but anyone in the group can.</p></div>`;
+      return personalSummary(r) + picker + `<div class="card empty"><p>Choose the group you're marking for, or just your own card.</p>
+        <p class="small muted">One phone can score the whole group — nobody else needs the app. If two phones put in different numbers, everyone's told and it's flagged to agree.</p></div>`;
     }
 
     const h = r.holes[r.hole - 1];
     const strip = r.holes.map(x => {
       const done = players.every(p => { const s = p.scores[x.hole]; return s && (s.strokes != null || s.picked_up); });
-      return `<button data-action="hole" data-hole="${x.hole}" class="${x.hole === r.hole ? "current" : done ? "done" : ""}">${x.hole}</button>`;
+      const disputed = players.some(p => { const s = p.scores[x.hole]; return s && s.disputed; });
+      return `<button data-action="hole" data-hole="${x.hole}" class="${x.hole === r.hole ? "current" : done ? "done" : ""}${disputed ? " disputed" : ""}">${x.hole}</button>`;
     }).join("");
 
     const cards = players.map(p => {
       const sc = p.scores[h.hole];
+      const lock = locked(r, p.id);
       const shots = S.shotsOnHole(p.ph, h.stroke_index, 18);
       const sum = S.summarise(r.holes, p.scores, p.ph);
       let valClass = "val", valText = "–";
+      if (sc && sc.disputed) valClass += " disputed";
       if (sc && sc.picked_up) { valClass += " pu"; valText = "P/U"; }
       else if (sc && sc.strokes != null) {
         const diff = sc.strokes - h.par;
@@ -528,21 +651,24 @@
           <div class="score-name">
             <strong>${esc(p.name)}${dots}</strong>
             <div class="sub">PH ${p.ph == null ? "?" : p.ph} · ${sum.points} pts thru ${sum.thru}${pts != null ? ` · <span class="pts">${pts} here</span>` : ""}</div>
-            <div class="mini-actions">
+            ${lock ? `<div class="sub"><span class="tick">✓</span> Card submitted</div>` : `<div class="mini-actions">
               <button data-action="pickup" data-player="${p.id}">Pick up</button>
-              ${sc ? `<button data-action="clear" data-player="${p.id}">Clear</button>` : ""}
-            </div>
+              ${myEntry(r, p.id, h.hole) ? `<button data-action="clear" data-player="${p.id}">Clear</button>` : ""}
+            </div>`}
           </div>
           <div class="stepper">
-            <button data-action="minus" data-player="${p.id}" aria-label="One fewer for ${esc(p.name)}">−</button>
-            <button class="${valClass}" data-action="tap-val" data-player="${p.id}" aria-label="Score for ${esc(p.name)}">${valText}</button>
-            <button data-action="plus" data-player="${p.id}" aria-label="One more for ${esc(p.name)}">+</button>
+            <button data-action="minus" data-player="${p.id}" aria-label="One fewer for ${esc(p.name)}" ${lock ? "disabled" : ""}>−</button>
+            <button class="${valClass}" data-action="tap-val" data-player="${p.id}" aria-label="Score for ${esc(p.name)}" ${lock ? "disabled" : ""}>${valText}</button>
+            <button data-action="plus" data-player="${p.id}" aria-label="One more for ${esc(p.name)}" ${lock ? "disabled" : ""}>+</button>
           </div>
+          ${disputeBox(r, p, h.hole)}
         </div>`;
     }).join("");
 
     return `
+      ${personalSummary(r)}
       ${picker}
+      ${disputeBanner(r, players)}
       <div class="hole-strip">${strip}</div>
       <div class="hole-head">
         <div class="num"><small>HOLE</small>${h.hole}</div>
@@ -552,36 +678,179 @@
           ${h.yards ? `<div>Yds<b>${h.yards}</b></div>` : ""}
         </div>
       </div>
+      ${gpsBar(r, h.hole)}
       <div class="card">${cards}</div>
       <div class="hole-nav">
         <button class="btn ghost" data-action="prev-hole" ${r.hole === 1 ? "disabled" : ""}>← Hole ${r.hole - 1 || ""}</button>
-        <button class="btn" data-action="next-hole">${r.hole === 18 ? "Card" : "Hole " + (r.hole + 1) + " →"}</button>
+        <button class="btn" data-action="next-hole">${r.hole === 18 ? "Review & submit" : "Hole " + (r.hole + 1) + " →"}</button>
       </div>`;
+  }
+
+  function locked(r, playerId) {
+    return r.submitted.has(playerId) && !app.committee;
   }
 
   function setStroke(playerId, next) {
     const r = app.round;
+    if (locked(r, playerId)) { toast("That card's been submitted — ask the committee to change it.", true); return; }
     const h = r.holes[r.hole - 1];
     const row = { event_id: r.id, player_id: playerId, hole: h.hole, ts: Date.now() };
     if (next === "clear") {
       row.clear = true;
-      if (r.scores[playerId]) delete r.scores[playerId][h.hole];
-    } else if (next === "pickup") {
-      row.strokes = null; row.picked_up = true;
-      applyScore(r, row);
+      removeEntry(r, playerId, h.hole, app.user.id);
     } else {
-      row.strokes = Math.max(1, Math.min(20, next)); row.picked_up = false;
-      applyScore(r, row);
+      if (next === "pickup") { row.strokes = null; row.picked_up = true; }
+      else { row.strokes = Math.max(1, Math.min(20, next)); row.picked_up = false; }
+      applyEntry(r, { ...row, entered_by: app.user.id, updated_at: new Date().toISOString() });
     }
+    recomputeCell(r, playerId, h.hole);
     queueScore(row);
     buildPlayers(r);
     renderRoundBody();
   }
 
+  // Steppers start from this phone's own number, so pressing + on a
+  // disputed hole changes your entry, not somebody else's.
   function currentStroke(playerId) {
     const r = app.round;
+    const mine = myEntry(r, playerId, r.hole);
+    if (mine) return mine.strokes;
     const sc = r.scores[playerId] && r.scores[playerId][r.hole];
     return sc && sc.strokes != null ? sc.strokes : null;
+  }
+
+  // ---------- distances ----------
+
+  // The strip under the hole header: live yards to the middle of the
+  // green, and the button that opens the satellite view.
+  function gpsBar(r, hole) {
+    const g = r.geo && r.geo.get(hole);
+    const mapped = g && g.green_lat != null;
+    if (!mapped) {
+      return app.committee && r.course
+        ? `<div class="gps-bar muted small">Hole ${hole} isn't on the map yet. <a href="#/course-map/${r.course.id}">Map the holes</a></div>` : "";
+    }
+    const on = store.get("gps-on", false);
+    return `<div class="gps-bar">
+      <span id="gps-yds" class="gps-yds">${on ? gpsText(r, hole) : `<button class="mv-link" data-action="gps-on">Show yardage to the green</button>`}</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" style="min-height:36px" data-action="hole-map">Map</button>
+    </div>`;
+  }
+
+  function gpsText(r, hole) {
+    const HM = window.HoleMaps;
+    const g = r.geo && r.geo.get(hole);
+    if (!HM || !g) return "";
+    const d = HM.toGreen(g);
+    if (HM.gps.error) return `<span class="small muted">${esc(HM.gps.error)}</span>`;
+    if (!d) return `<span class="small muted">Finding you…</span>`;
+    if (d.off) return `<span class="small muted">Not on the course — yardage shows when you are</span>`;
+    return `<b>${d.yards}</b> yds <span class="small muted">to the middle · ±${d.acc}</span>`;
+  }
+
+  // Keep the yardage ticking over without redrawing the whole screen.
+  if (window.HoleMaps) {
+    window.HoleMaps.onGps(() => {
+      const el = document.getElementById("gps-yds");
+      if (el && app.round && store.get("gps-on", false)) el.innerHTML = gpsText(app.round, app.round.hole);
+    });
+  }
+
+  // ---------- personal card ----------
+
+  function personalSummary(r) {
+    const me = r.me;
+    if (!me || !r.holes.length) return "";
+    const board = S.stablefordBoard(r.holes, r.players);
+    const mine = board.find(x => x.player.id === me.id);
+    if (!mine) return "";
+    const started = board.filter(x => x.sum.thru > 0).length;
+    const pairs = r.pairs && r.pairs.length ? S.pairsBoard(r.holes, r.pairs) : [];
+    const myPairs = pairs.filter(x => (me.pairs || []).includes(x.pair.number));
+    const ds = disputesFor(r, [me]).length;
+    return `<div class="card me-card">
+      <div class="row" style="gap:16px">
+        <div><div class="big">${mine.sum.points}</div><div class="thru">Your points</div></div>
+        <div><div class="big">${mine.sum.thru ? (mine.tied ? "T" : "") + mine.pos : "–"}</div><div class="thru">of ${started || r.players.length}</div></div>
+        <div><div class="big">${thruText(mine.sum)}</div><div class="thru">Played</div></div>
+        <span class="spacer"></span>
+        <button class="btn ghost" style="min-height:36px" data-action="open-card" data-player="${me.id}">My card</button>
+      </div>
+      ${myPairs.length ? `<div class="small muted" style="margin-top:8px">${myPairs.map(x => `Pair ${x.pair.number}: <b>${x.points}</b> pts${x.started ? ` · ${x.tied ? "T" : ""}${x.pos} of ${pairs.length}` : ""}`).join(" · ")}</div>` : ""}
+      ${r.submitted.has(me.id) ? `<div class="small" style="margin-top:6px"><span class="tick">✓</span> Your card is submitted</div>` : ""}
+      ${ds ? `<div class="small" style="margin-top:6px;color:var(--bad)">⚠ ${ds} disputed hole${ds > 1 ? "s" : ""} on your card</div>` : ""}
+    </div>`;
+  }
+
+  // ---------- disputes in the group ----------
+
+  function disputeBanner(r, players) {
+    const ds = disputesFor(r, players);
+    if (!ds.length) return "";
+    return `<div class="card dispute-banner">
+      <strong>⚠ ${ds.length} disputed score${ds.length > 1 ? "s" : ""}</strong>
+      <p class="small" style="margin:4px 0 8px">Two phones put in different numbers. Keep playing — agree ${ds.length > 1 ? "them" : "it"} before the card is submitted.</p>
+      ${ds.map(d => `<button class="dispute-row" data-action="hole" data-hole="${d.hole}">
+        <span>Hole ${d.hole} · ${esc(d.player.name)}</span>
+        <span class="muted small">${d.entries.map(e => `${esc(entrant(r, e.entered_by))} ${scoreText(e)}`).join(" · ")}${d.sc.escalated ? " · committee asked" : ""}</span>
+      </button>`).join("")}
+    </div>`;
+  }
+
+  function disputeBox(r, p, hole) {
+    const sc = p.scores[hole];
+    if (!sc || !sc.disputed) return "";
+    const list = entriesFor(r, p.id, hole);
+    const mine = myEntry(r, p.id, hole);
+    const others = [];
+    list.forEach(e => { if (!sameScore(e, mine) && !others.some(o => sameScore(o, e))) others.push(e); });
+    return `<div class="dispute-box">
+      <div><b>Disputed:</b> ${list.map(e => `${esc(entrant(r, e.entered_by))} ${scoreText(e)}`).join(" · ")}</div>
+      <div class="mini-actions">
+        ${mine ? others.map(e => `<button data-action="accept" data-player="${p.id}" data-hole="${hole}" data-strokes="${e.strokes == null ? "" : e.strokes}" data-pu="${e.picked_up ? 1 : 0}">Agree ${scoreText(e)}</button>`).join("") : `<span class="small muted">The phones that entered it need to agree.</span>`}
+        ${sc.escalated ? `<span class="small muted">Committee asked</span>` : `<button data-action="ask-committee" data-player="${p.id}" data-hole="${hole}">Ask the committee</button>`}
+      </div>
+    </div>`;
+  }
+
+  // ---------- submitting cards ----------
+
+  function cardStatus(r, p) {
+    const sum = S.summarise(r.holes, p.scores, p.ph);
+    const disputes = disputesFor(r, [p]).length;
+    const missing = r.holes.length - sum.thru;
+    if (r.submitted.has(p.id)) return { key: "submitted", text: "Submitted", ok: false, sum };
+    if (disputes) return { key: "disputed", text: `${disputes} disputed hole${disputes > 1 ? "s" : ""}`, ok: false, sum };
+    if (missing) return { key: "missing", text: `${missing} hole${missing > 1 ? "s" : ""} to go`, ok: false, sum };
+    return { key: "ready", text: "Ready to submit", ok: true, sum };
+  }
+
+  function submitSheet(r) {
+    const players = selectedPlayers(r);
+    const rows = players.map(p => ({ p, st: cardStatus(r, p) }));
+    const ready = rows.filter(x => x.st.ok);
+    openSheet(`
+      <h2>Submit cards</h2>
+      <p class="small muted">Check each card, then submit it. A card with a disputed hole can't go in until it's agreed — or the committee settles it.</p>
+      <div class="card">${rows.map(({ p, st }) => `
+        <div class="row submit-row">
+          <div><strong>${esc(p.name)}</strong><div class="thru">${st.sum.points} pts · ${st.key === "submitted" ? '<span class="tick">✓ Submitted</span>' : st.key === "disputed" ? `<span style="color:var(--bad)">⚠ ${esc(st.text)}</span>` : esc(st.text)}</div></div>
+          <span class="spacer"></span>
+          <button class="btn ghost" style="min-height:36px" data-action="open-card" data-player="${p.id}">Card</button>
+          ${st.ok ? `<button class="btn" style="min-height:36px" data-action="submit-card" data-player="${p.id}">Submit</button>` : ""}
+        </div>`).join("")}</div>
+      ${ready.length > 1 ? `<button class="btn gold block" data-action="submit-all">Submit all ${ready.length} ready cards</button>` : ""}`);
+  }
+
+  async function submitCards(r, ids) {
+    for (const id of ids) {
+      const { error } = await client.rpc("submit_card", { p_event: r.id, p_player: id });
+      if (error) { toast(error.message, true); await reloadRound(true); return; }
+    }
+    toast(ids.length > 1 ? `${ids.length} cards submitted` : "Card submitted");
+    await reloadRound(true);
+    if (!$("#sheet").hidden) submitSheet(app.round);
   }
 
   function customGroupSheet(r) {
@@ -597,34 +866,91 @@
       <button class="btn block" style="margin-top:14px" data-action="save-custom">Score these players</button>`);
   }
 
-  function scorecardSheet(r, playerId) {
+  function scorecardSheet(r, playerId, editing) {
     const p = r.players.find(x => x.id === playerId);
     if (!p) return;
     const sum = S.summarise(r.holes, p.scores, p.ph);
+    const st = cardStatus(r, p);
+    const canEdit = editing && app.committee;
     const half = (from, to, label) => {
       const hs = r.holes.slice(from, to);
       const cell = (h, f) => `<td>${f(h)}</td>`;
       const parT = hs.reduce((t, h) => t + h.par, 0);
       const grossT = hs.reduce((t, h) => { const x = sum.holes[h.hole]; return x && x.played && !x.picked_up ? t + x.strokes : t; }, 0);
       const ptsT = hs.reduce((t, h) => { const x = sum.holes[h.hole]; return x && x.played ? t + x.points : t; }, 0);
+      const scoreCell = x => {
+        const s = sum.holes[x.hole];
+        const sc = p.scores[x.hole] || {};
+        if (canEdit) {
+          // A disputed hole starts empty, showing what the phones said, so
+          // the committee picks a number rather than waving one through.
+          if (sc.disputed) {
+            const said = [...new Set(entriesFor(r, p.id, x.hole).map(scoreText))].join("/");
+            return `<input class="sc-edit disputed" data-hole="${x.hole}" data-was="" data-disputed="1" value="" placeholder="${esc(said)}" inputmode="numeric" maxlength="2" aria-label="Hole ${x.hole}, disputed: ${esc(said)}">`;
+          }
+          const v = !s.played ? "" : s.picked_up ? "P" : s.strokes;
+          return `<input class="sc-edit" data-hole="${x.hole}" data-was="${v}" value="${v}" inputmode="numeric" maxlength="2" aria-label="Hole ${x.hole}">`;
+        }
+        const txt = !s.played ? "" : s.picked_up ? "P" : `<span class="${parClass(s.strokes - x.par)}">${s.strokes}</span>`;
+        return sc.disputed ? `<span class="sc-disputed" title="Disputed">${txt}⚠</span>` : txt;
+      };
       return `
         <tr><th>Hole</th>${hs.map(h => `<th style="text-align:center">${h.hole}</th>`).join("")}<th class="tot">${label}</th></tr>
         <tr><th>Par</th>${hs.map(h => cell(h, x => x.par)).join("")}<td class="tot">${parT}</td></tr>
         <tr><th>SI</th>${hs.map(h => cell(h, x => x.stroke_index)).join("")}<td class="tot"></td></tr>
         <tr><th>Shots</th>${hs.map(h => cell(h, x => sum.holes[x.hole].shots || "")).join("")}<td class="tot"></td></tr>
-        <tr><th>Score</th>${hs.map(h => cell(h, x => { const s = sum.holes[x.hole]; return !s.played ? "" : s.picked_up ? "P" : `<span class="${parClass(s.strokes - x.par)}">${s.strokes}</span>`; })).join("")}<td class="tot">${grossT || ""}</td></tr>
+        <tr><th>Score</th>${hs.map(h => cell(h, scoreCell)).join("")}<td class="tot">${grossT || ""}</td></tr>
         <tr><th>Pts</th>${hs.map(h => cell(h, x => { const s = sum.holes[x.hole]; return s.played ? s.points : ""; })).join("")}<td class="tot">${ptsT}</td></tr>`;
     };
+    const live = r.setup && r.setup.status === "live";
+    const actions = [];
+    if (canEdit) {
+      actions.push(`<p class="small muted">Type a score, <b>P</b> for a pick-up, or leave it blank to clear the hole. Saving settles any dispute on the holes you change.</p>
+        <button class="btn gold block" data-action="save-card-edits" data-player="${p.id}">Save changes</button>
+        <button class="btn ghost block" style="margin-top:8px" data-action="open-card" data-player="${p.id}">Cancel</button>`);
+    } else {
+      if (st.ok && live && canScore(r)) actions.push(`<button class="btn gold block" data-action="submit-card" data-player="${p.id}">Submit ${esc(p.name.split(" ")[0])}'s card</button>`);
+      if (st.key === "disputed") actions.push(`<p class="status-msg err small">⚠ ${esc(st.text)} — agree ${st.text.startsWith("1 ") ? "it" : "them"} on the Score screen, or ask the committee, before this card can be submitted.</p>`);
+      if (app.committee) {
+        actions.push(`<button class="btn ghost block" style="margin-top:8px" data-action="edit-card" data-player="${p.id}">Change scores (committee)</button>`);
+        if (r.submitted.has(p.id)) actions.push(`<button class="btn ghost block" style="margin-top:8px" data-action="reopen-card" data-player="${p.id}">Reopen card</button>`);
+      }
+    }
     openSheet(`
       <h2>${esc(p.name)}</h2>
-      <p class="small muted">Index ${p.index == null ? "?" : p.index} · plays off ${p.ph == null ? "?" : p.ph} · thru ${sum.thru}${partnersOf(r, p).map(x => `<br>Pair ${x.number}${x.others.length ? " with " + x.others.map(o => esc(o.name)).join(" & ") : ""}`).join("")}</p>
+      <p class="small muted">Index ${p.index == null ? "?" : p.index} · plays off ${p.ph == null ? "?" : p.ph} · thru ${sum.thru}${r.submitted.has(p.id) ? ' · <span class="tick">✓ submitted</span>' : ""}${partnersOf(r, p).map(x => `<br>Pair ${x.number}${x.others.length ? " with " + x.others.map(o => esc(o.name)).join(" & ") : ""}`).join("")}</p>
       <div class="row" style="gap:18px;margin-bottom:12px;">
         <div><div class="big">${sum.points}</div><div class="thru">Points</div></div>
         <div><div class="big">${sum.gross == null ? (sum.pickups ? "NR" : "–") : sum.gross}</div><div class="thru">Gross</div></div>
         <div><div class="big ${parClass(sum.netToPar)}">${toPar(sum.netToPar)}</div><div class="thru">Net to par</div></div>
       </div>
       <div class="card sc-wrap"><table class="sc">${half(0, 9, "Out")}</table></div>
-      <div class="card sc-wrap"><table class="sc">${half(9, 18, "In")}</table></div>`);
+      <div class="card sc-wrap"><table class="sc">${half(9, 18, "In")}</table></div>
+      ${actions.join("")}`);
+  }
+
+  // Committee changes from the scorecard: each changed hole is settled
+  // at the new number (or cleared), whatever the phones said.
+  async function saveCardEdits(r, playerId) {
+    const inputs = [...document.querySelectorAll("#sheet-body .sc-edit")];
+    const changes = [];
+    for (const el of inputs) {
+      const v = el.value.trim().toUpperCase();
+      if (v === el.dataset.was.toUpperCase()) continue; // unchanged (a disputed hole left empty stays disputed)
+      const hole = Number(el.dataset.hole);
+      if (v === "") changes.push({ hole, strokes: null, pu: false });
+      else if (v === "P") changes.push({ hole, strokes: null, pu: true });
+      else if (/^\d{1,2}$/.test(v) && Number(v) >= 1 && Number(v) <= 20) changes.push({ hole, strokes: Number(v), pu: false });
+      else { toast(`Hole ${hole}: type a number, P, or leave it blank.`, true); el.focus(); return; }
+    }
+    if (!changes.length) { scorecardSheet(r, playerId); return; }
+    for (const c of changes) {
+      const { error } = await client.rpc("settle_score", { p_event: r.id, p_player: playerId, p_hole: c.hole, p_strokes: c.strokes, p_picked_up: c.pu });
+      if (error) { toast(error.message, true); return; }
+    }
+    toast(`${changes.length} hole${changes.length > 1 ? "s" : ""} updated`);
+    await reloadRound(true);
+    scorecardSheet(app.round, playerId);
   }
 
   // ---------- leaderboards ----------
@@ -645,6 +971,13 @@
     return sub + body;
   }
 
+  // ⚠ on a player with a disputed hole, ✓ once their card is in.
+  function flags(r, p) {
+    const d = disputesFor(r, [p]).length;
+    return (d ? ` <span class="flag-disputed" title="${d} disputed hole${d > 1 ? "s" : ""}">⚠</span>` : "") +
+      (r.submitted.has(p.id) ? ' <span class="tick" title="Card submitted">✓</span>' : "");
+  }
+
   const posCell = pos => pos == null ? "" : `<span class="medal ${pos <= 3 ? "p" + pos : ""}">${pos}</span>`;
   const thruText = sum => sum.complete ? "F" : sum.thru ? "Thru " + sum.thru : "–";
   const meClass = p => app.round.me && p.id === app.round.me.id ? "me" : "";
@@ -656,7 +989,7 @@
       <tbody>${rows.map(x => `
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${x.sum.thru ? posCell(x.pos) : ""}</td>
-          <td><strong>${esc(x.player.name)}</strong><div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
+          <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
@@ -866,6 +1199,8 @@
         ${statusBtns}
       </div>
 
+      ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
+
       <div class="card">
         <h2>Pairs</h2>
         ${pairsSetupSummary(r)}
@@ -884,6 +1219,40 @@
           <tbody>${hcpRows || `<tr><td colspan="4" class="muted">Nobody registered yet.</td></tr>`}</tbody>
         </table>
       </div>`;
+  }
+
+  // Every disputed hole in the round, the ones a group has asked about
+  // first. The committee picks the score; that settles it.
+  function disputesCard(r) {
+    const ds = disputesFor(r, r.players).sort((a, b) => (b.sc.escalated - a.sc.escalated) || a.hole - b.hole);
+    if (!ds.length) return `<div class="card"><h2>Disputes</h2><p class="small muted" style="margin:0">None — every score in the round is agreed.</p></div>`;
+    return `<div class="card" id="disputes">
+      <h2>Disputes <span class="badge live" style="animation:none">${ds.length}</span></h2>
+      <p class="small muted">Different phones put in different numbers. Pick the right score to settle it — or tap the player's card to type a different one.</p>
+      ${ds.map(d => {
+        const options = [];
+        d.entries.forEach(e => { if (!options.some(o => sameScore(o, e))) options.push(e); });
+        return `<div class="settle-row">
+          <div><strong>${esc(d.player.name)} · hole ${d.hole}</strong>${d.sc.escalated ? ' <span class="badge">Group asked</span>' : ""}
+            <div class="thru">${d.entries.map(e => `${esc(entrant(r, e.entered_by))} put ${scoreText(e)}`).join(" · ")}</div></div>
+          <div class="mini-actions">
+            ${options.map(e => `<button data-action="settle" data-player="${d.player.id}" data-hole="${d.hole}" data-strokes="${e.strokes == null ? "" : e.strokes}" data-pu="${e.picked_up ? 1 : 0}">Settle at ${scoreText(e)}</button>`).join("")}
+            <button data-action="open-card" data-player="${d.player.id}">Card</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  function cardsCard(r) {
+    const scored = r.players.filter(p => Object.keys(p.scores || {}).length);
+    const done = r.players.filter(p => r.submitted.has(p.id));
+    const waiting = scored.filter(p => !r.submitted.has(p.id));
+    return `<div class="card">
+      <h2>Cards</h2>
+      <p class="small" style="margin:0"><b>${done.length} of ${r.players.length}</b> submitted.</p>
+      ${waiting.length ? `<p class="small muted" style="margin:6px 0 0">Not in yet: ${waiting.map(p => `<a href="#" data-action="open-card" data-player="${p.id}">${esc(p.name)}</a> (${esc(cardStatus(r, p).text.toLowerCase())})`).join(", ")}.</p>` : ""}
+    </div>`;
   }
 
   function pairsSetupSummary(r) {
@@ -1000,10 +1369,18 @@
   async function finalise(r) {
     const scored = r.players.map(p => ({ p, sum: S.summarise(r.holes, p.scores, p.ph) })).filter(x => x.sum.thru > 0);
     if (!scored.length) { toast("No scores to copy yet.", true); return; }
+    const disputed = disputesFor(r, r.players).length;
+    if (disputed) {
+      toast(`Settle the ${disputed} disputed score${disputed > 1 ? "s" : ""} first — they're listed under Disputes.`, true);
+      const d = $("#disputes"); if (d) d.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
     const incomplete = scored.filter(x => !x.sum.complete).length;
+    const unsubmitted = scored.filter(x => !r.submitted.has(x.p.id)).length;
     const pw = pairWinner(r);
     const msg = `Copy Stableford points for ${scored.length} player${scored.length > 1 ? "s" : ""} into Results for ${r.event.name}?` +
       (incomplete ? `\n\n${incomplete} card${incomplete > 1 ? "s aren't" : " isn't"} finished — they'll go in with the points so far.` : "") +
+      (unsubmitted ? `\n\n${unsubmitted} card${unsubmitted > 1 ? "s haven't" : " hasn't"} been submitted by the group.` : "") +
       (pw.name ? `\n\nWinning pair: ${pw.name} (${pw.points} pts).` : pw.tied ? `\n\nThe pairs are tied after countback (${pw.tied}), so the winning pair is left for you to fill in on the admin page.` : "") +
       `\n\nThis replaces any results already entered for these players on this round.`;
     if (!confirm(msg)) return;
@@ -1029,6 +1406,8 @@
     if (!app.committee) { view.innerHTML = `<div class="card empty">Courses are managed by the committee.</div>`; return; }
     view.innerHTML = `<div class="loading">Loading courses…</div>`;
     const { courses, tees } = await loadCourses();
+    const { data: geoRows } = await client.from("course_hole_geo").select("course_id, tee_lat, green_lat");
+    courses.forEach(c => { c.mapped = (geoRows || []).filter(g => g.course_id === c.id && g.tee_lat != null && g.green_lat != null).length; });
     view.innerHTML = `
       <h1>Courses</h1>
       ${courses.map(c => `
@@ -1045,6 +1424,7 @@
               </a>`).join("")}
           </div>
           <button class="btn ghost block" style="margin-top:10px" data-action="new-tee" data-course="${c.id}">Add a tee</button>
+          <a class="btn ghost block" style="margin-top:8px" href="#/course-map/${c.id}">Map the holes${c.mapped ? ` (${c.mapped}/18 done)` : ""}</a>
         </div>`).join("")}
       <form id="new-course" class="card">
         <h2>Add a course</h2>
@@ -1059,6 +1439,96 @@
       if (error) { toast(error.message, true); return; }
       toast("Course added");
       renderCourses();
+    });
+  }
+
+  // ---------- mapping the holes (committee) ----------
+
+  async function renderCourseMap(courseId) {
+    if (!app.committee) { view.innerHTML = `<div class="card empty">Courses are managed by the committee.</div>`; return; }
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    const [{ data: course }, { data: rows }, { data: tees }] = await Promise.all([
+      client.from("courses").select("*").eq("id", courseId).maybeSingle(),
+      client.from("course_hole_geo").select("*").eq("course_id", courseId),
+      client.from("course_tees").select("id, name").eq("course_id", courseId),
+    ]);
+    if (!course) { view.innerHTML = `<div class="card status-msg err">Couldn't find that course.</div>`; return; }
+    const yellow = (tees || []).find(t => t.name.toLowerCase() === DEFAULT_TEE) || (tees || [])[0];
+    const { data: holes } = yellow ? await client.from("course_holes").select("hole, par, yards").eq("tee_id", yellow.id) : { data: [] };
+    const card = new Map((holes || []).map(h => [h.hole, h]));
+    const geo = new Map((rows || []).map(g => [g.hole, g]));
+    const done = h => { const g = geo.get(h); return g && g.tee_lat != null && g.green_lat != null; };
+
+    view.innerHTML = `
+      <p class="small"><a href="#/courses">← Courses</a></p>
+      <h1>${esc(course.name)}</h1>
+      <p class="small muted">Tap the map to drop the tee, then the middle of the green. Drag a pin to move it. Every round here uses these.</p>
+      <div class="hole-strip" id="pe-holes">${Array.from({ length: 18 }, (_, i) => `<button data-pe-hole="${i + 1}" class="${i === 0 ? "current" : done(i + 1) ? "done" : ""}">${i + 1}</button>`).join("")}</div>
+      <div class="row" style="margin-bottom:8px">
+        <div class="subtabs" style="margin:0">
+          <button data-pe-mode="tee" aria-selected="true">Placing: tee</button>
+          <button data-pe-mode="green" aria-selected="false">Placing: green</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="small" id="pe-yds"></span>
+      </div>
+      <div id="pe-host" class="pe-host"><div class="loading">Loading the satellite view…</div></div>
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button class="btn ghost" id="pe-import">Import from OpenStreetMap</button>
+        <span class="spacer"></span>
+        <span class="small muted" id="pe-count">${[...Array(18)].filter((_, i) => done(i + 1)).length}/18 mapped</span>
+      </div>
+      <div id="pe-status" class="status-msg" hidden></div>`;
+
+    const status = (msg, cls) => { const el = $("#pe-status"); el.hidden = !msg; el.className = "status-msg " + (cls || ""); el.textContent = msg || ""; };
+    const refreshStrip = (current) => {
+      document.querySelectorAll("[data-pe-hole]").forEach(b => {
+        const h = Number(b.dataset.peHole);
+        b.className = h === current ? "current" : done(h) ? "done" : "";
+      });
+      $("#pe-count").textContent = `${[...Array(18)].filter((_, i) => done(i + 1)).length}/18 mapped`;
+    };
+    const saveTimers = new Map();
+    const saveHole = (hole, g) => {
+      clearTimeout(saveTimers.get(hole));
+      saveTimers.set(hole, setTimeout(async () => {
+        const row = { course_id: courseId, hole, tee_lat: g.tee_lat ?? null, tee_lng: g.tee_lng ?? null,
+                      green_lat: g.green_lat ?? null, green_lng: g.green_lng ?? null, updated_at: new Date().toISOString() };
+        const { error } = await client.from("course_hole_geo").upsert(row, { onConflict: "course_id,hole" });
+        if (error) status("Couldn't save hole " + hole + ": " + error.message, "err");
+      }, 400));
+    };
+
+    let editor;
+    try {
+      editor = await window.HoleMaps.pinEditor({
+        el: $("#pe-host"), course, geo,
+        onSaveHole: (hole, g) => { saveHole(hole, g); refreshStrip(hole); },
+        onSaveCentre: async (lat, lng) => { await client.from("courses").update({ lat, lng }).eq("id", courseId); course.lat = lat; course.lng = lng; },
+        onModeChange: m => document.querySelectorAll("[data-pe-mode]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.peMode === m))),
+        onHoleChange: (hole, g, yds) => {
+          const c = card.get(hole);
+          $("#pe-yds").innerHTML = yds ? `Tee to green <b>${yds}</b> yds${c && c.yards ? ` · card ${c.yards}` : ""}` : c ? `Par ${c.par}${c.yards ? ` · ${c.yards} yds` : ""}` : "";
+        },
+        onHoleDone: hole => { if (hole < 18) { editor.setHole(hole + 1); refreshStrip(hole + 1); } else status("All 18 holes mapped. Nice work.", "ok"); },
+      });
+    } catch (e) { $("#pe-host").innerHTML = `<div class="loading">${esc(e.message)}</div>`; return; }
+
+    document.querySelectorAll("[data-pe-hole]").forEach(b => b.addEventListener("click", () => {
+      const h = Number(b.dataset.peHole); editor.setHole(h); refreshStrip(h);
+    }));
+    document.querySelectorAll("[data-pe-mode]").forEach(b => b.addEventListener("click", () => editor.setMode(b.dataset.peMode)));
+    $("#pe-import").addEventListener("click", async () => {
+      const c = course.lat != null ? { lat: course.lat, lng: course.lng } : editor.centre();
+      status("Looking for this course on OpenStreetMap…");
+      try {
+        const found = await window.HoleMaps.importFromOsm(c.lat, c.lng);
+        if (!found.size) { status("This course hasn't been drawn on OpenStreetMap, so the pins need placing by hand.", "err"); return; }
+        let added = 0;
+        found.forEach((g, hole) => { if (!done(hole)) { geo.set(hole, g); saveHole(hole, g); added++; } });
+        editor.refresh(); refreshStrip(1); editor.setHole(1);
+        status(`Found ${found.size} hole${found.size > 1 ? "s" : ""} on OpenStreetMap${added < found.size ? ` — kept your ${found.size - added} already placed` : ""}. Check each one: the green pin goes in the middle of the green.`, "ok");
+      } catch (e) { status(e.message, "err"); }
     });
   }
 
@@ -1172,7 +1642,7 @@
       case "hole": r.hole = Number(el.dataset.hole); savePrefs(); renderRoundBody(); break;
       case "prev-hole": r.hole = Math.max(1, r.hole - 1); savePrefs(); renderRoundBody(); break;
       case "next-hole":
-        if (r.hole === 18) { const ps = selectedPlayers(r); if (ps[0]) scorecardSheet(r, ps[0].id); }
+        if (r.hole === 18) submitSheet(r);
         else { r.hole += 1; savePrefs(); renderRoundBody(); }
         break;
       case "tap-val": {
@@ -1185,6 +1655,33 @@
       case "pickup": setStroke(el.dataset.player, "pickup"); break;
       case "clear": setStroke(el.dataset.player, "clear"); break;
       case "go-live": goLive(r); break;
+      case "open-card": e.preventDefault(); scorecardSheet(r, el.dataset.player); break;
+      case "edit-card": scorecardSheet(r, el.dataset.player, true); break;
+      case "save-card-edits": saveCardEdits(r, el.dataset.player); break;
+      case "submit-card": submitCards(r, [el.dataset.player]); break;
+      case "submit-all": submitCards(r, selectedPlayers(r).filter(p => cardStatus(r, p).ok).map(p => p.id)); break;
+      case "reopen-card": {
+        const { error } = await client.from("card_submissions").delete().eq("event_id", r.id).eq("player_id", el.dataset.player);
+        if (error) toast(error.message, true); else { toast("Card reopened"); await reloadRound(true); scorecardSheet(app.round, el.dataset.player); }
+        break;
+      }
+      case "accept": {
+        const { error } = await client.rpc("accept_score", { p_event: r.id, p_player: el.dataset.player, p_hole: Number(el.dataset.hole),
+          p_strokes: el.dataset.strokes === "" ? null : Number(el.dataset.strokes), p_picked_up: el.dataset.pu === "1" });
+        if (error) toast(error.message, true); else { toast("Agreed"); await reloadRound(true); }
+        break;
+      }
+      case "ask-committee": {
+        const { error } = await client.rpc("ask_committee", { p_event: r.id, p_player: el.dataset.player, p_hole: Number(el.dataset.hole) });
+        if (error) toast(error.message, true); else { toast("The committee's been told — they'll settle it from the scorecard."); await reloadRound(true); }
+        break;
+      }
+      case "settle": {
+        const { error } = await client.rpc("settle_score", { p_event: r.id, p_player: el.dataset.player, p_hole: Number(el.dataset.hole),
+          p_strokes: el.dataset.strokes === "" ? null : Number(el.dataset.strokes), p_picked_up: el.dataset.pu === "1" });
+        if (error) toast(error.message, true); else { toast("Settled"); await reloadRound(); }
+        break;
+      }
       case "toggle-hcp-edit": r.editHcp = !r.editHcp; renderRoundBody(); break;
       case "set-status": setStatus(r, el.dataset.status); break;
       case "finalise": finalise(r); break;
@@ -1194,6 +1691,13 @@
         break;
       }
       case "new-tee": newTee(el.dataset.course); break;
+      case "gps-on": store.set("gps-on", true); window.HoleMaps.startGps(); renderRoundBody(); break;
+      case "hole-map":
+        window.HoleMaps.openHoleMap({
+          course: r.course, holes: r.holes, geo: r.geo, hole: r.hole,
+          onClose: hole => { store.set("gps-on", true); if (app.round) { app.round.hole = hole; savePrefs(); renderRoundBody(); } },
+        });
+        break;
     }
   });
 
@@ -1220,6 +1724,7 @@
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1]);
     if (parts[0] === "courses") return renderCourses();
     if (parts[0] === "course" && parts[1]) return renderTeeEditor(parts[1]);
+    if (parts[0] === "course-map" && parts[1]) return renderCourseMap(parts[1]);
     return renderHome();
   }
 
