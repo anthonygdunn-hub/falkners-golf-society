@@ -7,9 +7,9 @@
 // is disputed, writes down that it has told people (so a repeat call
 // does nothing), then sends to the phones of the players concerned.
 //
-// Secrets (Edge Functions → Secrets in the Supabase dashboard):
-//   VAPID_PUBLIC_KEY   the public key, also in app/app.js
-//   VAPID_PRIVATE_KEY  the private key — never in the repository
+// Signing keys: made here the first time the function runs and kept in
+// the push_config table, which only this function (service role) can
+// read. The app asks for the public half with push_public_key().
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided automatically.
 // ------------------------------------------------------------------
 
@@ -87,13 +87,23 @@ async function firstTime(key: string): Promise<boolean> {
   return !error;
 }
 
+async function keys(): Promise<{ public_key: string; private_key: string }> {
+  const { data } = await admin.from("push_config").select("public_key, private_key").eq("id", true).maybeSingle();
+  if (data) return data;
+  const k = webpush.generateVAPIDKeys();
+  // If two calls race, the first one in wins and both use it.
+  await admin.from("push_config").insert({ id: true, public_key: k.publicKey, private_key: k.privateKey });
+  const { data: again } = await admin.from("push_config").select("public_key, private_key").eq("id", true).single();
+  return again!;
+}
+
 Deno.serve(async (req) => {
   try {
-    const pub = Deno.env.get("VAPID_PUBLIC_KEY"), priv = Deno.env.get("VAPID_PRIVATE_KEY");
-    if (!pub || !priv) return json({ skipped: "VAPID keys not set" });
-    webpush.setVapidDetails("mailto:" + (Deno.env.get("ALERTS_TO") ?? "committee@thefalknersarmsgolfsociety.co.uk"), pub, priv);
+    const k = await keys();
+    webpush.setVapidDetails("mailto:" + (Deno.env.get("ALERTS_TO") ?? "committee@thefalknersarmsgolfsociety.co.uk"), k.public_key, k.private_key);
 
     const { type, event_id, player_id, hole } = await req.json().catch(() => ({}));
+    if (type === "init") return json({ ready: true });
     if (!UUID.test(String(event_id))) return json({ ignored: "bad event" });
 
     const { data: ev } = await admin.from("events").select("name, venue").eq("id", event_id).maybeSingle();

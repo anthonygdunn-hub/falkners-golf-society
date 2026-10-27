@@ -147,9 +147,8 @@ it again.
 28. `sql/push-notifications.sql` — phone notifications (needs the `push-notify` Edge Function)
 29. `sql/round-admins.sql` — a player made admin for one round can run it when the committee can't
 
-Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`,
-with the secrets `VAPID_PUBLIC_KEY` (also in `app/app.js`) and `VAPID_PRIVATE_KEY`
-(kept out of the repository).
+Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
+It makes its own signing keys on first run (kept in `push_config`, service role only).
 
 Then redeploy the `member-alerts` Edge Function from
 `supabase/functions/member-alerts/index.ts` — it adds the "disputed score"

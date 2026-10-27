@@ -507,7 +507,17 @@
   // Round published, results in, a dispute in your group. On an iPhone
   // these only work once the app is on the home screen (iOS 16.4 or later).
 
-  const VAPID_PUBLIC_KEY = "BLL4YshoH7HBw6IT0UGrr_8RVJEdzSMylws2sZdKN4GbF_1NwYnRwGyO1DE6Ebb4w_O7P2hn1Ywe_ROVdZN29NM";
+  // The public half of the signing key, from the database. The first
+  // phone to ask wakes the function, which makes the keys.
+  async function vapidKey() {
+    let { data } = await client.rpc("push_public_key");
+    if (!data) {
+      await client.functions.invoke("push-notify", { body: { type: "init" } }).catch(() => null);
+      ({ data } = await client.rpc("push_public_key"));
+    }
+    if (!data) throw new Error("Notifications aren't switched on for the society yet — ask the committee.");
+    return data;
+  }
   const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   function b64ToBytes(b64) {
     const pad = "=".repeat((4 - b64.length % 4) % 4);
@@ -525,7 +535,7 @@
     if (perm !== "granted") throw new Error(perm === "denied" ? "Notifications are blocked for the app — allow them in your phone's settings." : "Notifications weren't turned on.");
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
-    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) });
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(await vapidKey()) });
     const j = sub.toJSON();
     const { error } = await client.rpc("save_push_subscription", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_agent: navigator.userAgent });
     if (error) throw error;

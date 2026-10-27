@@ -2,8 +2,10 @@
 -- Phone notifications from the scoring app.
 --
 -- Run after sql/round-extras.sql. Safe to run twice. Needs the
--- push-notify Edge Function (supabase/functions/push-notify) deployed,
--- with the VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY secrets set.
+-- push-notify Edge Function (supabase/functions/push-notify) deployed.
+-- The function makes its own signing keys the first time it runs and
+-- keeps them in push_config, which only it can read — nobody has to
+-- copy a private key anywhere.
 --
 -- Three things send a notification to the players on a round:
 --   * the committee publishes the round (scoring's open)
@@ -93,3 +95,21 @@ revoke execute on function hole_scores_push() from public, anon, authenticated;
 drop trigger if exists hole_scores_push on hole_scores;
 create trigger hole_scores_push after insert or update of disputed on hole_scores
   for each row execute function hole_scores_push();
+
+-- The signing keys. Service role only: no policies at all.
+create table if not exists push_config (
+  id boolean primary key default true check (id),
+  public_key text not null,
+  private_key text not null,
+  created_at timestamptz not null default now()
+);
+alter table push_config enable row level security;
+revoke all on push_config from anon, authenticated;
+
+-- The half phones need to sign up. Null until the function has run once.
+create or replace function push_public_key()
+returns text language sql stable security definer set search_path = public as $$
+  select public_key from push_config where id;
+$$;
+revoke execute on function push_public_key() from public, anon;
+grant execute on function push_public_key() to authenticated;
