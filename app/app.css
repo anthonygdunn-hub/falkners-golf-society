@@ -867,3 +867,5 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
 .hc-input, .hc-cut { width: 64px; min-height: 36px; border: 1.5px solid var(--line); border-radius: 8px; text-align: center; font: inherit; }
 
 .hc-big { display: block; margin-top: 3px; font-size: .74rem; font-weight: 600; color: #9a5b00; }
+.pz-slide > .pz-kicker { margin-bottom: 3vmin; }
+.pz-slide:has(.pz-award) > .pz-kicker { text-align: center; }

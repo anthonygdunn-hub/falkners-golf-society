@@ -2248,7 +2248,8 @@
   function drawRecords() {
     const d = records.data;
     const evById = new Map(d.events.map(e => [e.id, e]));
-    const years = [...new Set(d.events.map(e => e.event_date.slice(0, 4)))].sort().reverse();
+    const played = new Set(d.results.map(x => x.event_id));
+    const years = [...new Set(d.events.filter(e => played.has(e.id)).map(e => e.event_date.slice(0, 4)))].sort().reverse();
     const inYear = id => { const e = evById.get(id); return e && (records.year === "all" || e.event_date.startsWith(records.year)); };
     const res = d.results.filter(r => r.points != null && inYear(r.event_id));
     const nameOf = id => { const p = d.players.find(x => x.id === id); return p ? p.name : "?"; };
