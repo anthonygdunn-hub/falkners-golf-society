@@ -3,8 +3,10 @@
 --
 -- Run after sql/score-disputes.sql. Safe to run twice.
 --
--- Players open the round from the fixture page on the day ("Start
--- round") and check in to say they're there and ready to play. Anyone
+-- Players open the round from the fixture page ("View round" once the
+-- committee has set it up, "Start round" on the day) and check in to say
+-- they're coming and ready to play. Check-in opens as soon as the round
+-- is set up in the app, and closes after the day. Anyone
 -- in the same tee group can check the others in — for the members who
 -- don't use a phone — and the committee can check anyone in at any
 -- time. The committee sees who hasn't checked in under Setup.
@@ -29,6 +31,15 @@ returns date language sql stable set search_path = public as $$
   select (now() at time zone 'Europe/London')::date;
 $$;
 
+-- Check-in is open from when the round is set up in the app until the
+-- end of the day it's played.
+create or replace function check_in_open(p_event uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce((select e.event_date = london_today()
+                       or (e.event_date > london_today() and exists (select 1 from event_scoring s where s.event_id = e.id))
+                     from events e where e.id = p_event), false);
+$$;
+
 -- The tee groups a player is in for a round (normally one).
 create or replace function tee_groups_of(p_event uuid, p_player uuid)
 returns setof integer language sql stable security definer set search_path = public as $$
@@ -40,7 +51,8 @@ $$;
 
 -- May the signed-in user check this player in (or out)?
 --   * the committee: always
---   * otherwise only on the day, only if you're on the round yourself, and
+--   * otherwise only from when the round is set up until the day itself,
+--     only if you're on the round yourself, and
 --     only for yourself or someone in your tee group (anyone on the round,
 --     if the tee draw hasn't been set)
 create or replace function can_check_in(p_event uuid, p_player uuid)
@@ -53,7 +65,7 @@ declare
 begin
   if me is null or not is_approved_member() then return false; end if;
   if is_committee() then return true; end if;
-  if (select event_date from events where id = p_event) is distinct from london_today() then return false; end if;
+  if not check_in_open(p_event) then return false; end if;
   if not in_field(p_event, p_player) then return false; end if;
   if not exists (select 1 from attendance a where a.event_id = p_event and a.status = 'playing'
                   and (a.profile_id = me or a.player_id in (select id from players where profile_id = me))) then
@@ -77,8 +89,11 @@ create or replace function check_in(p_event uuid, p_player uuid, p_here boolean 
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not can_check_in(p_event, p_player) then
-    if (select event_date from events where id = p_event) is distinct from london_today() and not is_committee() then
-      raise exception 'Check-in opens on the day of the round.';
+    if not check_in_open(p_event) and not is_committee() then
+      if (select event_date from events where id = p_event) < london_today() then
+        raise exception 'This round has been played.';
+      end if;
+      raise exception 'Check-in opens once the committee has set the round up.';
     end if;
     raise exception 'You can check in yourself and the players in your group.';
   end if;
@@ -92,6 +107,7 @@ end;
 $$;
 
 revoke execute on function tee_groups_of(uuid, uuid) from public, anon, authenticated;
+revoke execute on function check_in_open(uuid) from public, anon, authenticated;
 revoke execute on function can_check_in(uuid, uuid) from public, anon;
 revoke execute on function check_in(uuid, uuid, boolean) from public, anon;
 grant execute on function can_check_in(uuid, uuid) to authenticated;

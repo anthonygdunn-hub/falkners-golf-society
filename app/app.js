@@ -220,7 +220,7 @@
       const st = status.get(e.id);
       const badge = st === "live" ? `<span class="badge live">Live</span>`
         : st === "final" ? `<span class="badge final">Final</span>`
-        : st === "setup" ? `<span class="badge">Set up</span>` : "";
+        : st === "setup" ? `<span class="badge">Preview</span>` : "";
       const d = new Date(e.event_date + "T12:00:00");
       return `
         <a class="card round-item" href="#/round/${e.id}">
@@ -533,7 +533,8 @@
     catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
     const prefs = store.get("round-" + eventId, {});
     const live = r.setup && r.setup.status === "live";
-    r.tab = prefs.tab || (live && r.me ? "score" : r.setup ? "board" : (r.canManage ? "setup" : "board"));
+    const preview = r.setup && r.setup.status === "setup" && !r.canManage;
+    r.tab = prefs.tab || ((live || preview) && r.me ? "score" : r.setup ? "board" : (r.canManage ? "setup" : "board"));
     r.hole = prefs.hole || 1;
     r.groupKey = prefs.groupKey || (r.me && r.me.group ? "g" + r.me.group : null);
     r.board = prefs.board || null;
@@ -623,9 +624,10 @@
     const ci = checkinCard(r);
     const nr = notReady(r);
     if (nr) return ci + nr;
+    // Before the committee publishes it, players see a preview of the round.
+    if (r.setup.status === "setup" && !r.canManage) return ci + previewView(r);
     if (!canScore(r)) {
       const why = r.setup.status === "final" ? "This round is finished — scores are locked."
-        : r.setup.status === "setup" ? "Scoring opens when the committee starts the round."
         : "Only players on this round can enter scores.";
       return ci + `<div class="card empty"><p>${why}</p><button class="btn ghost" data-action="tab" data-tab="board">See the leaderboard</button></div>`;
     }
@@ -645,10 +647,20 @@
     }
 
     const h = r.holes[r.hole - 1];
+    const gaps = missingHoles(r, players);
     const strip = r.holes.map(x => {
-      const done = players.every(p => { const s = p.scores[x.hole]; return s && (s.strokes != null || s.picked_up); });
+      const done = players.every(p => hasScore(p, x.hole));
       const disputed = players.some(p => { const s = p.scores[x.hole]; return s && s.disputed; });
-      return `<button data-action="hole" data-hole="${x.hole}" class="${x.hole === r.hole ? "current" : done ? "done" : ""}${disputed ? " disputed" : ""}">${x.hole}</button>`;
+      const minis = players.map(p => {
+        const s = p.scores[x.hole];
+        if (!hasScore(p, x.hole)) return `<i class="mini">·</i>`;
+        if (s.picked_up) return `<i class="mini pu">P</i>`;
+        const d = s.strokes - x.par;
+        return `<i class="mini ${d < 0 ? "under" : d > 0 ? "over" : ""}">${s.strokes}</i>`;
+      }).join("");
+      const cls = [x.hole === r.hole ? "current" : done ? "done" : "", disputed ? "disputed" : "", gaps.has(x.hole) ? "gap" : ""].join(" ").trim();
+      return `<button data-action="hole" data-hole="${x.hole}" class="${cls}" aria-label="Hole ${x.hole}${gaps.has(x.hole) ? ", score missing" : ""}">
+        <b>${x.hole}</b><span class="minis minis-${Math.min(players.length, 4)}">${minis}</span></button>`;
     }).join("");
 
     const cards = players.map(p => {
@@ -706,6 +718,29 @@
         <button class="btn ghost" data-action="prev-hole" ${r.hole === 1 ? "disabled" : ""}>← Hole ${r.hole - 1 || ""}</button>
         <button class="btn" data-action="next-hole">${r.hole === 18 ? "Review & submit" : "Hole " + (r.hole + 1) + " →"}</button>
       </div>`;
+  }
+
+  const hasScore = (p, hole) => { const s = p.scores[hole]; return !!s && (s.strokes != null || s.picked_up); };
+
+  // Holes behind where the group has got to that someone hasn't got a
+  // score on yet: marked on the strip until they're filled in.
+  function missingHoles(r, players) {
+    const furthest = Math.max(0, ...players.flatMap(p => r.holes.filter(h => hasScore(p, h.hole)).map(h => h.hole)));
+    const out = new Set();
+    r.holes.forEach(h => { if (h.hole < furthest && players.some(p => !hasScore(p, h.hole))) out.add(h.hole); });
+    return out;
+  }
+
+  // Moving on with a score missing: say who, and let them go back or carry on.
+  function missingSheet(r, players, hole, onward) {
+    if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120]); } catch (e) { /* not supported */ } }
+    const names = players.map(p => esc(p.name));
+    openSheet(`
+      <h2>No score on hole ${hole}</h2>
+      <p>${names.length === 1 ? `<b>${names[0]}</b> hasn't` : `<b>${names.slice(0, -1).join(", ")}</b> and <b>${names[names.length - 1]}</b> haven't`} got a score on hole ${hole} yet.</p>
+      <p class="small muted">You can come back to it — the hole stays marked until it's filled in. Every hole needs a score or a pick-up before the card can be submitted.</p>
+      <button class="btn block" data-action="close-sheet">Go back to hole ${hole}</button>
+      <button class="btn ghost block" style="margin-top:8px" data-action="carry-on" data-to="${onward}">Carry on anyway</button>`);
   }
 
   function locked(r, playerId) {
@@ -779,6 +814,46 @@
     });
   }
 
+  // ---------- preview, before the round is published ----------
+
+  function previewView(r) {
+    const me = r.me;
+    const par = parTotal(r);
+    const card = (from, to, label) => {
+      const hs = r.holes.slice(from, to);
+      const shots = h => me ? S.shotsOnHole(me.ph, h.stroke_index, 18) : 0;
+      return `<table class="sc">
+        <tr><th>Hole</th>${hs.map(h => `<th style="text-align:center">${h.hole}</th>`).join("")}<th class="tot">${label}</th></tr>
+        <tr><th>Par</th>${hs.map(h => `<td>${h.par}</td>`).join("")}<td class="tot">${hs.reduce((t, h) => t + h.par, 0)}</td></tr>
+        <tr><th>SI</th>${hs.map(h => `<td>${h.stroke_index}</td>`).join("")}<td class="tot"></td></tr>
+        <tr><th>Yds</th>${hs.map(h => `<td class="small">${h.yards || ""}</td>`).join("")}<td class="tot small">${hs.reduce((t, h) => t + (h.yards || 0), 0) || ""}</td></tr>
+        ${me ? `<tr><th>Shots</th>${hs.map(h => { const n = shots(h); return `<td><b>${n > 0 ? "•".repeat(Math.min(n, 3)) : n < 0 ? "+" : ""}</b></td>`; }).join("")}<td class="tot">${hs.reduce((t, h) => t + shots(h), 0)}</td></tr>` : ""}
+      </table>`;
+    };
+    const groups = groupsOf(r);
+    return `
+      <div class="card preview-banner">
+        <strong>Preview</strong>
+        <p class="small" style="margin:4px 0 0">Scoring opens when the committee publishes the round${isToday(r) ? " — usually just before the first tee" : ""}.
+        Until then, here's the card${me ? " with your shots" : ""}, the groups and everyone's playing handicap.</p>
+      </div>
+      <div class="card">
+        <h2 style="margin-bottom:2px">${esc(r.course ? r.course.name : r.event.venue || "")}</h2>
+        <p class="small muted" style="margin-top:0">${r.tee ? esc(r.tee.name) + " tees · " : ""}Par ${par}${r.tee && r.tee.slope ? ` · Slope ${r.tee.slope}` : ""}${r.tee && r.tee.course_rating ? ` · CR ${r.tee.course_rating}` : ""}</p>
+        ${me ? `<p style="margin:6px 0 10px">You play off <b>${me.ph == null ? "?" : me.ph}</b>${me.ch != null ? ` <span class="muted small">(course handicap ${me.ch}, ${esc(String(r.setup.allowance))}%)</span>` : ""}. A dot is a shot on that hole.</p>` : ""}
+        <div class="sc-wrap preview-sc">${card(0, 9, "Out")}</div>
+        <div class="sc-wrap preview-sc" style="margin-top:8px">${card(9, 18, "In")}</div>
+      </div>
+      <div class="card">
+        <h2>${groups.length ? "Tee groups" : "Who's playing"}</h2>
+        ${groups.length ? groups.map(([n, ps]) => `
+          <div class="preview-group${me && me.group === n ? " mine" : ""}"><div class="small muted">Group ${n}${me && me.group === n ? " — yours" : ""}</div>
+            ${ps.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}</div>`).join("")
+          : r.players.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}
+        ${r.pairs && r.pairs.length ? `<p class="small" style="margin:10px 0 0"><a href="#" data-action="tab" data-tab="pairs">See the pairs →</a></p>` : ""}
+      </div>`;
+  }
+
   // ---------- checking in on the day ----------
 
   const isToday = r => r.event.event_date === londonToday();
@@ -795,7 +870,8 @@
   }
 
   function checkinCard(r) {
-    if (r.checkinsOff || !isToday(r) || (r.setup && r.setup.status === "final")) return "";
+    const open = isToday(r) || (!!r.setup && r.event.event_date > londonToday());
+    if (r.checkinsOff || !open || (r.setup && r.setup.status === "final")) return "";
     const group = checkinGroup(r);
     if (!group.length) return "";
     const here = group.filter(p => r.checkins.has(p.id));
@@ -806,6 +882,13 @@
         <span class="spacer"></span><button class="mv-link" data-action="show-checkin">Change</button></div>`;
     }
     const me = r.me;
+    // Once scoring's open and you're in, keep it to one line so the card
+    // and hole strip stay on screen; the rest of the group is a tap away.
+    if (r.setup && r.setup.status === "live" && me && r.checkins.has(me.id) && !r.showCheckin) {
+      return `<div class="card small row checkin-done"><span class="tick">✓</span>
+        <span>You're checked in · ${here.length} of ${group.length} in ${esc(label.toLowerCase())}</span>
+        <span class="spacer"></span><button class="mv-link" data-action="show-checkin">Check in others</button></div>`;
+    }
     return `<div class="card checkin-card">
       <h2 style="margin-bottom:4px">Check in</h2>
       <p class="small muted" style="margin:0 0 10px">${r.arrived && me && !r.checkins.has(me.id) ? "Welcome — tap to say you're here and ready to play. " : ""}Anyone in the group can check the others in, so nobody needs the app.</p>
@@ -841,7 +924,7 @@
     const today = isToday(r);
     return `<div class="card">
       <h2>Check-in</h2>
-      <p class="small" style="margin:0"><b>${here.length} of ${r.players.length}</b> checked in${today ? "" : " — players can check in on the day, from the fixture page or the app"}.</p>
+      <p class="small" style="margin:0"><b>${here.length} of ${r.players.length}</b> checked in${today ? "" : " — players can check in from the app once the round's set up, or on the day"}.</p>
       ${missing.length ? `<div style="margin-top:8px">${missing.map(p => `<div class="row checkin-row"><span>${esc(p.name)}${p.group ? ` <span class="muted small">Grp ${p.group}</span>` : ""}</span><span class="spacer"></span>
         <button class="btn ghost" style="min-height:34px" data-action="checkin" data-player="${p.id}" data-here="1">Check in</button></div>`).join("")}</div>` : ""}
     </div>`;
@@ -1238,11 +1321,11 @@
 
     const missingPh = r.players.filter(p => p.ph == null).length;
     const statusBtns = s.status === "setup" || !r.setup
-      ? `<button class="btn gold block" data-action="go-live">Start the round — open scoring</button>`
+      ? `<button class="btn gold block" data-action="go-live">Publish round — open scoring</button>`
       : s.status === "live"
         ? `<button class="btn block" data-action="finalise">Finish round & copy points to Results</button>
-           <button class="btn ghost block" data-action="set-status" data-status="setup" style="margin-top:8px">Pause scoring</button>`
-        : `<button class="btn ghost block" data-action="set-status" data-status="live">Reopen scoring</button>
+           <button class="btn ghost block" data-action="set-status" data-status="setup" style="margin-top:8px">Unpublish — pause scoring</button>`
+        : `<button class="btn ghost block" data-action="set-status" data-status="live">Republish — reopen scoring</button>
            <button class="btn ghost block" data-action="finalise" style="margin-top:8px">Copy points to Results again</button>`;
 
     return `
@@ -1284,7 +1367,7 @@
 
       <div class="card">
         <h2>Round status</h2>
-        <p class="small muted">${r.setup ? `Currently <b>${esc(s.status)}</b>.` : "Not set up yet."} While live, anyone on the round can score.</p>
+        <p class="small muted">${!r.setup ? "Not set up yet. Save the course above and players can preview the round." : s.status === "setup" ? "<b>Preview</b> — players can see the card, groups and handicaps, and check in. Nobody can score until you publish." : s.status === "live" ? "<b>Published</b> — anyone on the round can score." : "<b>Finished</b> — scores are locked."}</p>
         ${missingPh ? `<p class="status-msg err">${missingPh} player${missingPh > 1 ? "s have" : " has"} no playing handicap yet.</p>` : ""}
         ${statusBtns}
       </div>
@@ -1443,7 +1526,7 @@
   async function setStatus(r, status) {
     const { error } = await client.from("event_scoring").update({ status, updated_at: new Date().toISOString() }).eq("event_id", r.id);
     if (error) { toast(error.message, true); return; }
-    toast(status === "live" ? "Round is live — scoring open" : status === "final" ? "Round finished" : "Scoring paused");
+    toast(status === "live" ? "Round published — scoring is open" : status === "final" ? "Round finished" : "Unpublished — scoring paused");
     await reloadRound();
   }
 
@@ -1732,9 +1815,17 @@
       }
       case "hole": r.hole = Number(el.dataset.hole); savePrefs(); renderRoundBody(); break;
       case "prev-hole": r.hole = Math.max(1, r.hole - 1); savePrefs(); renderRoundBody(); break;
-      case "next-hole":
+      case "next-hole": {
+        const missing = selectedPlayers(r).filter(p => !hasScore(p, r.hole));
+        if (missing.length && canScore(r)) { missingSheet(r, missing, r.hole, r.hole === 18 ? "submit" : r.hole + 1); break; }
         if (r.hole === 18) submitSheet(r);
         else { r.hole += 1; savePrefs(); renderRoundBody(); }
+        break;
+      }
+      case "carry-on":
+        closeSheet();
+        if (el.dataset.to === "submit") submitSheet(r);
+        else { r.hole = Number(el.dataset.to); savePrefs(); renderRoundBody(); }
         break;
       case "tap-val": {
         const cur = currentStroke(el.dataset.player);

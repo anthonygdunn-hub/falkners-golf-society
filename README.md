@@ -81,6 +81,15 @@ from Safari or Chrome.
   committee, who are emailed and settle it under Setup → Disputes).
   Submitted cards are locked; the committee can still change any score
   from the scorecard
+- **Preview and Publish**: once the committee saves a round's course in
+  Setup, players on it see a View round button on the fixture card: the
+  card with their shots per hole, the tee groups and playing handicaps,
+  and early check-in. Nobody can score until the committee presses
+  Publish round
+- **Hole strip**: tiny scores under each hole number for the group being
+  scored (green under par, plain par, red over, grey pick-up); a hole left
+  without a score is marked until it's filled in, and moving on with a
+  score missing asks "Go back" or "Carry on"
 - **Start round & check-in**: on the day of a round, signed-in players who
   are on it get a Start round button on its fixture card. It opens the
   round in the app on their group's card, where they check in — anyone in
@@ -133,7 +142,7 @@ it again.
 23. `sql/course-maps.sql` — tee and green pins for the hole maps
 24. `sql/scoring-function-grants.sql` — who can call the scoring functions
 25. `sql/tighten-payments-view.sql` — the payments list is read-only
-26. `sql/round-checkin.sql` — checking in on the day (until it's run, the app hides check-in)
+26. `sql/round-checkin.sql` — checking in, from when the round is set up until the day (until it's run, the app hides check-in)
 
 Then redeploy the `member-alerts` Edge Function from
 `supabase/functions/member-alerts/index.ts` — it adds the "disputed score"

@@ -16,7 +16,7 @@
   --good: #1E7A46;
   --bad: #B3261E;
   --birdie: #1E7A46;
-  --bogey: #8A5A00;
+  --bogey: #C0392B;
   --font-display: 'Oswald', 'Arial Narrow', sans-serif;
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;
   --radius: 10px;
@@ -141,7 +141,24 @@ label.field input, label.field select, label.field textarea {
 
 /* ---------- Score entry ---------- */
 .hole-strip { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; margin-bottom: 12px; }
-.hole-strip button { aspect-ratio: 1; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; font-weight: 700; font-size: .85rem; padding: 0; color: var(--ink-soft); }
+.hole-strip button { min-height: 40px; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; font-weight: 700; font-size: .85rem;
+  padding: 3px 0 4px; color: var(--ink-soft); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; position: relative; }
+.hole-strip button b { line-height: 1.1; }
+/* tiny scores under the hole number: one per player in the group */
+.minis { display: grid; gap: 0 3px; line-height: 1; }
+.minis-1 { grid-template-columns: 1fr; }
+.minis-2 { grid-template-columns: 1fr 1fr; }
+.minis-3, .minis-4 { grid-template-columns: 1fr 1fr; }
+.minis-1 .mini { font-size: .9rem; }
+.mini { font-style: normal; font-size: .66rem; font-weight: 700; color: var(--ink); min-width: .7em; text-align: center; }
+.mini.under { color: var(--birdie); }
+.mini.over { color: var(--bogey); }
+.mini.pu { color: #6b7280; }
+.hole-strip button.current .mini { color: #fff; }
+.hole-strip button.current .mini.under { color: #8ee0ab; }
+.hole-strip button.current .mini.over { color: #ffb4ab; }
+.hole-strip button.gap { border-color: var(--bad); }
+.hole-strip button.gap::before { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--bad); }
 .hole-strip button.done { background: #dfe7f3; color: var(--navy); border-color: transparent; }
 .hole-strip button.current { background: var(--navy); color: #fff; border-color: var(--navy); }
 .hole-head { display: flex; align-items: flex-end; justify-content: space-between; background: var(--navy-dark); color: #fff; border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
@@ -253,7 +270,7 @@ label.field input, label.field select, label.field textarea {
 .dispute-box { grid-column: 1 / -1; background: #fff6f5; border: 1px solid #f1c7c3; border-radius: 8px; padding: 8px 10px; font-size: .85rem; }
 .dispute-box b { color: var(--bad); }
 .hole-strip button.disputed { box-shadow: inset 0 0 0 2px var(--bad); }
-.hole-strip button.disputed::after { content: "!"; color: var(--bad); font-size: .7rem; vertical-align: super; }
+.hole-strip button.disputed::after { content: "!"; position: absolute; top: 1px; left: 4px; color: var(--bad); font-size: .7rem; }
 .stepper .val.disputed { box-shadow: 0 0 0 3px var(--bad); }
 .stepper button:disabled { opacity: .4; }
 .flag-disputed { color: var(--bad); font-weight: 700; }
@@ -302,3 +319,14 @@ label.field input, label.field select, label.field textarea {
 .checkin-row { border-top: 1px solid var(--line); padding: 8px 0; }
 .checkin-row:first-of-type { border-top: 0; }
 .checkin-done { gap: 8px; }
+
+/* ---------- preview before publishing ---------- */
+.preview-banner { border-left: 4px solid var(--navy); background: #eef2f8; }
+.preview-group { padding: 8px 0; border-top: 1px solid var(--line); }
+.preview-group:first-of-type { border-top: 0; }
+.preview-group.mine { background: #fff8e6; margin: 0 -16px; padding: 8px 16px; }
+.preview-group .row { padding: 2px 0; }
+.preview-sc .sc { font-size: .74rem; table-layout: fixed; }
+.preview-sc .sc th, .preview-sc .sc td { padding: 5px 1px; }
+.preview-sc .sc th:first-child { width: 42px; }
+.preview-sc .sc td.small { font-size: .62rem; }

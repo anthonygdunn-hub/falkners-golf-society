@@ -312,9 +312,17 @@ async function renderRegisterControl(eventId) {
     client.from("attendance").select("id, status, created_at").eq("event_id", eventId).order("created_at", { ascending: true })
   ]);
 
-  // On the day, registered players get a button straight into the round
-  // in the scoring app — same login, so no second sign-in in the browser.
-  if (event && event.event_date === ukToday()) {
+  // Registered players get a button into the round in the scoring app —
+  // same login, so no second sign-in in the browser. On the day it's
+  // "Start round"; before then it's "View round", once the committee has
+  // set the round up in the app (course and tees chosen).
+  const today = ukToday();
+  let roundSetUp = false;
+  if (event && event.event_date > today) {
+    const { data: sc } = await client.from("event_scoring").select("event_id").eq("event_id", eventId).maybeSingle();
+    roundSetUp = !!sc;
+  }
+  if (event && (event.event_date === today || roundSetUp)) {
     let playing = !!(myRow && myRow.status === "playing");
     if (!playing) {
       // The committee may have put them on as a player rather than by profile.
@@ -325,7 +333,7 @@ async function renderRegisterControl(eventId) {
         playing = !!(viaPlayer && viaPlayer.length);
       }
     }
-    if (playing) slot.insertAdjacentHTML("beforebegin", startRoundBlock(eventId));
+    if (playing) slot.insertAdjacentHTML("beforebegin", event.event_date === today ? startRoundBlock(eventId) : viewRoundBlock(eventId));
   }
 
   let guests = myGuests || [];
@@ -351,6 +359,14 @@ function startRoundBlock(eventId) {
     <a class="btn btn-brass" href="app/#/round/${eventId}/start">Start round</a>
     <p class="small" style="margin:8px 0 0;">Opens the scoring app for today's round. Check yourself in there — and anyone in your group who isn't using the app.
     On an iPhone with the app on your home screen, you'll sign in to it once with your usual details.</p>
+  </div>`;
+}
+
+function viewRoundBlock(eventId) {
+  return `<div class="start-round view-round">
+    <a class="btn btn-brass" href="app/#/round/${eventId}">View round</a>
+    <p class="small" style="margin:8px 0 0;">See the card with your shots on each hole, the tee groups and everyone's playing handicap, and check in early.
+    Scoring opens on the day, when the committee publishes the round.</p>
   </div>`;
 }
 
