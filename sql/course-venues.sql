@@ -36,14 +36,17 @@ end;
 $$;
 
 -- Hurtmore Golf Club (par 70)
+-- Hurtmore's nines were swapped at some point; this is the current
+-- order (hole 2 is a par 4), confirmed by the committee Oct 2026 and
+-- matching stymie.golf and the hole layout on OpenStreetMap.
 select pg_temp.seed_tee('Hurtmore Golf Club', 'Hurtmore Rd, Godalming GU7 2RN', 'Yellow', '#f2c94c', 65.8, 112,
-  array[4,3,4,4,3,4,4,4,4, 4,4,4,4,4,5,3,4,4],
-  array[12,8,2,18,6,4,16,14,10, 11,15,1,13,3,5,7,17,9],
-  array[328,176,440,230,115,353,270,252,347, 318,256,360,306,293,514,116,249,331]);
+  array[4,4,4,4,4,5,3,4,4, 4,3,4,4,3,4,4,4,4],
+  array[10,14,4,16,12,2,8,18,6, 11,7,1,15,9,3,13,17,5],
+  array[321,256,359,303,289,514,125,221,321, 313,176,432,223,118,348,271,245,356]);
 select pg_temp.seed_tee('Hurtmore Golf Club', 'Hurtmore Rd, Godalming GU7 2RN', 'White', '#ffffff', 66.7, 119,
-  array[4,3,4,4,3,4,4,4,4, 4,4,4,4,4,5,3,4,4],
-  array[12,8,2,18,6,4,16,14,10, 11,15,1,13,3,5,7,17,9],
-  array[343,183,448,235,128,360,273,287,358, 335,272,371,316,320,537,118,256,352]);
+  array[4,4,4,4,4,5,3,4,4, 4,3,4,4,3,4,4,4,4],
+  array[10,14,4,16,12,2,8,18,6, 11,7,1,15,9,3,13,17,5],
+  array[335,271,372,309,320,532,154,228,343, 338,183,439,232,132,358,310,286,392]);
 
 -- Clandon Golf, Merrow (par 69) — the Epsom Rd GU4 7AA course, not Clandon Regis
 select pg_temp.seed_tee('Clandon Golf Club', 'Epsom Rd, Guildford, Surrey GU4 7AA', 'Yellow', '#f2c94c', 67.5, 114,
