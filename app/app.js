@@ -526,7 +526,9 @@
   }
   async function currentSub() {
     if (!pushSupported()) return null;
-    try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+    // If the service worker never starts (private browsing, blocked), don't hang.
+    const ready = Promise.race([navigator.serviceWorker.ready, new Promise(res => setTimeout(() => res(null), 3000))]);
+    try { const reg = await ready; return reg ? await reg.pushManager.getSubscription() : null; } catch (e) { return null; }
   }
 
   async function enablePush() {
