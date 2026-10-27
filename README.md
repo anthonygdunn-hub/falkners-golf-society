@@ -70,6 +70,7 @@ from Safari or Chrome.
   rounded once at the end as WHS does. Change the course and everyone's
   playing handicap changes with it. Members confirm their index before
   each round (it updates their profile too); the committee sees who has
+  confirmed
 - **Setup** (committee): the Yellow tee at the fixture's venue is picked
   automatically; handicap method, allowance and formats; overrides sit
   behind Adjust. Starting the round saves the setup and snapshots every
