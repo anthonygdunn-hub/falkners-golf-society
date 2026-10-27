@@ -127,6 +127,7 @@ it again.
 22. `sql/score-disputes.sql` — each phone's own entries, disputes, submitted cards, committee settling
 23. `sql/course-maps.sql` — tee and green pins for the hole maps
 24. `sql/scoring-function-grants.sql` — who can call the scoring functions
+25. `sql/tighten-payments-view.sql` — the payments list is read-only
 
 Then redeploy the `member-alerts` Edge Function from
 `supabase/functions/member-alerts/index.ts` — it adds the "disputed score"
