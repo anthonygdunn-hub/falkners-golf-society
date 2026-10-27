@@ -38,6 +38,8 @@
 
   const teeOf = g => g && g.tee_lat != null && g.tee_lng != null ? { lat: g.tee_lat, lng: g.tee_lng } : null;
   const greenOf = g => g && g.green_lat != null && g.green_lng != null ? { lat: g.green_lat, lng: g.green_lng } : null;
+  const frontOf = g => g && g.front_lat != null && g.front_lng != null ? { lat: g.front_lat, lng: g.front_lng } : null;
+  const backOf = g => g && g.back_lat != null && g.back_lng != null ? { lat: g.back_lat, lng: g.back_lng } : null;
 
   // ---------- Leaflet, loaded on demand ----------
 
@@ -107,7 +109,8 @@
     if (!g || !gps.pos) return null;
     const y = yards(gps.pos, g);
     if (y > OFF_COURSE_YARDS) return { off: true, yards: y };
-    return { yards: y, acc: Math.round(gps.pos.acc * YARDS_PER_METRE) };
+    const f = frontOf(geoRow), b = backOf(geoRow);
+    return { yards: y, front: f ? yards(gps.pos, f) : null, back: b ? yards(gps.pos, b) : null, acc: Math.round(gps.pos.acc * YARDS_PER_METRE) };
   }
 
   // ---------- the hole map (players) ----------
@@ -142,7 +145,27 @@
     let current = "sat";
     layers.sat.addTo(map);
 
-    const state = { hole: opts.hole, markers: [], me: null, acc: null, line: null };
+    const state = { hole: opts.hole, markers: [], me: null, acc: null, line: null, measure: [] };
+
+    // Tap anywhere to measure: from you (or the tee) to that spot, and
+    // from that spot to the middle of the green.
+    function clearMeasure() { state.measure.forEach(m => map.removeLayer(m)); state.measure = []; }
+    map.on("click", e => {
+      clearMeasure();
+      const g = opts.geo.get(state.hole);
+      const green = greenOf(g), tee = teeOf(g);
+      const d = toGreen(g);
+      const from = d && !d.off ? { lat: gps.pos.lat, lng: gps.pos.lng } : tee;
+      const pt = { lat: e.latlng.lat, lng: e.latlng.lng };
+      const pts = [from, pt, green].filter(Boolean).map(x => [x.lat, x.lng]);
+      state.measure.push(L.polyline(pts, { color: "#ffffff", weight: 3, opacity: 0.95 }).addTo(map));
+      state.measure.push(L.circleMarker([pt.lat, pt.lng], { radius: 8, color: "#10233F", weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(map));
+      const a = from ? yards(from, pt) : null, b = green ? yards(pt, green) : null;
+      const tip = L.tooltip({ permanent: true, direction: "top", className: "mv-tip", offset: [0, -10] })
+        .setLatLng([pt.lat, pt.lng])
+        .setContent(`${a != null ? `<b>${a}</b> ${d && !d.off ? "from you" : "from the tee"}` : ""}${a != null && b != null ? "<br>" : ""}${b != null ? `<b>${b}</b> to the middle` : ""}`);
+      state.measure.push(tip.addTo(map));
+    });
 
     function draw() {
       state.markers.forEach(m => map.removeLayer(m));
@@ -160,7 +183,9 @@
         return;
       }
       if (tee) state.markers.push(L.marker([tee.lat, tee.lng], { icon: pinIcon(L, "tee", "T"), interactive: false }).addTo(map));
+      clearMeasure();
       state.markers.push(L.marker([green.lat, green.lng], { icon: pinIcon(L, "green", "⚑"), interactive: false }).addTo(map));
+      [[frontOf(g), "F"], [backOf(g), "B"]].forEach(([pt, l]) => { if (pt) state.markers.push(L.marker([pt.lat, pt.lng], { icon: pinIcon(L, "edge", l), interactive: false }).addTo(map)); });
       if (tee) {
         state.markers.push(L.polyline([[tee.lat, tee.lng], [green.lat, green.lng]], { color: "#ffffff", weight: 2, opacity: 0.6, dashArray: "4 6" }).addTo(map));
         map.fitBounds(L.latLngBounds([[tee.lat, tee.lng], [green.lat, green.lng]]).pad(0.25), { maxZoom: 18 });
@@ -185,10 +210,12 @@
       const d = toGreen(g);
       if (d && !d.off) {
         state.line = L.polyline([[gps.pos.lat, gps.pos.lng], [green.lat, green.lng]], { color: "#f2c94c", weight: 3 }).addTo(map);
-        box.innerHTML = `<div class="mv-big">${d.yards}<small> yds</small></div><div class="mv-note">to the middle of the green · GPS ±${d.acc} yds</div>`;
+        box.innerHTML = d.front != null || d.back != null
+          ? `<div class="mv-fcb">${d.front != null ? `<span><small>Front</small>${d.front}</span>` : ""}<span class="mid"><small>Middle</small>${d.yards}</span>${d.back != null ? `<span><small>Back</small>${d.back}</span>` : ""}</div><div class="mv-note">yards · GPS ±${d.acc} · tap the map to measure</div>`
+          : `<div class="mv-big">${d.yards}<small> yds</small></div><div class="mv-note">to the middle of the green · GPS ±${d.acc} yds · tap the map to measure</div>`;
       } else {
         const fromTee = tee ? yards(tee, green) : null;
-        box.innerHTML = `${fromTee ? `<div class="mv-big">${fromTee}<small> yds</small></div><div class="mv-note">tee to middle of the green</div>` : ""}
+        box.innerHTML = `${fromTee ? `<div class="mv-big">${fromTee}<small> yds</small></div><div class="mv-note">tee to middle of the green · tap the map to measure</div>` : ""}
           <div class="mv-note">${gps.error ? gps.error : d && d.off ? "You're not on this hole — live distance shows when you are." : gps.watchId != null ? "Finding you…" : ""}</div>`;
       }
     }
@@ -283,6 +310,42 @@
     return out;
   }
 
+  // Front and back of each green from the greens drawn in OpenStreetMap:
+  // the green's outline is measured along the line from the tee, so
+  // "front" is the nearest edge as you walk up and "back" the furthest.
+  async function greensFromOsm(geo, progress) {
+    const out = new Map();
+    let n = 0;
+    for (const [hole, g] of geo) {
+      const c = greenOf(g), t = teeOf(g);
+      n++; if (progress) progress(`${n}/${geo.size}`);
+      if (!c || !t) continue;
+      const pad = 0.0009;
+      const url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${(c.lng - pad * 1.6).toFixed(6)},${(c.lat - pad).toFixed(6)},${(c.lng + pad * 1.6).toFixed(6)},${(c.lat + pad).toFixed(6)}`;
+      let data;
+      try { const res = await fetch(url); if (!res.ok) continue; data = await res.json(); } catch (e) { continue; }
+      const nodes = new Map();
+      (data.elements || []).forEach(el => { if (el.type === "node") nodes.set(el.id, { lat: el.lat, lng: el.lon }); });
+      const greens = (data.elements || []).filter(el => el.type === "way" && el.tags && el.tags.golf === "green")
+        .map(w => (w.nodes || []).map(id => nodes.get(id)).filter(Boolean)).filter(pts => pts.length > 2);
+      if (!greens.length) continue;
+      // The green whose middle is closest to the committee's pin.
+      const mid = pts => ({ lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng: pts.reduce((a, p) => a + p.lng, 0) / pts.length });
+      const poly = greens.sort((a, b) => metres(mid(a), c) - metres(mid(b), c))[0];
+      if (metres(mid(poly), c) > 40) continue;
+      // Measure along the tee-to-green line, in metres on a flat local grid.
+      const kx = Math.cos(c.lat * Math.PI / 180) * 111320, ky = 110540;
+      const ax = (c.lng - t.lng) * kx, ay = (c.lat - t.lat) * ky;
+      const len = Math.hypot(ax, ay) || 1, ux = ax / len, uy = ay / len;
+      const proj = poly.map(p => ((p.lng - c.lng) * kx) * ux + ((p.lat - c.lat) * ky) * uy);
+      const lo = Math.min(...proj), hi = Math.max(...proj);
+      const at = d => ({ lat: c.lat + (uy * d) / ky, lng: c.lng + (ux * d) / kx });
+      const f = at(lo), b = at(hi);
+      out.set(hole, { front_lat: f.lat, front_lng: f.lng, back_lat: b.lat, back_lng: b.lng });
+    }
+    return out;
+  }
+
   async function findPlace(q) {
     const res = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=gb&q=" + encodeURIComponent(q),
       { headers: { "Accept": "application/json" } });
@@ -311,11 +374,11 @@
     }
     map.setView(centre ? [centre.lat, centre.lng] : [51.2, -0.7], centre ? 16 : 11);
 
-    const state = { hole: 1, mode: "tee", tee: null, green: null, line: null };
+    const state = { hole: 1, mode: "tee", tee: null, green: null, line: null, edges: [] };
 
     function redraw() {
-      [state.tee, state.green, state.line].forEach(m => m && map.removeLayer(m));
-      state.tee = state.green = state.line = null;
+      [state.tee, state.green, state.line, ...state.edges].forEach(m => m && map.removeLayer(m));
+      state.tee = state.green = state.line = null; state.edges = [];
       const g = opts.geo.get(state.hole) || {};
       const tee = teeOf(g), green = greenOf(g);
       if (tee) {
@@ -327,6 +390,12 @@
         state.green.on("dragend", () => setPoint("green", state.green.getLatLng()));
       }
       if (tee && green) state.line = L.polyline([[tee.lat, tee.lng], [green.lat, green.lng]], { color: "#f2c94c", weight: 2 }).addTo(map);
+      [["front", frontOf(g), "F"], ["back", backOf(g), "B"]].forEach(([kind, pt, l]) => {
+        if (!pt) return;
+        const m = L.marker([pt.lat, pt.lng], { icon: pinIcon(L, "edge", l), draggable: true }).addTo(map);
+        m.on("dragend", () => setPoint(kind, m.getLatLng()));
+        state.edges.push(m);
+      });
       if (opts.onHoleChange) opts.onHoleChange(state.hole, g, tee && green ? yards(tee, green) : null);
     }
 
@@ -344,7 +413,8 @@
       // Tee placed? Next tap is the green. Green placed with a tee? That
       // hole's done — the page moves on to the next one.
       if (placed === "tee") { state.mode = "green"; if (opts.onModeChange) opts.onModeChange(state.mode); }
-      else if (teeOf(opts.geo.get(state.hole)) && opts.onHoleDone) opts.onHoleDone(state.hole);
+      else if (placed === "front") { state.mode = "back"; if (opts.onModeChange) opts.onModeChange(state.mode); }
+      else if (placed === "green" && teeOf(opts.geo.get(state.hole)) && opts.onHoleDone) opts.onHoleDone(state.hole);
     });
 
     redraw();
@@ -365,5 +435,5 @@
     };
   }
 
-  window.HoleMaps = { yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, prefetch, gps };
+  window.HoleMaps = { yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, greensFromOsm, prefetch, gps };
 })();

@@ -2,17 +2,20 @@
 // The shell (pages, styles, scripts) comes from the network when it can
 // and from the cache when it can't. Data calls to Supabase are never
 // cached — scores queue on the phone instead (see app.js).
-const CACHE = "falkners-app-v8";
+const CACHE = "falkners-app-v9";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.css?v=8",
-  "./app.js?v=8",
-  "./scoring.js?v=8",
-  "./maps.js?v=8",
+  "./app.css?v=9",
+  "./app.js?v=9",
+  "./scoring.js?v=9",
+  "./maps.js?v=9",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "../js/config.js",
+  "../js/competitions.js",
+  "../js/site-data.js",
+  "../js/image-resize.js",
   "https://unpkg.com/@supabase/supabase-js@2",
 ];
 
@@ -72,4 +75,25 @@ self.addEventListener("fetch", e => {
       return res;
     }).catch(() => caches.match(req).then(hit => hit || (req.mode === "navigate" ? caches.match("./index.html") : Response.error())))
   );
+});
+
+// ---------- phone notifications ----------
+self.addEventListener("push", e => {
+  let m = {};
+  try { m = e.data ? e.data.json() : {}; } catch (err) { m = { title: "Falkners Golf", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(m.title || "Falkners Golf", {
+    body: m.body || "", tag: m.tag, renotify: !!m.tag,
+    icon: "icons/icon-192.png", badge: "icons/icon-192.png",
+    data: { url: m.url || "./" },
+  }));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    const open = list.find(c => c.url.includes("/app/"));
+    if (open) { open.focus(); return open.navigate ? open.navigate(url) : null; }
+    return self.clients.openWindow(url);
+  }));
 });

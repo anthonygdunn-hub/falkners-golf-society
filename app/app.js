@@ -239,13 +239,16 @@
         <div class="hello-sub">The Falkners Arms Golf Society</div>
       </div>
       ${installTip()}
+      ${pushTip()}
       ${heroCard(live[0] || upcoming[0], status, playing, today)}
       ${lastScoreCard(myResults.data || [], events)}
+      <div class="card" id="season-card"><div class="loading" style="padding:12px">Loading the Order of Merit…</div></div>
       ${live.length > 1 ? `<div class="section-label">Live now</div>${live.slice(1).map(e => roundItem(e, status, playing)).join("")}` : ""}
       ${(live.length ? upcoming : upcoming.slice(1)).length ? `<div class="section-label">Coming up</div>${(live.length ? upcoming : upcoming.slice(1)).map(e => roundItem(e, status, playing)).join("")}` : ""}
       ${past.length ? `<div class="section-label">Played</div>${past.slice(0, 4).map(e => roundItem(e, status, playing)).join("")}
         ${past.length > 4 ? `<details class="more-rounds"><summary>All ${past.length} played rounds</summary>${past.slice(4).map(e => roundItem(e, status, playing)).join("")}</details>` : ""}` : ""}`;
     loadLastScoreRank(myResults.data || [], events, myPlayers);
+    seasonCard();
   }
 
   function badgeFor(st) {
@@ -333,6 +336,216 @@
     if (node) node.innerHTML = `${level ? "T" : ""}${pos}<small>${sfx(pos)}</small> <span class="of">/${data.length}</span>`;
   }
 
+
+  // ---------- the season: Order of Merit ----------
+  // Same table and the same rules as the website's leaderboard page
+  // (buildLeaderboard in js/site-data.js), so the two never disagree.
+
+  async function loadSeason() {
+    const [res, set] = await Promise.all([
+      client.from("results").select("*, players(name, handicap, profile_id), events(name, event_date)"),
+      client.from("league_settings").select("counting_rounds").maybeSingle(),
+    ]);
+    if (res.error) throw res.error;
+    const countingRounds = set.data ? set.data.counting_rounds : null;
+    const table = typeof buildLeaderboard === "function" ? buildLeaderboard(res.data || [], { countingRounds }) : [];
+    return { table, results: res.data || [], countingRounds };
+  }
+
+  function seasonRow(e, i, mine) {
+    const mv = e.move == null || e.move === 0 ? "" : `<span class="move ${e.move > 0 ? "up" : "down"}">${e.move > 0 ? "▲" : "▼"}${Math.abs(e.move)}</span>`;
+    return `<tr class="${mine ? "me" : ""}" data-stats="${e.playerId}">
+      <td class="pos"><span class="medal ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</span>${mv}</td>
+      <td class="av"><span class="avatar${mine ? " me" : ""}">${initials(e.name)}</span></td>
+      <td><strong>${esc(e.name)}</strong><div class="thru">${e.rounds} round${e.rounds === 1 ? "" : "s"}${e.countedRounds < e.rounds ? ` · best ${e.countedRounds} count` : ""}</div></td>
+      <td class="num"><span class="big">${e.totalPoints}</span></td></tr>`;
+  }
+
+  async function renderSeason() {
+    view.innerHTML = `<div class="loading">Loading the Order of Merit…</div>`;
+    let d;
+    try { d = await loadSeason(); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    const me = app.user.id;
+    const top = d.table[0];
+    view.innerHTML = `
+      <a class="back-link" href="#/">‹ Home</a>
+      <h1>Order of Merit</h1>
+      <p class="small muted" style="margin-top:-4px">Stableford points across the season${d.countingRounds ? ` · best ${d.countingRounds} rounds count` : ""}. Arrows show the move since the last round.</p>
+      ${top ? leaderCard("Leading the season", esc(top.name), top.totalPoints, "pts", `${top.rounds} rounds`) : ""}
+      <div class="card board-card"><table class="board"><thead><tr><th></th><th colspan="2">Player</th><th class="num">Pts</th></tr></thead>
+        <tbody>${d.table.map((e, i) => seasonRow(e, i, e.profileId === me)).join("") || `<tr><td colspan="4" class="muted">No results yet.</td></tr>`}</tbody></table>
+        <p class="small muted" style="margin:10px 0 0">Tap a player for their stats.</p></div>`;
+  }
+
+  async function seasonCard() {
+    const el = document.getElementById("season-card");
+    if (!el) return;
+    try {
+      const d = await loadSeason();
+      if (!d.table.length) { el.remove(); return; }
+      const me = app.user.id;
+      const i = d.table.findIndex(e => e.profileId === me);
+      const rows = d.table.slice(0, 3).map((e, n) => seasonRow(e, n, e.profileId === me)).join("") + (i > 2 ? seasonRow(d.table[i], i, true) : "");
+      el.innerHTML = `<div class="row"><h2 style="margin:0">Order of Merit</h2><span class="spacer"></span><a class="mv-link" href="#/season">Full table ›</a></div>
+        <table class="board" style="margin-top:6px"><tbody>${rows}</tbody></table>`;
+    } catch (e) { el.remove(); }
+  }
+
+  // ---------- a player's stats ----------
+
+  async function renderStats(playerId) {
+    view.innerHTML = `<div class="loading">Loading stats…</div>`;
+    let pid = playerId;
+    if (!pid) {
+      const { data } = await client.from("players").select("id").eq("profile_id", app.user.id).limit(1);
+      pid = data && data[0] ? data[0].id : null;
+      if (!pid) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card empty"><p>You're not on the player list yet, so there are no stats to show.</p><p class="small">The committee links your account to your name on the admin page.</p></div>`; return; }
+    }
+    const [pl, res, hs, st, evs] = await Promise.all([
+      client.from("players").select("id, name, handicap, profile_id").eq("id", pid).maybeSingle(),
+      client.from("results").select("event_id, player_id, points, gross_score"),
+      client.from("hole_scores").select("event_id, hole, strokes, picked_up").eq("player_id", pid),
+      client.from("hole_stats").select("event_id, hole, putts, fairway").eq("player_id", pid),
+      client.from("events").select("id, name, venue, event_date"),
+    ]);
+    if (!pl.data) { view.innerHTML = `<div class="card status-msg err">Couldn't find that player.</div>`; return; }
+    const p = pl.data;
+    const evById = new Map((evs.data || []).map(e => [e.id, e]));
+    const all = res.data || [];
+    const mine = all.filter(x => x.player_id === pid && x.points != null && evById.has(x.event_id))
+      .sort((a, b) => evById.get(a.event_id).event_date.localeCompare(evById.get(b.event_id).event_date));
+    const posIn = x => { const f = all.filter(y => y.event_id === x.event_id && y.points != null); return { pos: f.filter(y => Number(y.points) > Number(x.points)).length + 1, of: f.length }; };
+    // Pars for every round they've a card on.
+    const evIds = [...new Set((hs.data || []).map(h => h.event_id))];
+    const { data: setups } = evIds.length ? await client.from("event_scoring").select("event_id, tee_id").in("event_id", evIds) : { data: [] };
+    const teeIds = [...new Set((setups || []).map(x => x.tee_id).filter(Boolean))];
+    const { data: ch } = teeIds.length ? await client.from("course_holes").select("tee_id, hole, par").in("tee_id", teeIds) : { data: [] };
+    const teeOfEv = new Map((setups || []).map(x => [x.event_id, x.tee_id]));
+    const parOf = new Map((ch || []).map(h => [h.tee_id + ":" + h.hole, h.par]));
+    const statOf = new Map((st.data || []).map(x => [x.event_id + ":" + x.hole, x]));
+    const tally = { eagle: 0, birdie: 0, par: 0, bogey: 0, double: 0, worse: 0, pu: 0 };
+    const byPar = { 3: [], 4: [], 5: [] };
+    let putts = 0, puttHoles = 0, fwHit = 0, fwTotal = 0, gir = 0, girHoles = 0;
+    (hs.data || []).forEach(h => {
+      const par = parOf.get(teeOfEv.get(h.event_id) + ":" + h.hole);
+      if (!par) return;
+      if (h.picked_up || h.strokes == null) { tally.pu++; return; }
+      const d = h.strokes - par;
+      if (d <= -2) tally.eagle++; else if (d === -1) tally.birdie++; else if (d === 0) tally.par++; else if (d === 1) tally.bogey++; else if (d === 2) tally.double++; else tally.worse++;
+      if (byPar[par]) byPar[par].push(h.strokes);
+      const sx = statOf.get(h.event_id + ":" + h.hole);
+      if (sx && sx.putts != null) { putts += sx.putts; puttHoles++; girHoles++; if (h.strokes - sx.putts <= par - 2) gir++; }
+      if (sx && sx.fairway && par >= 4) { fwTotal++; if (sx.fairway === "hit") fwHit++; }
+    });
+    const holes = Object.values(tally).reduce((a, b) => a + b, 0);
+    const avg = arr => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : "–";
+    const pts = mine.map(x => Number(x.points));
+    const best = pts.length ? Math.max(...pts) : null;
+    const mean = pts.length ? (pts.reduce((a, b) => a + b, 0) / pts.length).toFixed(1) : "–";
+    const maxP = Math.max(40, ...pts);
+    const chart = pts.length ? `<svg class="pts-chart" viewBox="0 0 ${Math.max(pts.length * 40, 240)} 120" aria-label="Points by round">
+      ${pts.map((v, i) => `<rect x="${i * 40 + 8}" y="${110 - (v / maxP) * 100}" width="24" height="${(v / maxP) * 100}" rx="4" fill="${v === best ? "#B8923C" : "#1B3A6C"}"/>
+        <text x="${i * 40 + 20}" y="${104 - (v / maxP) * 100}" text-anchor="middle" font-size="11" fill="#57617A">${v}</text>`).join("")}</svg>` : "";
+    const isMe = p.profile_id === app.user.id;
+    const bar = (label, n, cls) => `<div class="dist-row"><span>${label}</span><div class="dist-bar"><i class="${cls}" style="width:${holes ? Math.round(n / holes * 100) : 0}%"></i></div><b>${n}</b></div>`;
+    view.innerHTML = `
+      <a class="back-link" href="#/season">‹ Order of Merit</a>
+      <div class="row"><span class="avatar big-av${isMe ? " me" : ""}">${initials(p.name)}</span><div><h1 style="margin:0">${esc(p.name)}</h1>
+        <div class="small muted">Index ${p.handicap == null ? "?" : p.handicap}</div></div></div>
+      <div class="card last-card" style="margin-top:12px">
+        <div class="lc-col"><div class="big">${mine.length}</div><div class="thru">rounds</div></div>
+        <div class="lc-col"><div class="big">${mean}</div><div class="thru">average pts</div></div>
+        <div class="lc-col"><div class="big">${best == null ? "–" : best}</div><div class="thru">best</div></div>
+      </div>
+      ${chart ? `<div class="card"><h2>Points by round</h2>${chart}</div>` : ""}
+      ${holes ? `<div class="card"><h2>Scoring</h2><p class="small muted" style="margin-top:-4px">From ${holes} holes scored in the app.</p>
+        ${bar("Eagle or better", tally.eagle, "e")}${bar("Birdie", tally.birdie, "b")}${bar("Par", tally.par, "p")}${bar("Bogey", tally.bogey, "o")}${bar("Double", tally.double, "d")}${bar("Worse", tally.worse, "w")}${bar("Pick-up", tally.pu, "u")}
+        <div class="last-card" style="margin-top:12px">
+          <div class="lc-col"><div class="big">${avg(byPar[3])}</div><div class="thru">par 3 average</div></div>
+          <div class="lc-col"><div class="big">${avg(byPar[4])}</div><div class="thru">par 4 average</div></div>
+          <div class="lc-col"><div class="big">${avg(byPar[5])}</div><div class="thru">par 5 average</div></div>
+        </div></div>` : `<div class="card small muted">Hole-by-hole stats start from the first round scored in the app.</div>`}
+      ${puttHoles || fwTotal ? `<div class="card"><h2>Putts &amp; fairways</h2><div class="last-card">
+          <div class="lc-col"><div class="big">${puttHoles ? (putts / puttHoles * 18).toFixed(1) : "–"}</div><div class="thru">putts per 18</div></div>
+          <div class="lc-col"><div class="big">${fwTotal ? Math.round(fwHit / fwTotal * 100) + "%" : "–"}</div><div class="thru">fairways hit</div></div>
+          <div class="lc-col"><div class="big">${girHoles ? Math.round(gir / girHoles * 100) + "%" : "–"}</div><div class="thru">greens in reg</div></div>
+        </div><p class="small muted" style="margin:8px 0 0">Only holes where putts or fairways were logged.</p></div>`
+        : isMe ? `<div class="card small muted">Want putts and fairways? Tap <b>Add putts &amp; fairways</b> on the number pad when you score.</div>` : ""}
+      <div class="card"><h2>Rounds</h2>${mine.slice().reverse().map(x => { const e = evById.get(x.event_id); const q = posIn(x);
+        return `<a class="row stat-round" href="#/round/${e.id}"><div><b>${esc(e.name)}</b><div class="thru">${esc(e.venue || "")} · ${fmtDate(e.event_date)}</div></div><span class="spacer"></span>
+          <span class="small muted">${ordinal(q.pos)} of ${q.of}</span><span class="big" style="margin-left:12px">${x.points}</span></a>`; }).join("") || `<p class="small muted">No results yet.</p>`}</div>`;
+  }
+
+
+  // ---------- phone notifications ----------
+  // Round published, results in, a dispute in your group. On an iPhone
+  // these only work once the app is on the home screen (iOS 16.4 or later).
+
+  const VAPID_PUBLIC_KEY = "BLL4YshoH7HBw6IT0UGrr_8RVJEdzSMylws2sZdKN4GbF_1NwYnRwGyO1DE6Ebb4w_O7P2hn1Ywe_ROVdZN29NM";
+  const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  function b64ToBytes(b64) {
+    const pad = "=".repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+  async function currentSub() {
+    if (!pushSupported()) return null;
+    try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+  }
+
+  async function enablePush() {
+    if (!pushSupported()) throw new Error("This phone or browser can't do notifications.");
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error(perm === "denied" ? "Notifications are blocked for the app — allow them in your phone's settings." : "Notifications weren't turned on.");
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) });
+    const j = sub.toJSON();
+    const { error } = await client.rpc("save_push_subscription", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_agent: navigator.userAgent });
+    if (error) throw error;
+    store.set("push-on", true);
+  }
+
+  async function disablePush() {
+    const sub = await currentSub();
+    if (sub) {
+      await client.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+      try { await sub.unsubscribe(); } catch (e) { /* already gone */ }
+    }
+    store.set("push-on", false);
+  }
+
+  async function pushSheet() {
+    const pf = platform();
+    const sub = await currentSub();
+    const on = !!sub && Notification.permission === "granted";
+    let body;
+    if (pf.ios && !isStandalone()) {
+      body = `<p>On an iPhone, notifications only work from the app on your home screen.</p>
+        <button class="btn gold block" data-action="install-help">Add it to your home screen</button>
+        <p class="small muted">Then open it from there and turn notifications on.</p>`;
+    } else if (!pushSupported()) {
+      body = `<p>This browser can't do notifications. Try the app in ${pf.ios ? "Safari, added to your home screen" : "Chrome"}.</p>`;
+    } else if (Notification.permission === "denied") {
+      body = `<p>Notifications are blocked for the app. Turn them on in your phone's settings${pf.ios ? " (Settings → Notifications → Falkners Golf)" : " (Chrome → Site settings → Notifications)"}, then come back here.</p>`;
+    } else {
+      body = `<p>Get a buzz when:</p>
+        <ul class="push-list"><li>the committee publishes a round you're playing</li><li>a score in your group is disputed</li><li>the results are in</li></ul>
+        ${on ? `<p class="status-msg ok small">Notifications are on for this phone.</p><button class="btn ghost block" data-action="push-off">Turn them off</button>`
+             : `<button class="btn gold block" data-action="push-on">Turn on notifications</button>`}`;
+    }
+    openSheet(`<h2>Notifications</h2>${body}<button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Done</button>`);
+  }
+
+  function pushTip() {
+    if (!pushSupported() || !isStandalone() || store.get("push-on", false) || store.get("hide-push-tip", false)) return "";
+    if (Notification.permission !== "default") return "";
+    return `<div class="card install-tip"><span class="it-icon" style="display:grid;place-items:center;font-size:1.6rem;background:#fff6e0">🔔</span>
+      <div class="it-text"><strong>Turn on notifications</strong><div class="small muted">Know when your round's live</div></div>
+      <button class="btn gold" style="min-height:38px" data-action="push-on">Turn on</button>
+      <button class="it-x" data-action="hide-push-tip" aria-label="Not now">×</button></div>`;
+  }
+
   // ---------- getting it on the home screen ----------
 
   let installEvent = null; // Android/Chrome's own install prompt, when offered
@@ -404,7 +617,7 @@
   // ---------- loading a round ----------
 
   async function loadRound(eventId) {
-    const [ev, setup, field, hcps, scores, manage, entries, subs, checks] = await Promise.all([
+    const [ev, setup, field, hcps, scores, manage, entries, subs, checks, claims, posts, stats, prizes] = await Promise.all([
       client.from("events").select("*").eq("id", eventId).maybeSingle(),
       client.from("event_scoring").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("scoring_field", { target: eventId }),
@@ -414,6 +627,11 @@
       client.from("score_entries").select("player_id, hole, entered_by, strokes, picked_up, updated_at").eq("event_id", eventId),
       client.from("card_submissions").select("player_id, submitted_by, submitted_at").eq("event_id", eventId),
       client.from("round_checkins").select("player_id, checked_in_by, checked_in_at").eq("event_id", eventId),
+      // The extras below are tolerant: if one can't load, the round still opens.
+      client.from("contest_claims").select("*").eq("event_id", eventId).order("created_at"),
+      client.from("round_posts").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(150),
+      client.from("hole_stats").select("player_id, hole, putts, fairway").eq("event_id", eventId),
+      client.from("event_prizes").select("*").eq("event_id", eventId).maybeSingle(),
     ]);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
@@ -446,8 +664,23 @@
       submitted: new Map((subs.data || []).map(x => [x.player_id, x])),
       checkins: new Map((checks.error ? [] : checks.data || []).map(x => [x.player_id, x])),
       checkinsOff: !!checks.error,
+      claims: claims.error ? [] : claims.data || [],
+      contestsOff: !!claims.error,
+      posts: posts.error ? [] : posts.data || [],
+      feedOff: !!posts.error,
+      comments: [], likes: [],
+      stats: new Map((stats.error ? [] : stats.data || []).map(x => [cellKey(x.player_id, x.hole), x])),
+      prizes: prizes.error ? null : prizes.data,
       canManage: !!manage.data,
     };
+    if (!r.feedOff && r.posts.length) {
+      const ids = r.posts.map(p => p.id);
+      const [cm, lk] = await Promise.all([
+        client.from("round_post_comments").select("*").in("post_id", ids).order("created_at"),
+        client.from("round_post_likes").select("post_id, profile_id").in("post_id", ids),
+      ]);
+      r.comments = cm.data || []; r.likes = lk.data || [];
+    }
     (scores.data || []).forEach(s => applyScore(r, s));
     (entries.data || []).forEach(e => applyEntry(r, e));
     buildPlayers(r);
@@ -609,6 +842,40 @@
         refreshRound();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "event_scoring", filter: `event_id=eq.${r.id}` }, () => reloadRound())
+      .on("postgres_changes", { event: "*", schema: "public", table: "contest_claims", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round || app.round.id !== r.id) return;
+        const rr = app.round;
+        if (payload.eventType === "DELETE") rr.claims = rr.claims.filter(c => c.id !== (payload.old || {}).id);
+        else if (!rr.claims.some(c => c.id === payload.new.id)) rr.claims.push(payload.new);
+        refreshRound(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "round_posts", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round || app.round.id !== r.id) return;
+        const rr = app.round;
+        if (payload.eventType === "DELETE") rr.posts = rr.posts.filter(x => x.id !== (payload.old || {}).id);
+        else { rr.posts = rr.posts.filter(x => x.id !== payload.new.id); rr.posts.unshift(payload.new); rr.posts.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))); }
+        refreshRound(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "round_post_comments" }, payload => {
+        if (!app.round) return;
+        const rr = app.round;
+        if (payload.eventType === "DELETE") rr.comments = rr.comments.filter(x => x.id !== (payload.old || {}).id);
+        else if (rr.posts.some(p => p.id === payload.new.post_id) && !rr.comments.some(x => x.id === payload.new.id)) rr.comments.push(payload.new);
+        refreshRound(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "round_post_likes" }, payload => {
+        if (!app.round) return;
+        const rr = app.round;
+        const o = payload.old || {}, n = payload.new || {};
+        if (payload.eventType === "DELETE") rr.likes = rr.likes.filter(x => !(x.post_id === o.post_id && x.profile_id === o.profile_id));
+        else if (rr.posts.some(p => p.id === n.post_id) && !rr.likes.some(x => x.post_id === n.post_id && x.profile_id === n.profile_id)) rr.likes.push(n);
+        refreshRound(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "hole_stats", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round) return;
+        const n = payload.eventType === "DELETE" ? null : payload.new, o = payload.old || {};
+        if (n) app.round.stats.set(cellKey(n.player_id, n.hole), n); else if (o.player_id) app.round.stats.delete(cellKey(o.player_id, o.hole));
+      })
       .subscribe();
     // Belt and braces: phones drop sockets when the screen locks.
     app.pollTimer = setInterval(() => { if (document.visibilityState === "visible") reloadRound(true); }, 30000);
@@ -654,14 +921,16 @@
       refreshQueued = false;
       if (!app.round) return;
       buildPlayers(app.round);
-      // Don't redraw the setup form under somebody's thumbs.
-      if (app.round.tab !== "setup") renderRoundBody();
+      // Don't redraw a form under somebody's thumbs.
+      const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && view.contains(document.activeElement);
+      if (app.round.tab !== "setup" && !typing) renderRoundBody();
+      else updateFeedBadge();
     });
   }
 
   async function reloadRound(quiet) {
     if (!app.round) return;
-    const keep = { tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived };
+    const keep = { tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments };
     try {
       const r = await loadRound(app.round.id);
       Object.assign(r, keep);
@@ -708,7 +977,9 @@
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
     const tabs = [["score", "Score"], ["board", "Leaderboard"]];
     if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
+    if (!r.feedOff && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
     if (r.canManage) tabs.push(["setup", "Setup"]);
+    if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
@@ -717,7 +988,8 @@
       </div>
       <div id="round-body" class="${r.anim ? "anim-" + r.anim : ""}"></div>`;
     r.anim = null;
-    showTabbar(tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span></button>`).join(""));
+    showTabbar(tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span>${k === "feed" ? `<i class="tab-badge" id="feed-badge" hidden></i>` : ""}</button>`).join(""));
+    updateFeedBadge();
     const body = $("#round-body");
     if (r.tab === "score") {
       body.innerHTML = scoreView(r);
@@ -725,6 +997,7 @@
     }
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
     else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || pairsTable(r);
+    else if (r.tab === "feed" && !r.feedOff) body.innerHTML = feedView(r);
     else body.innerHTML = boardView(r);
   }
 
@@ -733,6 +1006,7 @@
     score: icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>'),
     board: icon('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 6h3a3 3 0 0 1-3 4M7 6H4a3 3 0 0 0 3 4"/>'),
     pairs: icon('<circle cx="8.5" cy="8" r="3"/><circle cx="16" cy="9" r="2.5"/><path d="M3 20c0-3 2.5-5.5 5.5-5.5S14 17 14 20M14.5 14.6c2.8-.4 5.5 1.6 5.5 5.4"/>'),
+    feed: icon('<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>'),
     setup: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   };
 
@@ -820,6 +1094,7 @@
       ${picker}
       ${groupBoard(r, players)}
       ${disputeBanner(r, players)}
+      ${contestsCard(r)}
       ${gpsBar(r, next)}
       ${scoreGrid(r, players)}
       <div class="grid-actions">
@@ -875,7 +1150,7 @@
     </div>`;
     const sums = players.map(p => S.summarise(r.holes, p.scores, p.ph));
     const row = h => `<div class="sg-row${gaps.has(h.hole) ? " gap" : ""}" style="${cols}">
-      <span class="sg-hole">${h.hole}</span>
+      <span class="sg-hole">${h.hole}${contestsOnHole(r, h.hole).map(c => `<i class="sg-tag" title="${esc(c.label)}">${c.id.startsWith("ld") ? "LD" : c.id.startsWith("np2") ? "N2" : "NP"}</i>`).join("")}</span>
       <span class="sg-yds">${h.yards || ""}</span>
       <span class="sg-si">${h.stroke_index}</span>
       <span class="sg-par">${h.par}</span>
@@ -923,7 +1198,9 @@
     if (!p || !h) return;
     if (locked(r, p.id)) { toast("That card's been submitted — ask the committee to change it.", true); return; }
     if (!canScore(r)) { toast("Scoring isn't open on this round.", true); return; }
-    r.kp = { player: playerId, hole, pending: null };
+    const st = r.stats.get(cellKey(playerId, hole)) || {};
+    r.kp = { player: playerId, hole, pending: null, putts: st.putts != null ? st.putts : null, fairway: st.fairway || null };
+    const statsOn = store.get("stats-on", false);
     const shots = S.shotsOnHole(p.ph, h.stroke_index, 18);
     const sc = p.scores[hole];
     const mine = myEntry(r, p.id, hole);
@@ -937,15 +1214,35 @@
       <div class="kp-title">${esc(p.name)} – Hole ${hole}</div>
       <div class="kp-facts">Par ${h.par} · SI ${h.stroke_index}${h.yards ? ` · ${h.yards} yds` : ""} · ${shots > 0 ? `<b>${shots} shot${shots > 1 ? "s" : ""}</b>` : shots < 0 ? "<b>gives a shot back</b>" : "no shot"}</div>
       ${sc && sc.disputed ? `<div class="kp-dispute">${disputeBox(r, p, hole)}</div>` : ""}
-      <div class="kp-grid">${keys.join("")}
+      <div class="kp-grid${statsOn ? " compact" : ""}">${keys.join("")}
         <button class="kp-key k-pu${cur === "P" ? " on" : ""}" data-action="kp" data-val="P">P/U<small>Pick up</small></button>
         <button class="kp-key k-clear" data-action="kp-clear" ${mine ? "" : "disabled"}>Clear</button>
         <button class="kp-key k-ok" data-action="kp-ok" aria-label="Confirm score" ${cur == null ? "disabled" : ""}>✓</button>
-      </div>`);
+      </div>
+      ${statsOn ? `<div class="kp-stats">
+        <div class="kps-row"><span>Putts</span>${[0, 1, 2, 3, 4].map(n => `<button class="kps-chip${r.kp.putts === n ? " on" : ""}" data-action="kp-putts" data-val="${n}">${n === 4 ? "4+" : n}</button>`).join("")}</div>
+        ${h.par >= 4 ? `<div class="kps-row"><span>Fairway</span>${[["left", "← Left"], ["hit", "Hit"], ["right", "Right →"]].map(([k, l]) => `<button class="kps-chip wide${r.kp.fairway === k ? " on" : ""}" data-action="kp-fw" data-val="${k}">${l}</button>`).join("")}</div>` : ""}
+      </div>` : ""}
+      <button class="mv-link kp-stats-toggle" data-action="kp-stats-toggle">${statsOn ? "Hide putts & fairways" : "Add putts & fairways (optional)"}</button>`);
     r.kp.pending = cur;
   }
 
   const warnedGaps = new Set();
+
+  // Putts and fairways are optional and separate from the score, so a
+  // missing one never holds a card up.
+  async function saveHoleStats(r, playerId, hole, putts, fairway) {
+    const key = cellKey(playerId, hole);
+    if (putts == null && fairway == null) {
+      r.stats.delete(key);
+      await client.from("hole_stats").delete().eq("event_id", r.id).eq("player_id", playerId).eq("hole", hole);
+      return;
+    }
+    const row = { event_id: r.id, player_id: playerId, hole, putts, fairway, entered_by: app.user.id, updated_at: new Date().toISOString() };
+    r.stats.set(key, row);
+    const { error } = await client.from("hole_stats").upsert(row, { onConflict: "event_id,player_id,hole" });
+    if (error) toast("Putts and fairway didn't save: " + error.message, true);
+  }
 
   // After a score: on to the next player on this hole, then close.
   function afterKeypad(r, playerId, hole) {
@@ -954,6 +1251,12 @@
     const nextP = players.slice(idx + 1).find(p => !hasScore(p, hole) && !locked(r, p.id));
     if (nextP) { keypadSheet(r, nextP.id, hole); return; }
     closeSheet();
+    // Walking off a contest hole: who's in front? Asked once per group.
+    const cs = contestsOnHole(r, hole).filter(c => !confirmedOf(r, c));
+    if (cs.length && players.every(p => hasScore(p, hole)) && r.setup && r.setup.status === "live") {
+      const k = `stake-asked-${r.id}-${r.groupKey}-${cs[0].id}`;
+      if (!store.get(k, false)) { store.set(k, true); stakeSheet(r, cs[0].id, true); return; }
+    }
     // A hole behind with somebody missing? Say so once, with the way back.
     const gaps = [...missingHoles(r, players)].filter(x => x < hole);
     const key = gaps.join(",");
@@ -1061,6 +1364,9 @@
     if (HM.gps.error) return `<span class="small muted">${esc(HM.gps.error)}</span>`;
     if (!d) return `<span class="small muted">Finding you…</span>`;
     if (d.off) return `<span class="small muted">Not on the course — yardage shows when you are</span>`;
+    if (d.front != null || d.back != null) {
+      return `<span class="fcb">${d.front != null ? `<span><small>F</small>${d.front}</span>` : ""}<span class="m"><small>Mid</small><b>${d.yards}</b></span>${d.back != null ? `<span><small>B</small>${d.back}</span>` : ""}</span>`;
+    }
     return `<b>${d.yards}</b> yds <span class="small muted">to the middle · ±${d.acc}</span>`;
   }
 
@@ -1357,7 +1663,8 @@
       </div>
       <div class="card sc-wrap"><table class="sc">${half(0, 9, "Out")}</table></div>
       <div class="card sc-wrap"><table class="sc">${half(9, 18, "In")}</table></div>
-      ${actions.join("")}`);
+      ${actions.join("")}
+      ${sum.thru ? `<button class="btn ghost block" style="margin-top:8px" data-action="share-card" data-player="${p.id}">Share this card</button>` : ""}`);
   }
 
   // Committee changes from the scorecard: each changed hole is settled
@@ -1384,6 +1691,361 @@
     scorecardSheet(app.round, playerId);
   }
 
+
+  // ---------- side contests: the stake on the hole ----------
+  // The committee picks the holes on the admin page. A group names whoever
+  // is in front; a later group that beats them adds their player under it,
+  // just like the names written on the stake. The committee checks the
+  // stake at the end and confirms the winner.
+
+  const COMP_ICON = { ld: "🏌️", np: "📍", np2: "🎯" };
+  const compKind = c => c.id.startsWith("ld") ? "ld" : c.id.startsWith("np2") ? "np2" : "np";
+  function contestsOn(r) {
+    if (r.contestsOff || !window.ROUND_COMPETITIONS) return [];
+    return window.ROUND_COMPETITIONS.map(c => ({ ...c, holeNo: window.competitionHole(r.event, c) })).filter(c => c.holeNo);
+  }
+  const contestsOnHole = (r, hole) => contestsOn(r).filter(c => c.holeNo === hole);
+  function stakeOf(r, compId) {
+    return r.claims.filter(c => c.comp === compId).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  }
+  const playerName = (r, id) => { const p = r.players.find(x => x.id === id); return p ? p.name : "A player"; };
+  const leaderOf = (r, compId) => { const st = stakeOf(r, compId); return st.length ? st[st.length - 1] : null; };
+  const confirmedOf = (r, c) => r.prizes && r.prizes[c.winner] ? r.prizes[c.winner] : null;
+
+  function contestsCard(r) {
+    const cs = contestsOn(r);
+    if (!cs.length) return "";
+    return `<div class="card contests-card">
+      <h2>Side contests</h2>
+      ${cs.map(c => {
+        const lead = leaderOf(r, c.id);
+        const conf = confirmedOf(r, c);
+        return `<button class="contest-row" data-action="stake" data-comp="${c.id}">
+          <span class="ct-ico">${COMP_ICON[compKind(c)]}</span>
+          <span class="ct-what"><b>${esc(c.label)}</b><span class="thru">Hole ${c.holeNo} · ${esc(c.nine)}</span></span>
+          <span class="ct-who">${conf ? `<span class="tick">✓</span> ${esc(conf)}` : lead ? `${esc(shortName(playerName(r, lead.player_id)))}<span class="thru">in front</span>` : `<span class="muted small">No name yet</span>`}</span>
+        </button>`;
+      }).join("")}
+    </div>`;
+  }
+
+  function stakeSheet(r, compId, fromHole) {
+    const c = contestsOn(r).find(x => x.id === compId);
+    if (!c) return;
+    const st = stakeOf(r, compId);
+    const lead = st[st.length - 1];
+    const live = r.setup && r.setup.status === "live";
+    const players = selectedPlayers(r).length ? selectedPlayers(r) : r.me ? [r.me] : [];
+    const canClaim = live && (r.me || r.canManage);
+    const conf = confirmedOf(r, c);
+    openSheet(`
+      <div class="kp-title">${COMP_ICON[compKind(c)]} ${esc(c.label)}</div>
+      <div class="kp-facts">Hole ${c.holeNo} · ${esc(c.nine)}${conf ? ` · <b>Winner: ${esc(conf)}</b>` : ""}</div>
+      <div class="stake">
+        ${st.length ? st.map((x, i) => `<div class="stake-name${i === st.length - 1 ? " lead" : ""}">
+            <span class="sn-n">${i + 1}</span>
+            <span class="sn-who"><b>${esc(playerName(r, x.player_id))}</b><span class="thru">named by ${esc(entrant(r, x.claimed_by))} · ${new Date(x.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span></span>
+            ${i === st.length - 1 ? `<span class="badge final">In front</span>` : ""}
+            ${(app.user && x.claimed_by === app.user.id && i === st.length - 1) || r.canManage ? `<button class="mv-link" data-action="unstake" data-id="${x.id}" data-comp="${c.id}">${r.canManage ? "Remove" : "Undo"}</button>` : ""}
+          </div>`).join("") : `<p class="muted small" style="margin:0">No name on the stake yet.</p>`}
+      </div>
+      ${canClaim ? `<p class="small muted" style="margin:12px 0 6px">${fromHole ? "Anyone in your group in front?" : "Who's in front now?"}</p>
+        <div class="stake-claims">${players.filter(p => !lead || p.id !== lead.player_id).map(p =>
+          `<button class="btn gold" data-action="stake-claim" data-comp="${c.id}" data-player="${p.id}">${esc(shortName(p.name))} is in front</button>`).join("")}</div>` : ""}
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">${fromHole && st.length ? "Nobody beat it" : "Done"}</button>
+      ${r.canManage && lead && !conf ? `<button class="btn block" style="margin-top:8px" data-action="confirm-contest" data-comp="${c.id}">Confirm ${esc(playerName(r, lead.player_id))} as winner</button>` : ""}
+      <p class="small muted" style="margin-top:10px">The real stake on the hole still counts — the committee checks it against this before announcing the winner.</p>`);
+  }
+
+  async function claimStake(r, compId, playerId) {
+    const { data, error } = await client.from("contest_claims").insert({ event_id: r.id, comp: compId, player_id: playerId, claimed_by: app.user.id }).select().single();
+    if (error) { toast(error.message, true); return; }
+    if (!r.claims.some(c => c.id === data.id)) r.claims.push(data);
+    buzz(15);
+    toast(`${playerName(r, playerId)} is on the stake`);
+    stakeSheet(r, compId);
+    renderRoundBody();
+  }
+
+  async function confirmContest(r, compId) {
+    const c = contestsOn(r).find(x => x.id === compId);
+    const lead = c && leaderOf(r, compId);
+    if (!lead) return;
+    const name = playerName(r, lead.player_id);
+    const row = { event_id: r.id, updated_at: new Date().toISOString() };
+    row[c.winner] = name;
+    const { error } = await client.from("event_prizes").upsert(row, { onConflict: "event_id" });
+    if (error) { toast(error.message, true); return; }
+    r.prizes = { ...(r.prizes || {}), ...row };
+    toast(`${name} confirmed — ${c.label}, ${c.nine}`);
+    stakeSheet(r, compId);
+    renderRoundBody();
+  }
+
+  function contestsSetupCard(r) {
+    const cs = contestsOn(r);
+    return `<div class="card">
+      <h2>Side contests</h2>
+      ${cs.length ? `<p class="small muted" style="margin-top:0">Players add names to each stake as they play. Check the real stakes when they come in, then confirm the winners — they go on the Results page with the other prizes.</p>
+        ${cs.map(c => { const lead = leaderOf(r, c.id); const conf = confirmedOf(r, c);
+          return `<div class="row settle-row" style="flex-direction:row;align-items:center">
+            <div><strong>${esc(c.label)}</strong> <span class="muted small">hole ${c.holeNo}, ${esc(c.nine)}</span>
+              <div class="thru">${conf ? `<span class="tick">✓</span> Confirmed: ${esc(conf)}` : lead ? `In front: ${esc(playerName(r, lead.player_id))} · ${stakeOf(r, c.id).length} on the stake` : "No names yet"}</div></div>
+            <span class="spacer"></span><button class="btn ghost" style="min-height:34px" data-action="stake" data-comp="${c.id}">Stake</button></div>`; }).join("")}`
+        : `<p class="small muted" style="margin:0">No side contests on this round. Set the holes for longest drive and nearest the pin on the <a href="../admin.html">admin page</a> and they appear here.</p>`}
+    </div>`;
+  }
+
+  function contestsBoard(r) {
+    const cs = contestsOn(r);
+    return `<div class="card">${cs.map(c => {
+      const st = stakeOf(r, c.id); const conf = confirmedOf(r, c);
+      return `<div class="ct-board" data-action="stake" data-comp="${c.id}">
+        <div class="row"><span class="ct-ico">${COMP_ICON[compKind(c)]}</span><div><b>${esc(c.label)}</b><div class="thru">Hole ${c.holeNo} · ${esc(c.nine)}</div></div><span class="spacer"></span>
+          ${conf ? `<span class="badge final">Winner</span>` : st.length ? `<span class="badge">${st.length} on the stake</span>` : ""}</div>
+        <div class="ct-names">${conf ? `<b>${esc(conf)}</b>` : st.length ? st.map((x, i) => i === st.length - 1 ? `<b>${esc(playerName(r, x.player_id))}</b>` : `<s>${esc(playerName(r, x.player_id))}</s>`).join(" → ") : `<span class="muted">No name yet</span>`}</div>
+      </div>`; }).join("")}</div>`;
+  }
+
+  // ---------- the live feed ----------
+
+  function feedName(r, profileId) {
+    if (app.user && profileId === app.user.id) return "You";
+    const f = r.field.find(x => x.profile_id === profileId);
+    return f ? f.name : "Committee";
+  }
+  const timeOf = iso => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const ordinal = n => n + ((n % 100 >= 11 && n % 100 <= 13) ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+  const photoUrl = path => client.storage.from("gallery").getPublicUrl(path).data.publicUrl;
+
+  function updateFeedBadge() {
+    const r = app.round, b = document.getElementById("feed-badge");
+    if (!r || !b) return;
+    const seen = store.get("feed-seen-" + r.id, "");
+    const n = r.tab === "feed" ? 0 : r.posts.filter(p => String(p.created_at) > seen && !(app.user && p.author_id === app.user.id)).length;
+    b.hidden = !n; b.textContent = n > 9 ? "9+" : String(n);
+  }
+
+  function feedView(r) {
+    const canPost = !!(r.me || r.canManage);
+    const composer = canPost ? `<div class="card composer">
+      <textarea id="feed-text" rows="2" maxlength="500" placeholder="Say something to the field…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <label class="btn ghost" style="min-height:40px">📷 Photo<input type="file" id="feed-photo" accept="image/*" hidden></label>
+        <span class="small muted" id="feed-photo-name"></span>
+        <span class="spacer"></span>
+        <button class="btn" style="min-height:40px" data-action="post">Post</button>
+      </div>
+      <label class="small muted gallery-opt" id="feed-gallery-opt" hidden><input type="checkbox" id="feed-gallery"> Also put it in the society gallery (after committee approval)</label>
+    </div>` : "";
+    if (!r.posts.length) return composer + `<div class="card empty"><p>Nothing yet.</p><p class="small">Birdies, eagles and names on the stakes appear here by themselves as the round goes on.</p></div>`;
+    return composer + r.posts.map(p => postCard(r, p)).join("");
+  }
+
+  function postCard(r, p) {
+    const likes = r.likes.filter(l => l.post_id === p.id);
+    const mine = app.user && likes.some(l => l.profile_id === app.user.id);
+    const comments = r.comments.filter(c => c.post_id === p.id);
+    const open = r.openComments === p.id;
+    let head, body = "";
+    if (p.kind === "auto") {
+      const [label, strokes] = String(p.body || "").split("|");
+      const h = r.holes.find(x => x.hole === p.hole);
+      const ico = label === "Hole in one" ? "🎉" : label === "Albatross" || label === "Eagle" ? "🦅" : "🐦";
+      head = `<div class="post-auto"><span class="pa-ico">${ico}</span><div><b>${esc(label)}!</b> ${esc(playerName(r, p.player_id))} on the ${ordinal(p.hole)}
+        <div class="thru">${esc(strokes)} on a par ${h ? h.par : "?"}${Number(strokes) === 2 ? " · a 2" : ""} · ${timeOf(p.created_at)}</div></div></div>`;
+    } else if (p.kind === "contest") {
+      const c = (window.ROUND_COMPETITIONS || []).find(x => x.id === p.body);
+      head = `<div class="post-auto"><span class="pa-ico">${c ? COMP_ICON[compKind(c)] : "📍"}</span><div><b>${esc(playerName(r, p.player_id))}</b> is in front · ${c ? esc(c.label) : "side contest"}${c ? `, hole ${window.competitionHole(r.event, c) || ""}` : ""}
+        <div class="thru">named by ${esc(feedName(r, p.author_id))} · ${timeOf(p.created_at)}</div></div></div>`;
+    } else {
+      head = `<div class="post-head"><span class="avatar">${initials(feedName(r, p.author_id))}</span><div><b>${esc(feedName(r, p.author_id))}</b><div class="thru">${timeOf(p.created_at)}</div></div></div>`;
+      if (p.kind === "photo") body += `<img class="post-photo" src="${esc(photoUrl(p.photo_path))}" alt="" loading="lazy" data-action="photo" data-src="${esc(photoUrl(p.photo_path))}">`;
+      if (p.body) body += `<p class="post-body">${esc(p.body)}</p>`;
+    }
+    const canDelete = (app.user && p.author_id === app.user.id && (p.kind === "text" || p.kind === "photo")) || r.canManage;
+    return `<div class="card post pk-${p.kind}">
+      ${head}${body}
+      <div class="post-foot">
+        <button class="pf-btn${mine ? " on" : ""}" data-action="like" data-post="${p.id}">👏 ${likes.length || ""}</button>
+        <button class="pf-btn" data-action="comments" data-post="${p.id}">💬 ${comments.length || ""}</button>
+        <span class="spacer"></span>
+        ${canDelete ? `<button class="pf-btn" data-action="delete-post" data-post="${p.id}" aria-label="Delete">🗑</button>` : ""}
+      </div>
+      ${open ? `<div class="comments">${comments.map(c => `<div class="comment"><b>${esc(feedName(r, c.author_id))}</b> ${esc(c.body)}
+          ${(app.user && c.author_id === app.user.id) || r.canManage ? `<button class="mv-link" data-action="delete-comment" data-id="${c.id}">Delete</button>` : ""}</div>`).join("")}
+        <div class="row" style="margin-top:6px"><input class="comment-input" id="comment-${p.id}" maxlength="300" placeholder="Add a comment…"><button class="btn" style="min-height:38px" data-action="comment" data-post="${p.id}">Send</button></div></div>` : ""}
+    </div>`;
+  }
+
+  async function postToFeed(r) {
+    const text = ($("#feed-text").value || "").trim();
+    const file = $("#feed-photo").files && $("#feed-photo").files[0];
+    if (!text && !file) { toast("Write something or add a photo first.", true); return; }
+    const btn = view.querySelector("[data-action=post]");
+    btn.disabled = true; btn.textContent = file ? "Uploading…" : "Posting…";
+    let photo_path = null;
+    try {
+      if (file) {
+        photo_path = `feed/${r.id}/${(crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36))}.jpg`;
+        const up = window.ImageResize ? await window.ImageResize.uploadPhoto(client, "gallery", photo_path, file)
+          : await client.storage.from("gallery").upload(photo_path, file, { contentType: file.type || "image/jpeg" });
+        if (up.error) throw up.error;
+        if ($("#feed-gallery") && $("#feed-gallery").checked) {
+          await client.from("photos").insert({ event_id: r.id, uploader_id: app.user.id, storage_path: photo_path, caption: text || null, status: "pending" });
+        }
+      }
+      const { data, error } = await client.from("round_posts").insert({ event_id: r.id, author_id: app.user.id, kind: file ? "photo" : "text", body: text || null, photo_path }).select().single();
+      if (error) throw error;
+      if (!r.posts.some(x => x.id === data.id)) r.posts.unshift(data);
+      renderRoundBody();
+    } catch (e) {
+      toast(e.message || "Couldn't post that — try again.", true);
+      btn.disabled = false; btn.textContent = "Post";
+    }
+  }
+
+  async function toggleLike(r, postId) {
+    const mine = r.likes.find(l => l.post_id === postId && l.profile_id === app.user.id);
+    if (mine) {
+      r.likes = r.likes.filter(l => l !== mine);
+      renderRoundBody();
+      await client.from("round_post_likes").delete().eq("post_id", postId).eq("profile_id", app.user.id);
+    } else {
+      r.likes.push({ post_id: postId, profile_id: app.user.id });
+      buzz(8); renderRoundBody();
+      const { error } = await client.from("round_post_likes").insert({ post_id: postId, profile_id: app.user.id });
+      if (error && !/duplicate/i.test(error.message)) toast(error.message, true);
+    }
+  }
+
+  async function addComment(r, postId) {
+    const el = document.getElementById("comment-" + postId);
+    const body = (el && el.value || "").trim();
+    if (!body) return;
+    const { data, error } = await client.from("round_post_comments").insert({ post_id: postId, author_id: app.user.id, body }).select().single();
+    if (error) { toast(error.message, true); return; }
+    if (!r.comments.some(c => c.id === data.id)) r.comments.push(data);
+    el.value = "";
+    if (document.activeElement) document.activeElement.blur();
+    renderRoundBody();
+  }
+
+  // ---------- sharing a card or a board as a picture ----------
+
+  async function shareCanvas(canvas, filename, text) {
+    const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+    const file = new File([blob], filename, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], text }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Picture saved — share it from your photos or downloads");
+  }
+
+  const NAVY = "#10233F", NAVY2 = "#1B3A6C", GOLD = "#B8923C", GOLD2 = "#D9BE7C", INK = "#171F30", SOFT = "#57617A", GREEN = "#1E7A46", RED = "#C0392B";
+  async function fontsReady() {
+    try { await Promise.all([document.fonts.load("600 40px Oswald"), document.fonts.load("600 20px Inter"), document.fonts.load("400 20px Inter")]); } catch (e) { /* draw with fallbacks */ }
+  }
+  function shareHeader(ctx, W, r, crest, title) {
+    const g = ctx.createLinearGradient(0, 0, W, 0); g.addColorStop(0, NAVY); g.addColorStop(1, NAVY2);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, 230);
+    ctx.fillStyle = GOLD; ctx.fillRect(0, 230, W, 8);
+    if (crest) ctx.drawImage(crest, 60, 52, 126, 126);
+    ctx.fillStyle = GOLD2; ctx.font = "600 26px Inter, sans-serif"; ctx.fillText("THE FALKNERS ARMS GOLF SOCIETY", 214, 88);
+    ctx.fillStyle = "#fff"; ctx.font = "600 64px Oswald, 'Arial Narrow', sans-serif"; ctx.fillText(title.toUpperCase(), 214, 156);
+    ctx.fillStyle = "#C9D3E3"; ctx.font = "400 28px Inter, sans-serif";
+    ctx.fillText(`${r.event.name} · ${r.course ? r.course.name : r.event.venue || ""} · ${fmtDate(r.event.event_date, { day: "numeric", month: "short", year: "numeric" })}`, 214, 200);
+  }
+  function loadImg(src) { return new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; }); }
+  function roundRect(ctx, x, y, w, h, rad) { ctx.beginPath(); ctx.moveTo(x + rad, y); ctx.arcTo(x + w, y, x + w, y + h, rad); ctx.arcTo(x + w, y + h, x, y + h, rad); ctx.arcTo(x, y + h, x, y, rad); ctx.arcTo(x, y, x + w, y, rad); ctx.closePath(); }
+
+  async function shareCard(r, playerId) {
+    const p = r.players.find(x => x.id === playerId);
+    if (!p) return;
+    await fontsReady();
+    const crest = await loadImg("icons/icon-192.png");
+    const sum = S.summarise(r.holes, p.scores, p.ph);
+    const W = 1080, H = 1350, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#EEF1F6"; ctx.fillRect(0, 0, W, H);
+    shareHeader(ctx, W, r, crest, p.name);
+    // headline numbers
+    const tiles = [[String(sum.points), "POINTS"], [sum.pickups ? "NR" : sum.thru ? String(sum.gross) : "–", "GROSS"], [String(p.ph == null ? "?" : p.ph), "PLAYS OFF"], [sum.complete ? "F" : String(sum.thru), "THRU"]];
+    tiles.forEach(([v, l], i) => {
+      const x = 60 + i * 245;
+      ctx.fillStyle = i === 0 ? GOLD : "#fff"; roundRect(ctx, x, 280, 225, 170, 24); ctx.fill();
+      ctx.fillStyle = i === 0 ? NAVY : NAVY2; ctx.font = "600 84px Oswald, sans-serif"; ctx.textAlign = "center"; ctx.fillText(v, x + 112, 385);
+      ctx.fillStyle = i === 0 ? NAVY : SOFT; ctx.font = "600 22px Inter, sans-serif"; ctx.fillText(l, x + 112, 425); ctx.textAlign = "left";
+    });
+    const nine = (from, top, label) => {
+      const hs = r.holes.slice(from, from + 9);
+      ctx.fillStyle = "#fff"; roundRect(ctx, 60, top, W - 120, 330, 24); ctx.fill();
+      const x0 = 190, cw = (W - 120 - 130 - 110) / 9;
+      ctx.font = "600 24px Inter, sans-serif"; ctx.fillStyle = SOFT;
+      ["HOLE", "PAR", "SCORE", "PTS"].forEach((t, i) => ctx.fillText(t, 84, top + 62 + i * 75));
+      hs.forEach((h, i) => {
+        const cx = x0 + i * cw + cw / 2; const x = sum.holes[h.hole];
+        ctx.textAlign = "center";
+        ctx.fillStyle = NAVY2; ctx.font = "600 30px Oswald, sans-serif"; ctx.fillText(String(h.hole), cx, top + 62);
+        ctx.fillStyle = INK; ctx.font = "400 28px Inter, sans-serif"; ctx.fillText(String(h.par), cx, top + 137);
+        if (x.played) {
+          const d = x.picked_up ? 0 : x.strokes - h.par;
+          ctx.fillStyle = x.picked_up ? "#6b7280" : d < 0 ? GREEN : d > 0 ? "#FBE4E1" : "#EEF2F8";
+          ctx.beginPath(); ctx.arc(cx, top + 203, 30, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = x.picked_up || d < 0 ? "#fff" : d > 0 ? RED : INK; ctx.font = "600 32px Oswald, sans-serif";
+          ctx.fillText(x.picked_up ? "P" : String(x.strokes), cx, top + 215);
+          ctx.fillStyle = SOFT; ctx.font = "600 26px Inter, sans-serif"; ctx.fillText(String(x.points), cx, top + 287);
+        }
+        ctx.textAlign = "left";
+      });
+      const pts = hs.reduce((t, h) => t + (sum.holes[h.hole].played ? sum.holes[h.hole].points : 0), 0);
+      ctx.textAlign = "center"; ctx.fillStyle = NAVY2; ctx.font = "600 24px Inter, sans-serif"; ctx.fillText(label, W - 115, top + 62);
+      ctx.font = "600 40px Oswald, sans-serif"; ctx.fillText(String(pts), W - 115, top + 287); ctx.textAlign = "left";
+    };
+    nine(0, 490, "OUT"); nine(9, 850, "IN");
+    ctx.fillStyle = SOFT; ctx.font = "400 26px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("thefalknersarmsgolfsociety.co.uk", W / 2, H - 50); ctx.textAlign = "left";
+    await shareCanvas(c, `${p.name.replace(/\s+/g, "-")}-${r.event.name.replace(/\s+/g, "-")}.png`, `${p.name}: ${sum.points} points at ${r.event.name}`);
+  }
+
+  async function shareBoard(r, kind) {
+    await fontsReady();
+    const crest = await loadImg("icons/icon-192.png");
+    let rows;
+    if (kind === "pairs") rows = S.pairsBoard(r.holes, r.pairs || []).filter(x => x.started).map(x => ({ pos: x.pos, tied: x.tied, name: x.pair.players.map(p => p.name).join(" & "), thru: x.complete ? "F" : String(x.thru), pts: x.points }));
+    else rows = S.stablefordBoard(r.holes, r.players).filter(x => x.sum.thru).map(x => ({ pos: x.pos, tied: x.tied, name: x.player.name, thru: x.sum.complete ? "F" : String(x.sum.thru), pts: x.sum.points }));
+    rows = rows.slice(0, 16);
+    const W = 1080, rowH = 66, H = Math.max(900, 330 + rows.length * rowH + 120);
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#EEF1F6"; ctx.fillRect(0, 0, W, H);
+    shareHeader(ctx, W, r, crest, kind === "pairs" ? "Pairs leaderboard" : "Leaderboard");
+    ctx.fillStyle = "#fff"; roundRect(ctx, 60, 280, W - 120, rows.length * rowH + 70, 24); ctx.fill();
+    ctx.font = "600 22px Inter, sans-serif"; ctx.fillStyle = SOFT;
+    ctx.fillText(kind === "pairs" ? "PAIR" : "PLAYER", 190, 322); ctx.textAlign = "right"; ctx.fillText("THRU", 840, 322); ctx.fillText("PTS", 980, 322); ctx.textAlign = "left";
+    rows.forEach((x, i) => {
+      const y = 350 + i * rowH;
+      if (i) { ctx.fillStyle = "#E3E8F0"; ctx.fillRect(84, y, W - 168, 2); }
+      const medal = x.pos === 1 ? GOLD : x.pos === 2 ? "#C9CED8" : x.pos === 3 ? "#D8B48F" : "#E6EAF2";
+      ctx.fillStyle = medal; ctx.beginPath(); ctx.arc(126, y + 33, 24, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = NAVY; ctx.font = "600 26px Oswald, sans-serif"; ctx.textAlign = "center"; ctx.fillText((x.tied ? "T" : "") + x.pos, 126, y + 43); ctx.textAlign = "left";
+      ctx.fillStyle = INK; ctx.font = `600 ${kind === "pairs" ? 26 : 30}px Inter, sans-serif`;
+      let name = x.name; while (ctx.measureText(name).width > 590 && name.length > 4) name = name.slice(0, -2);
+      ctx.fillText(name === x.name ? name : name + "…", 170, y + 44);
+      ctx.fillStyle = SOFT; ctx.font = "400 26px Inter, sans-serif"; ctx.textAlign = "right"; ctx.fillText(x.thru, 840, y + 44);
+      ctx.fillStyle = NAVY2; ctx.font = "600 40px Oswald, sans-serif"; ctx.fillText(String(x.pts), 980, y + 47); ctx.textAlign = "left";
+    });
+    ctx.fillStyle = SOFT; ctx.font = "400 26px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(r.setup && r.setup.status === "final" ? "Final" : `Live · ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`, W / 2, H - 80);
+    ctx.fillText("thefalknersarmsgolfsociety.co.uk", W / 2, H - 40); ctx.textAlign = "left";
+    await shareCanvas(c, `${r.event.name.replace(/\s+/g, "-")}-${kind === "pairs" ? "pairs" : "leaderboard"}.png`, `${r.event.name} ${kind === "pairs" ? "pairs " : ""}leaderboard`);
+  }
+
   // ---------- leaderboards ----------
 
   function boardView(r) {
@@ -1391,13 +2053,15 @@
     if (nr) return nr;
     const formats = (r.setup.formats || ["stableford"]).filter(f => FORMAT_LABELS[f]);
     if (!formats.length) formats.push("stableford");
+    if (contestsOn(r).length) formats.push("contests");
     if (!r.board || !formats.includes(r.board)) r.board = formats[0] || "stableford";
     const sub = formats.length > 1 ? `<div class="subtabs">${formats.map(f =>
-      `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${FORMAT_LABELS[f]}</button>`).join("")}</div>` : "";
+      `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${FORMAT_LABELS[f] || "Side contests"}</button>`).join("")}</div>` : "";
     let body = "";
     if (!r.players.length) body = `<div class="card empty">Nobody's on this round yet.</div>`;
     else if (r.board === "medal") body = medalTable(r);
     else if (r.board === "skins") body = skinsTable(r);
+    else if (r.board === "contests") body = contestsBoard(r);
     else body = stablefordTable(r);
     return sub + body;
   }
@@ -1471,7 +2135,8 @@
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
-      <p class="small muted" style="margin:10px 0 0">Tap a player for their card. Ties on a finished card go to countback: last 9, 6, 3, then 1.</p></div>`;
+      <p class="small muted" style="margin:10px 0 0">Tap a player for their card. Ties on a finished card go to countback: last 9, 6, 3, then 1.</p></div>
+      ${started.length ? `<button class="btn ghost block share-btn" data-action="share-board" data-kind="stableford">Share leaderboard</button>` : ""}`;
   }
 
   function medalTable(r) {
@@ -1526,7 +2191,7 @@
     const hero = top.length ? leaderCard(top.length > 1 ? "Joint leading pairs" : "Leading pair",
       top.map(x => x.pair.players.map(p => esc(p.name)).join(" &amp; ")).join("<br>"), top[0].points, "pts",
       top.length > 1 ? "" : (top[0].complete ? "Both finished" : `Thru ${top[0].thru}`)) : "";
-    return `${liveLine(r)}${hero}
+    return `${liveLine(r)}${hero}${top.length ? `<button class="btn ghost block share-btn" style="margin:-4px 0 12px" data-action="share-board" data-kind="pairs">Share pairs leaderboard</button>` : ""}
       <div class="card board-card"><table class="board">
       <thead><tr><th></th><th>Pair</th><th class="num">Thru</th><th class="num">Pts</th></tr></thead>
       <tbody>${rows.map(x => `
@@ -1686,6 +2351,7 @@
       </div>
 
       ${checkinsSetupCard(r)}
+      ${r.contestsOff ? "" : contestsSetupCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
       <div class="card">
@@ -1953,8 +2619,10 @@
       <div class="hole-strip" id="pe-holes">${Array.from({ length: 18 }, (_, i) => `<button data-pe-hole="${i + 1}" class="${i === 0 ? "current" : done(i + 1) ? "done" : ""}">${i + 1}</button>`).join("")}</div>
       <div class="row" style="margin-bottom:8px">
         <div class="subtabs" style="margin:0">
-          <button data-pe-mode="tee" aria-selected="true">Placing: tee</button>
-          <button data-pe-mode="green" aria-selected="false">Placing: green</button>
+          <button data-pe-mode="tee" aria-selected="true">Tee</button>
+          <button data-pe-mode="green" aria-selected="false">Middle of green</button>
+          <button data-pe-mode="front" aria-selected="false">Front</button>
+          <button data-pe-mode="back" aria-selected="false">Back</button>
         </div>
         <span class="spacer"></span>
         <span class="small" id="pe-yds"></span>
@@ -1962,6 +2630,7 @@
       <div id="pe-host" class="pe-host"><div class="loading">Loading the satellite view…</div></div>
       <div class="row" style="margin-top:10px;gap:8px">
         <button class="btn ghost" id="pe-import">Import from OpenStreetMap</button>
+        <button class="btn ghost" id="pe-edges">Find fronts &amp; backs</button>
         <span class="spacer"></span>
         <span class="small muted" id="pe-count">${[...Array(18)].filter((_, i) => done(i + 1)).length}/18 mapped</span>
       </div>
@@ -1980,7 +2649,9 @@
       clearTimeout(saveTimers.get(hole));
       saveTimers.set(hole, setTimeout(async () => {
         const row = { course_id: courseId, hole, tee_lat: g.tee_lat ?? null, tee_lng: g.tee_lng ?? null,
-                      green_lat: g.green_lat ?? null, green_lng: g.green_lng ?? null, updated_at: new Date().toISOString() };
+                      green_lat: g.green_lat ?? null, green_lng: g.green_lng ?? null,
+                      front_lat: g.front_lat ?? null, front_lng: g.front_lng ?? null, back_lat: g.back_lat ?? null, back_lng: g.back_lng ?? null,
+                      updated_at: new Date().toISOString() };
         const { error } = await client.from("course_hole_geo").upsert(row, { onConflict: "course_id,hole" });
         if (error) status("Couldn't save hole " + hole + ": " + error.message, "err");
       }, 400));
@@ -2005,6 +2676,19 @@
       const h = Number(b.dataset.peHole); editor.setHole(h); refreshStrip(h);
     }));
     document.querySelectorAll("[data-pe-mode]").forEach(b => b.addEventListener("click", () => editor.setMode(b.dataset.peMode)));
+    $("#pe-edges").addEventListener("click", async () => {
+      const btn = $("#pe-edges"); btn.disabled = true;
+      status("Measuring the greens from OpenStreetMap…");
+      try {
+        const found = await window.HoleMaps.greensFromOsm(geo, t => { btn.textContent = `Measuring ${t}`; });
+        found.forEach((v, hole) => { const g = { ...(geo.get(hole) || {}), ...v }; geo.set(hole, g); saveHole(hole, g); });
+        editor.refresh();
+        const missing = [...geo.keys()].filter(h => !found.has(h));
+        status(found.size ? `Front and back found for ${found.size} green${found.size > 1 ? "s" : ""}${missing.length ? `. Not drawn on OpenStreetMap: ${missing.sort((a, b) => a - b).join(", ")} — use the Front and Back buttons to place those by hand` : ""}.`
+          : "None of these greens are drawn on OpenStreetMap — place the fronts and backs by hand.", found.size ? "ok" : "err");
+      } catch (e) { status(e.message, "err"); }
+      btn.disabled = false; btn.textContent = "Find fronts & backs";
+    });
     $("#pe-import").addEventListener("click", async () => {
       const c = course.lat != null ? { lat: course.lat, lng: course.lng } : editor.centre();
       status("Looking for this course on OpenStreetMap…");
@@ -2106,6 +2790,8 @@
     if (!el) {
       const tr = e.target.closest("tr[data-player]");
       if (tr && app.round) { scorecardSheet(app.round, tr.dataset.player); return; }
+      const st = e.target.closest("tr[data-stats]");
+      if (st && st.dataset.stats && st.dataset.stats !== "undefined") { location.hash = "#/stats/" + st.dataset.stats; return; }
       const pr = e.target.closest("tr[data-pair]");
       if (pr && app.round) pairSheet(app.round, Number(pr.dataset.pair));
       return;
@@ -2116,6 +2802,14 @@
       case "close-sheet": closeSheet(); break;
       case "hide-tip": store.set("hide-install-tip", Date.now()); el.closest(".install-tip").remove(); break;
       case "install-help": $("#menu").hidden = true; installSheet(); break;
+      case "push-help": $("#menu").hidden = true; pushSheet(); break;
+      case "push-on":
+        el.disabled = true;
+        try { await enablePush(); toast("Notifications on"); const tip = el.closest(".install-tip"); if (tip) tip.remove(); if (!$("#sheet").hidden) pushSheet(); }
+        catch (err) { toast(err.message, true); el.disabled = false; }
+        break;
+      case "push-off": await disablePush(); toast("Notifications off"); pushSheet(); break;
+      case "hide-push-tip": store.set("hide-push-tip", true); el.closest(".install-tip").remove(); break;
       case "install-now":
         if (installEvent) { installEvent.prompt(); const c = await installEvent.userChoice.catch(() => null); installEvent = null; if (c && c.outcome === "accepted") { closeSheet(); toast("Installed — open it from your home screen"); } }
         break;
@@ -2144,9 +2838,26 @@
         buzz(6);
         break;
       }
+      case "kp-putts": case "kp-fw": {
+        const k = r.kp;
+        if (!k) break;
+        const field = a === "kp-putts" ? "putts" : "fairway";
+        const v = a === "kp-putts" ? Number(el.dataset.val) : el.dataset.val;
+        k[field] = k[field] === v ? null : v;
+        el.parentElement.querySelectorAll(".kps-chip").forEach(b => b.classList.toggle("on", b === el && k[field] != null));
+        k.statsDirty = true;
+        break;
+      }
+      case "kp-stats-toggle": {
+        store.set("stats-on", !store.get("stats-on", false));
+        const k = r.kp;
+        if (k) { const pend = k.pending; keypadSheet(r, k.player, k.hole); if (pend != null) { r.kp.pending = pend; const b = document.querySelector(`#sheet-body .kp-key[data-action=kp][data-val="${pend}"]`); document.querySelectorAll("#sheet-body .kp-key[data-action=kp]").forEach(x => x.classList.toggle("on", x === b)); } }
+        break;
+      }
       case "kp-ok": {
         const k = r.kp;
         if (!k || k.pending == null) break;
+        if (k.statsDirty) saveHoleStats(r, k.player, k.hole, k.putts, k.fairway);
         r.hole = k.hole;
         const mine = myEntry(r, k.player, k.hole);
         const sc = (r.scores[k.player] || {})[k.hole];
@@ -2165,6 +2876,34 @@
         break;
       }
       case "review-cards": submitSheet(r); break;
+      case "stake": stakeSheet(r, el.dataset.comp); break;
+      case "stake-claim": claimStake(r, el.dataset.comp, el.dataset.player); break;
+      case "unstake": {
+        const { error } = await client.from("contest_claims").delete().eq("id", el.dataset.id);
+        if (error) { toast(error.message, true); break; }
+        r.claims = r.claims.filter(c => c.id !== el.dataset.id);
+        stakeSheet(r, el.dataset.comp); renderRoundBody();
+        break;
+      }
+      case "confirm-contest": confirmContest(r, el.dataset.comp); break;
+      case "post": postToFeed(r); break;
+      case "like": toggleLike(r, el.dataset.post); break;
+      case "comments": r.openComments = r.openComments === el.dataset.post ? null : el.dataset.post; renderRoundBody(); break;
+      case "comment": addComment(r, el.dataset.post); break;
+      case "delete-post": {
+        if (!confirm("Delete this post?")) break;
+        const { error } = await client.from("round_posts").delete().eq("id", el.dataset.post);
+        if (error) toast(error.message, true); else { r.posts = r.posts.filter(x => x.id !== el.dataset.post); renderRoundBody(); }
+        break;
+      }
+      case "delete-comment": {
+        const { error } = await client.from("round_post_comments").delete().eq("id", el.dataset.id);
+        if (error) toast(error.message, true); else { r.comments = r.comments.filter(x => x.id !== el.dataset.id); renderRoundBody(); }
+        break;
+      }
+      case "photo": openSheet(`<img src="${esc(el.dataset.src)}" alt="" style="width:100%;border-radius:12px;display:block">`); break;
+      case "share-card": shareCard(r, el.dataset.player); break;
+      case "share-board": shareBoard(r, el.dataset.kind); break;
       case "next-hole": {
         const missing = selectedPlayers(r).filter(p => !hasScore(p, r.hole));
         if (missing.length && canScore(r)) { missingSheet(r, missing, r.hole, r.hole === 18 ? "submit" : r.hole + 1); break; }
@@ -2237,6 +2976,14 @@
     }
   });
 
+  document.addEventListener("change", e => {
+    if (e.target && e.target.id === "feed-photo") {
+      const f = e.target.files && e.target.files[0];
+      $("#feed-photo-name").textContent = f ? f.name : "";
+      $("#feed-gallery-opt").hidden = !f;
+    }
+  });
+
   // Swipe across the hole to move between holes, like turning a page.
   let swipe = null;
   document.addEventListener("touchstart", e => {
@@ -2278,6 +3025,9 @@
     if (!app.approved) return renderNotApproved();
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return renderCourses();
+    if (parts[0] === "season") return renderSeason();
+    if (parts[0] === "me") return renderStats(null);
+    if (parts[0] === "stats" && parts[1]) return renderStats(parts[1]);
     if (parts[0] === "course" && parts[1]) return renderTeeEditor(parts[1]);
     if (parts[0] === "course-map" && parts[1]) return renderCourseMap(parts[1]);
     return renderHome();
