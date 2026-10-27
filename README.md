@@ -57,9 +57,14 @@ from Safari or Chrome.
 - **Score**: pick your group from the tee draw (or pick players), then
   go hole by hole. One phone per group is enough, but anyone on the round
   can score. Scores save on the phone first and send when there's signal
-- **Leaderboard**: Stableford (with countback), Medal net and gross, Skins
-  (net or gross, with carry-overs) and Pairs (combined and better ball),
-  updating live. Signed-in, approved members only
+- **Individual**: Stableford (with countback), Medal net and gross, and
+  Skins (net or gross, with carry-overs), updating live. Signed-in,
+  approved members only
+- **Pairs**: its own leaderboard, shown whenever the round has a pairs
+  draw on the admin page. Both players' Stableford points added together,
+  countback on the pair's combined last 9/6/3/1. A player holding two pair
+  numbers on an odd turnout counts in full for both. Finishing the round
+  fills in the winning pair on Results (left blank on an unbroken tie)
 - **Setup** (committee): course and tee, handicap method (full WHS, the
   handicap on file, or set by hand), allowance, formats, per-player
   overrides; start the round, then finish it to copy Stableford points

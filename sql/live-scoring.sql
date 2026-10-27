@@ -95,9 +95,12 @@ create index if not exists hole_scores_event_idx on hole_scores (event_id);
 -- ---------- The field for a round ----------
 -- Everyone playing, as player rows, with their handicap and draw.
 -- Members show up in attendance either by player or by profile, so
--- both are resolved to the player row here.
+-- both are resolved to the player row here. pair_groups is every pair
+-- number the player holds: two on an odd turnout (see
+-- sql/pairs-double-up.sql), and their score counts for both.
 
-create or replace function scoring_field(target uuid)
+drop function if exists scoring_field(uuid);
+create function scoring_field(target uuid)
 returns table (
   player_id uuid,
   profile_id uuid,
@@ -105,7 +108,7 @@ returns table (
   handicap numeric,
   is_guest boolean,
   tee_group integer,
-  pair_group integer
+  pair_groups integer[]
 )
 language sql stable security definer set search_path = public as $$
   with att as (
@@ -125,10 +128,10 @@ language sql stable security definer set search_path = public as $$
            where g.event_id = target and g.group_type = 'fours'
              and (g.player_id = att.pid or (g.profile_id is not null and g.profile_id = coalesce(pl.profile_id, att.att_profile)))
            order by g.group_number limit 1),
-         (select g.group_number from groupings g
+         coalesce((select array_agg(distinct g.group_number order by g.group_number) from groupings g
            where g.event_id = target and g.group_type = 'pairs'
-             and (g.player_id = att.pid or (g.profile_id is not null and g.profile_id = coalesce(pl.profile_id, att.att_profile)))
-           order by g.group_number limit 1)
+             and (g.player_id = att.pid or (g.profile_id is not null and g.profile_id = coalesce(pl.profile_id, att.att_profile)))),
+           '{}'::integer[])
     from att
     left join players pl on pl.id = att.pid
     left join profiles pr on pr.id = coalesce(pl.profile_id, att.att_profile)

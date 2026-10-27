@@ -187,22 +187,27 @@
     return { results, board, carry };
   }
 
-  // Pairs: combined Stableford and better-ball Stableford, side by side.
-  // pairs: [{ number, players: [player, player(, player)] }]
+  // Pairs: both players' Stableford points added together. A player in
+  // two pairs (odd turnout) counts in full for each.
+  // pairs: [{ number, players: [player, player] }]
+  // Ties on finished cards go to the pair's combined last 9, 6, 3, 1.
   function pairsBoard(holes, pairs) {
     const rows = pairs.map(pair => {
       const sums = pair.players.map(p => summarise(holes, p.scores, p.ph));
-      const combined = sums.reduce((t, s) => t + s.points, 0);
-      let betterBall = 0;
-      holes.forEach(h => {
-        const pts = sums.map(s => (s.holes[h.hole] && s.holes[h.hole].played) ? s.holes[h.hole].points : null)
-                        .filter(v => v != null);
-        if (pts.length) betterBall += Math.max(...pts);
-      });
-      const thru = Math.min(...sums.map(s => s.thru));
-      return { pair, sums, combined, betterBall, thru };
+      const points = sums.reduce((t, s) => t + s.points, 0);
+      const thru = sums.length ? Math.min(...sums.map(s => s.thru)) : 0;
+      const complete = sums.length > 0 && sums.every(s => s.complete);
+      const cb = [0, 0, 0, 0];
+      sums.forEach(s => countback(holes, s, "points").forEach((v, i) => { cb[i] += v; }));
+      return { pair, sums, points, thru, complete, cb, started: sums.some(s => s.thru > 0) };
     });
-    return rows;
+    rows.sort((a, b) =>
+      (b.points - a.points) ||
+      (a.complete && b.complete ? compareArrays(a.cb, b.cb, true) : 0) ||
+      (b.thru - a.thru) ||
+      (a.pair.number - b.pair.number));
+    return addPositions(rows, (x, y) => x.points === y.points &&
+      !(x.complete && y.complete && compareArrays(x.cb, y.cb, true) !== 0));
   }
 
   // Singles match play, net, off the difference in playing handicaps.

@@ -20,7 +20,9 @@
   const view = $("#view");
 
   const QUEUE_KEY = "falkners-score-queue";
-  const FORMAT_LABELS = { stableford: "Stableford", medal: "Medal", skins: "Skins", pairs: "Pairs" };
+  // Individual formats the committee can switch on. Pairs isn't one of
+  // them: it runs whenever the round has a pairs draw on the admin page.
+  const FORMAT_LABELS = { stableford: "Stableford", medal: "Medal", skins: "Skins" };
 
   const app = {
     user: null,
@@ -294,6 +296,22 @@
     });
   }
 
+  // The pairs draw as [{ number, players }], from the numbers set on the
+  // admin page. A player holding two numbers appears in both pairs.
+  function pairsOf(players) {
+    const byPair = new Map();
+    players.forEach(p => (p.pairs || []).forEach(n => {
+      if (!byPair.has(n)) byPair.set(n, []);
+      byPair.get(n).push(p);
+    }));
+    return [...byPair.entries()].sort((a, b) => a[0] - b[0]).map(([number, ps]) => ({ number, players: ps }));
+  }
+
+  function partnersOf(r, p) {
+    return (r.pairs || []).filter(x => x.players.some(y => y.id === p.id))
+      .map(x => ({ number: x.number, others: x.players.filter(y => y.id !== p.id) }));
+  }
+
   function parTotal(r) { return r.holes.reduce((t, h) => t + h.par, 0); }
 
   function buildPlayers(r) {
@@ -310,11 +328,12 @@
       });
       return {
         id: f.player_id, profileId: f.profile_id, name: f.name, index, ph,
-        guest: f.is_guest, group: f.tee_group, pair: f.pair_group,
+        guest: f.is_guest, group: f.tee_group, pairs: (f.pair_groups || []).map(Number),
         scores: r.scores[f.player_id] || {},
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
     r.unlinked = r.field.filter(f => !f.player_id);
+    r.pairs = pairsOf(r.players);
     r.me = r.players.find(p => p.profileId && app.user && p.profileId === app.user.id) || null;
   }
 
@@ -397,7 +416,8 @@
     const r = app.round;
     const st = r.setup ? r.setup.status : null;
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
-    const tabs = [["score", "Score"], ["board", "Leaderboard"]];
+    const tabs = [["score", "Score"], ["board", "Individual"]];
+    if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
     if (r.canManage) tabs.push(["setup", "Setup"]);
     view.innerHTML = `
       <div class="round-head">
@@ -411,6 +431,7 @@
     const body = $("#round-body");
     if (r.tab === "score") body.innerHTML = scoreView(r);
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
+    else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || pairsTable(r);
     else body.innerHTML = boardView(r);
   }
 
@@ -588,7 +609,7 @@
     };
     openSheet(`
       <h2>${esc(p.name)}</h2>
-      <p class="small muted">Index ${p.index == null ? "?" : p.index} · plays off ${p.ph == null ? "?" : p.ph} · thru ${sum.thru}</p>
+      <p class="small muted">Index ${p.index == null ? "?" : p.index} · plays off ${p.ph == null ? "?" : p.ph} · thru ${sum.thru}${partnersOf(r, p).map(x => `<br>Pair ${x.number}${x.others.length ? " with " + x.others.map(o => esc(o.name)).join(" & ") : ""}`).join("")}</p>
       <div class="row" style="gap:18px;margin-bottom:12px;">
         <div><div class="big">${sum.points}</div><div class="thru">Points</div></div>
         <div><div class="big">${sum.gross == null ? (sum.pickups ? "NR" : "–") : sum.gross}</div><div class="thru">Gross</div></div>
@@ -604,7 +625,7 @@
     const nr = notReady(r);
     if (nr) return nr;
     const formats = (r.setup.formats || ["stableford"]).filter(f => FORMAT_LABELS[f]);
-    if (formats.includes("pairs") && !r.players.some(p => p.pair != null)) formats.splice(formats.indexOf("pairs"), 1);
+    if (!formats.length) formats.push("stableford");
     if (!r.board || !formats.includes(r.board)) r.board = formats[0] || "stableford";
     const sub = formats.length > 1 ? `<div class="subtabs">${formats.map(f =>
       `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${FORMAT_LABELS[f]}</button>`).join("")}</div>` : "";
@@ -612,7 +633,6 @@
     if (!r.players.length) body = `<div class="card empty">Nobody's on this round yet.</div>`;
     else if (r.board === "medal") body = medalTable(r);
     else if (r.board === "skins") body = skinsTable(r);
-    else if (r.board === "pairs") body = pairsTable(r);
     else body = stablefordTable(r);
     return sub + body;
   }
@@ -677,27 +697,42 @@
   }
 
   function pairsTable(r) {
-    const byPair = new Map();
-    r.players.forEach(p => {
-      if (p.pair == null) return;
-      if (!byPair.has(p.pair)) byPair.set(p.pair, []);
-      byPair.get(p.pair).push(p);
-    });
-    const rows = S.pairsBoard(r.holes, [...byPair.entries()].map(([number, players]) => ({ number, players })));
-    const key = r.pairsKey || "combined";
-    rows.sort((a, b) => b[key] - a[key] || a.pair.number - b.pair.number);
+    const rows = S.pairsBoard(r.holes, r.pairs || []);
+    const doubled = r.players.filter(p => (p.pairs || []).length > 1);
+    const mine = r.me ? new Set((r.me.pairs || [])) : new Set();
     return `
-      <div class="subtabs">
-        <button data-action="pairs-key" data-key="combined" aria-selected="${key === "combined"}">Combined</button>
-        <button data-action="pairs-key" data-key="betterBall" aria-selected="${key === "betterBall"}">Better ball</button>
-      </div>
       <div class="card"><table class="board">
       <thead><tr><th></th><th>Pair</th><th class="num">Thru</th><th class="num">Pts</th></tr></thead>
-      <tbody>${rows.map((x, i) => `
-        <tr><td class="pos">${posCell(i + 1)}</td>
-          <td><strong>${x.pair.players.map(p => esc(p.name)).join(" & ")}</strong><div class="thru">Pair ${x.pair.number} · ${key === "combined" ? "better ball " + x.betterBall : "combined " + x.combined}</div></td>
-          <td class="num thru">${x.thru >= 18 ? "F" : "Thru " + x.thru}</td>
-          <td class="num"><span class="big">${x[key]}</span></td></tr>`).join("")}</tbody></table></div>`;
+      <tbody>${rows.map(x => `
+        <tr data-pair="${x.pair.number}" class="${mine.has(x.pair.number) ? "me" : ""}">
+          <td class="pos">${x.started ? posCell(x.pos) : ""}</td>
+          <td><strong>${x.pair.players.map(p => esc(p.name)).join(" & ")}</strong>
+            <div class="thru">Pair ${x.pair.number} · ${x.pair.players.map((p, i) => esc(p.name.split(" ")[0]) + " " + x.sums[i].points).join(" + ")}${x.pair.players.length < 2 ? " · needs a partner" : ""}</div></td>
+          <td class="num thru">${x.complete ? "F" : x.thru ? "Thru " + x.thru : "–"}</td>
+          <td class="num"><span class="big">${x.points}</span></td></tr>`).join("")}</tbody></table>
+      <p class="small muted" style="margin:10px 0 0">Both players' Stableford points added together. Ties on finished cards go to countback on the pair's combined last 9, 6, 3, then 1.${doubled.length ? ` ${doubled.map(p => esc(p.name)).join(", ")} ${doubled.length > 1 ? "are" : "is"} in two pairs and count${doubled.length > 1 ? "" : "s"} for both.` : ""}</p></div>`;
+  }
+
+  function pairSheet(r, number) {
+    const pair = (r.pairs || []).find(x => x.number === number);
+    if (!pair) return;
+    const sums = pair.players.map(p => S.summarise(r.holes, p.scores, p.ph));
+    const half = (from, to, label) => {
+      const hs = r.holes.slice(from, to);
+      const cell = (h, i) => { const s = sums[i].holes[h.hole]; return `<td>${s && s.played ? s.points : ""}</td>`; };
+      const tot = (i) => hs.reduce((t, h) => { const s = sums[i].holes[h.hole]; return s && s.played ? t + s.points : t; }, 0);
+      const comb = h => sums.reduce((t, sm) => { const s = sm.holes[h.hole]; return s && s.played ? t + s.points : t; }, 0);
+      return `
+        <tr><th>Hole</th>${hs.map(h => `<th style="text-align:center">${h.hole}</th>`).join("")}<th class="tot">${label}</th></tr>
+        ${pair.players.map((p, i) => `<tr><th>${esc(p.name.split(" ")[0])}</th>${hs.map(h => cell(h, i)).join("")}<td class="tot">${tot(i)}</td></tr>`).join("")}
+        <tr><th>Pair</th>${hs.map(h => `<td><b>${comb(h) || ""}</b></td>`).join("")}<td class="tot">${pair.players.reduce((t, _, i) => t + tot(i), 0)}</td></tr>`;
+    };
+    openSheet(`
+      <h2>Pair ${pair.number}</h2>
+      <p class="small muted">${pair.players.map((p, i) => `${esc(p.name)} (PH ${p.ph == null ? "?" : p.ph}) ${sums[i].points} pts thru ${sums[i].thru}`).join("<br>")}</p>
+      <div class="big" style="margin-bottom:10px">${sums.reduce((t, s) => t + s.points, 0)} pts</div>
+      <div class="card sc-wrap"><table class="sc">${half(0, 9, "Out")}</table></div>
+      <div class="card sc-wrap"><table class="sc">${half(9, 18, "In")}</table></div>`);
   }
 
   // ---------- setup (committee) ----------
@@ -736,7 +771,7 @@
     const hcpRows = r.players.map(p => {
       const h = r.hcps.get(p.id) || {};
       return `<tr>
-        <td>${esc(p.name)}${p.guest ? ' <span class="muted small">guest</span>' : ""}<div class="thru">${p.group ? "Group " + p.group : "No group"}${p.pair ? " · Pair " + p.pair : ""}</div></td>
+        <td>${esc(p.name)}${p.guest ? ' <span class="muted small">guest</span>' : ""}<div class="thru">${p.group ? "Group " + p.group : "No group"}${(p.pairs || []).length ? " · Pair " + p.pairs.join(" & ") : ""}</div></td>
         <td><input type="number" step="0.1" inputmode="decimal" data-hcp="index" data-player="${p.id}" value="${h.handicap_index != null ? h.handicap_index : (p.index != null ? p.index : "")}" aria-label="Index for ${esc(p.name)}"></td>
         <td><input type="number" step="1" inputmode="numeric" data-hcp="override" data-player="${p.id}" value="${h.playing_handicap != null ? h.playing_handicap : ""}" placeholder="–" aria-label="Override for ${esc(p.name)}"></td>
         <td class="ph">${p.ph == null ? "?" : p.ph}</td>
@@ -771,7 +806,7 @@
         <label class="field">Allowance %
           <input type="number" name="allowance" min="0" max="100" step="1" value="${s.allowance}">
         </label>
-        <div class="field" style="margin-bottom:12px">Formats
+        <div class="field" style="margin-bottom:12px">Individual formats
           <div class="checks" style="margin-top:6px">
             ${Object.entries(FORMAT_LABELS).map(([k, l]) => `<label class="check-chip"><input type="checkbox" name="formats" value="${k}" ${fmts.has(k) ? "checked" : ""}> ${l}</label>`).join("")}
           </div>
@@ -794,6 +829,11 @@
       </div>
 
       <div class="card">
+        <h2>Pairs</h2>
+        ${pairsSetupSummary(r)}
+      </div>
+
+      <div class="card">
         <h2>Playing handicaps</h2>
         <p class="small muted">Index is snapshotted when the round starts. Type an override to fix anyone's playing handicap.</p>
         ${r.unlinked.length ? `<div class="status-msg err">${r.unlinked.length} member${r.unlinked.length > 1 ? "s aren't" : " isn't"} on the player list yet, so can't be scored:
@@ -804,6 +844,24 @@
           <tbody>${hcpRows || `<tr><td colspan="4" class="muted">Nobody registered yet.</td></tr>`}</tbody>
         </table>
       </div>`;
+  }
+
+  function pairsSetupSummary(r) {
+    const pairs = r.pairs || [];
+    if (!pairs.length) {
+      return `<p class="small muted" style="margin:0">No pairs draw for this round. Set one under <b>Pairs draw</b> on the <a href="../admin.html">admin page</a> and the Pairs leaderboard appears here by itself.</p>`;
+    }
+    const short = pairs.filter(x => x.players.length < 2);
+    const crowded = pairs.filter(x => x.players.length > 2);
+    const unpaired = r.players.filter(p => !(p.pairs || []).length);
+    const doubled = r.players.filter(p => (p.pairs || []).length > 1);
+    const notes = [];
+    if (doubled.length) notes.push(`${doubled.map(p => esc(p.name)).join(", ")} ${doubled.length > 1 ? "are" : "is"} in two pairs and count${doubled.length > 1 ? "" : "s"} for both.`);
+    if (short.length) notes.push(`<span style="color:var(--bad)">Pair ${short.map(x => x.number).join(", ")} only ${short.length > 1 ? "have" : "has"} one player.</span>`);
+    if (crowded.length) notes.push(`<span style="color:var(--bad)">Pair ${crowded.map(x => x.number).join(", ")} ${crowded.length > 1 ? "have" : "has"} more than two players.</span>`);
+    if (unpaired.length) notes.push(`Not in a pair: ${unpaired.map(p => esc(p.name)).join(", ")}.`);
+    return `<p class="small" style="margin:0">${pairs.length} pair${pairs.length > 1 ? "s" : ""} from the draw on the <a href="../admin.html">admin page</a>, scored as both players' points added together.</p>
+      ${notes.length ? `<p class="small muted" style="margin:8px 0 0">${notes.join("<br>")}</p>` : ""}`;
   }
 
   function wireSetup(r) {
@@ -877,12 +935,24 @@
     await reloadRound();
   }
 
+  // The outright pairs winner, written the way the admin page writes it
+  // ("Name & Name"). A tie that countback can't split is left to the committee.
+  function pairWinner(r) {
+    const rows = S.pairsBoard(r.holes, r.pairs || []).filter(x => x.started && x.pair.players.length > 1);
+    if (!rows.length) return {};
+    const top = rows.filter(x => x.pos === 1);
+    if (top.length > 1) return { tied: top.map(x => x.pair.players.map(p => p.name).join(" & ")).join(" v ") };
+    return { name: top[0].pair.players.map(p => p.name).join(" & "), points: top[0].points };
+  }
+
   async function finalise(r) {
     const scored = r.players.map(p => ({ p, sum: S.summarise(r.holes, p.scores, p.ph) })).filter(x => x.sum.thru > 0);
     if (!scored.length) { toast("No scores to copy yet.", true); return; }
     const incomplete = scored.filter(x => !x.sum.complete).length;
+    const pw = pairWinner(r);
     const msg = `Copy Stableford points for ${scored.length} player${scored.length > 1 ? "s" : ""} into Results for ${r.event.name}?` +
       (incomplete ? `\n\n${incomplete} card${incomplete > 1 ? "s aren't" : " isn't"} finished — they'll go in with the points so far.` : "") +
+      (pw.name ? `\n\nWinning pair: ${pw.name} (${pw.points} pts).` : pw.tied ? `\n\nThe pairs are tied after countback (${pw.tied}), so the winning pair is left for you to fill in on the admin page.` : "") +
       `\n\nThis replaces any results already entered for these players on this round.`;
     if (!confirm(msg)) return;
     const rows = scored.map(({ p, sum }) => ({
@@ -891,6 +961,12 @@
     const { error } = await client.from("results").upsert(rows, { onConflict: "event_id,player_id" });
     if (error) { toast(error.message, true); return; }
     await client.from("events").update({ results_entered: true }).eq("id", r.id);
+    if (pw.name) {
+      // Only the winning pair is written: every other prize on the round stays as the committee left it.
+      const pz = await client.from("event_prizes").upsert(
+        { event_id: r.id, winning_pair: pw.name, updated_at: new Date().toISOString() }, { onConflict: "event_id" });
+      if (pz.error) toast("Results saved, but the winning pair didn't: " + pz.error.message, true);
+    }
     if (r.setup.status !== "final") await setStatus(r, "final");
     else toast("Results updated");
   }
@@ -1020,7 +1096,9 @@
     const el = e.target.closest("[data-action]");
     if (!el) {
       const tr = e.target.closest("tr[data-player]");
-      if (tr && app.round) scorecardSheet(app.round, tr.dataset.player);
+      if (tr && app.round) { scorecardSheet(app.round, tr.dataset.player); return; }
+      const pr = e.target.closest("tr[data-pair]");
+      if (pr && app.round) pairSheet(app.round, Number(pr.dataset.pair));
       return;
     }
     const r = app.round;
@@ -1031,7 +1109,6 @@
       case "tab": r.tab = el.dataset.tab; savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
       case "board": r.board = el.dataset.board; savePrefs(); renderRoundBody(); break;
       case "gross": r.gross = el.dataset.gross === "1"; renderRoundBody(); break;
-      case "pairs-key": r.pairsKey = el.dataset.key; renderRoundBody(); break;
       case "group": r.groupKey = el.dataset.key; savePrefs(); renderRoundBody(); break;
       case "custom-group": customGroupSheet(r); break;
       case "save-custom": {
