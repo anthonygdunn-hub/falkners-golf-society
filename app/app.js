@@ -923,7 +923,7 @@
     if (!p || !h) return;
     if (locked(r, p.id)) { toast("That card's been submitted — ask the committee to change it.", true); return; }
     if (!canScore(r)) { toast("Scoring isn't open on this round.", true); return; }
-    r.kp = { player: playerId, hole };
+    r.kp = { player: playerId, hole, pending: null };
     const shots = S.shotsOnHole(p.ph, h.stroke_index, 18);
     const sc = p.scores[hole];
     const mine = myEntry(r, p.id, hole);
@@ -939,9 +939,10 @@
       ${sc && sc.disputed ? `<div class="kp-dispute">${disputeBox(r, p, hole)}</div>` : ""}
       <div class="kp-grid">${keys.join("")}
         <button class="kp-key k-pu${cur === "P" ? " on" : ""}" data-action="kp" data-val="P">P/U<small>Pick up</small></button>
-        <button class="kp-key k-clear" data-action="kp" data-val="clear" ${mine ? "" : "disabled"}>Clear</button>
-        <button class="kp-key k-close" data-action="close-sheet">Close</button>
+        <button class="kp-key k-clear" data-action="kp-clear" ${mine ? "" : "disabled"}>Clear</button>
+        <button class="kp-key k-ok" data-action="kp-ok" aria-label="Confirm score" ${cur == null ? "disabled" : ""}>✓</button>
       </div>`);
+    r.kp.pending = cur;
   }
 
   const warnedGaps = new Set();
@@ -2133,14 +2134,34 @@
       case "prev-hole": if (r.hole > 1) { r.hole -= 1; r.anim = "back"; savePrefs(); renderRoundBody(); } break;
       case "set": setStroke(el.dataset.player, Number(el.dataset.val)); break;
       case "cell": keypadSheet(r, el.dataset.player, Number(el.dataset.hole)); break;
+      // Tap a number to pick it, then the tick to confirm it.
       case "kp": {
         const k = r.kp;
         if (!k) break;
+        k.pending = el.dataset.val === "P" ? "P" : Number(el.dataset.val);
+        document.querySelectorAll("#sheet-body .kp-key[data-action=kp]").forEach(b => b.classList.toggle("on", b === el));
+        const ok = document.querySelector("#sheet-body .k-ok"); if (ok) ok.disabled = false;
+        buzz(6);
+        break;
+      }
+      case "kp-ok": {
+        const k = r.kp;
+        if (!k || k.pending == null) break;
         r.hole = k.hole;
-        const v = el.dataset.val;
-        setStroke(k.player, v === "P" ? "pickup" : v === "clear" ? "clear" : Number(v));
-        if (v === "clear") keypadSheet(app.round, k.player, k.hole);
-        else afterKeypad(app.round, k.player, k.hole);
+        const mine = myEntry(r, k.player, k.hole);
+        const sc = (r.scores[k.player] || {})[k.hole];
+        const cur = mine ? (mine.picked_up ? "P" : mine.strokes) : sc ? (sc.picked_up ? "P" : sc.strokes) : null;
+        // Confirming the number already there still counts as this phone agreeing it.
+        if (k.pending !== cur || !mine) setStroke(k.player, k.pending === "P" ? "pickup" : k.pending);
+        afterKeypad(app.round, k.player, k.hole);
+        break;
+      }
+      case "kp-clear": {
+        const k = r.kp;
+        if (!k) break;
+        r.hole = k.hole;
+        setStroke(k.player, "clear");
+        keypadSheet(app.round, k.player, k.hole);
         break;
       }
       case "review-cards": submitSheet(r); break;

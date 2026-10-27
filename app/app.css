@@ -574,3 +574,5 @@ body.has-tabbar .hole-nav { padding-bottom: 4px; }
 .kp-key.k-close { background: #e2e7f0; color: var(--ink-soft); }
 .sg-head { font-size: .58rem; letter-spacing: 0; }
 .kp-title { font-size: 1.35rem; }
+.kp-key.k-ok { background: var(--good); color: #fff; font-family: var(--font-body); font-size: 2.2rem; font-weight: 700; box-shadow: none; }
+.kp-key.k-ok:disabled { background: #cfd8e3; color: #fff; }
