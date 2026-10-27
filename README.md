@@ -126,6 +126,7 @@ it again.
 21. `sql/lock-member-handicap.sql` — only the committee can change a handicap
 22. `sql/score-disputes.sql` — each phone's own entries, disputes, submitted cards, committee settling
 23. `sql/course-maps.sql` — tee and green pins for the hole maps
+24. `sql/scoring-function-grants.sql` — who can call the scoring functions
 
 Then redeploy the `member-alerts` Edge Function from
 `supabase/functions/member-alerts/index.ts` — it adds the "disputed score"
