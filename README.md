@@ -106,8 +106,8 @@ it again.
 17. `sql/round-competitions.sql` — the hole each side competition is played on, and the nearest the pin in 2 winners
 18. `sql/live-scoring.sql` — courses, tees, holes and hole-by-hole scores for the app
 19. `sql/course-milford.sql` — Milford Golf Club's White and Yellow tees (check against the card)
-21. `sql/lock-member-handicap.sql` — only the committee can change a handicap
 20. `sql/course-venues.sql` — Hurtmore, Clandon Golf and Tylney Park (check against the cards; Tylney needs its rating and slope adding)
+21. `sql/lock-member-handicap.sql` — only the committee can change a handicap
 
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain
