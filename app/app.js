@@ -748,7 +748,7 @@
   }
 
   // A tiny tap on phones that support it, so a score feels entered.
-  function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms || 8); } catch (e) { /* not supported */ } } }
+  function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms || 10); } catch (e) { /* not supported */ } } }
 
   function notReady(r) {
     if (!r.setup || !r.tee || r.holes.length !== 18) {
@@ -810,101 +810,164 @@
 
     const players = selectedPlayers(r);
     if (!players.length) {
-      return ci + personalSummary(r) + picker + `<div class="card empty"><p>Choose the group you're marking for, or just your own card.</p>
+      return ci + picker + `<div class="card empty"><p>Choose the group you're marking for, or just your own card.</p>
         <p class="small muted">One phone can score the whole group — nobody else needs the app. If two phones put in different numbers, everyone's told and it's flagged to agree.</p></div>`;
     }
-
-    const h = r.holes[r.hole - 1];
-    const gaps = missingHoles(r, players);
-    const strip = r.holes.map(x => {
-      const done = players.every(p => hasScore(p, x.hole));
-      const disputed = players.some(p => { const s = p.scores[x.hole]; return s && s.disputed; });
-      const minis = players.map(p => {
-        const s = p.scores[x.hole];
-        if (!hasScore(p, x.hole)) return `<i class="mini">·</i>`;
-        if (s.picked_up) return `<i class="mini pu">P</i>`;
-        const d = s.strokes - x.par;
-        return `<i class="mini ${d < 0 ? "under" : d > 0 ? "over" : ""}">${s.strokes}</i>`;
-      }).join("");
-      const cls = [x.hole === r.hole ? "current" : done ? "done" : "", disputed ? "disputed" : "", gaps.has(x.hole) ? "gap" : ""].join(" ").trim();
-      return `<button data-action="hole" data-hole="${x.hole}" class="${cls}" aria-label="Hole ${x.hole}${gaps.has(x.hole) ? ", score missing" : ""}">
-        <b>${x.hole}</b><span class="minis minis-${Math.min(players.length, 4)}">${minis}</span></button>`;
-    }).join("");
-
-    const cards = players.map(p => {
-      const sc = p.scores[h.hole];
-      const lock = locked(r, p.id);
-      const shots = S.shotsOnHole(p.ph, h.stroke_index, 18);
-      const sum = S.summarise(r.holes, p.scores, p.ph);
-      let valClass = "val", valText = "–";
-      if (sc && sc.disputed) valClass += " disputed";
-      if (sc && sc.picked_up) { valClass += " pu"; valText = "P/U"; }
-      else if (sc && sc.strokes != null) {
-        const diff = sc.strokes - h.par;
-        valClass += diff < 0 ? " under" : diff > 0 ? " over" : " set";
-        valText = sc.strokes;
-      }
-      const pts = sc ? S.stablefordPoints(h.par, sc.strokes, shots, sc.picked_up) : null;
-      const dots = shots > 0 ? `<span class="shots" aria-label="${shots} shot${shots > 1 ? "s" : ""}">${"<i></i>".repeat(Math.min(shots, 4))}</span>`
-        : shots < 0 ? `<span class="shots" aria-label="gives a shot back"><i class="minus"></i></span>` : "";
-      // Quick picks: one under par to three over, with − and + either side
-      // for anything else. Tapping a number sets it outright.
-      const cur = sc && !sc.picked_up ? sc.strokes : null;
-      const lo = Math.max(1, h.par - 1);
-      const chips = [];
-      for (let v = lo; v <= lo + 4; v++) {
-        const d = v - h.par;
-        chips.push(`<button class="chip ${d < 0 ? "c-under" : d > 0 ? "c-over" : "c-par"}${cur === v ? " on" : ""}" data-action="set" data-player="${p.id}" data-val="${v}" aria-label="${v} for ${esc(p.name)}" aria-pressed="${cur === v}" ${lock ? "disabled" : ""}>${v}</button>`);
-      }
-      return `
-        <div class="score-card${lock ? " is-locked" : ""}">
-          <div class="score-top">
-            <span class="avatar${r.me && p.id === r.me.id ? " me" : ""}" aria-hidden="true">${initials(p.name)}</span>
-            <div class="score-name">
-              <strong>${esc(p.name)}${dots}</strong>
-              <div class="sub">PH ${p.ph == null ? "?" : p.ph} · ${sum.points} pts · thru ${sum.thru}${pts != null ? ` · <span class="pts">${pts} pt${pts === 1 ? "" : "s"} here</span>` : ""}</div>
-            </div>
-            <button class="${valClass}" data-action="tap-val" data-player="${p.id}" aria-label="Score for ${esc(p.name)}" ${lock ? "disabled" : ""}>${valText}</button>
-          </div>
-          ${lock ? `<div class="sub locked-note"><span class="tick">✓</span> Card submitted</div>` : `
-          <div class="chips">
-            <button class="chip step" data-action="minus" data-player="${p.id}" aria-label="One fewer for ${esc(p.name)}">−</button>
-            ${chips.join("")}
-            <button class="chip step" data-action="plus" data-player="${p.id}" aria-label="One more for ${esc(p.name)}">+</button>
-          </div>
-          <div class="mini-actions">
-            <button data-action="pickup" data-player="${p.id}"${sc && sc.picked_up ? ' class="on"' : ""}>Pick up</button>
-            ${myEntry(r, p.id, h.hole) ? `<button data-action="clear" data-player="${p.id}">Clear</button>` : ""}
-          </div>`}
-          ${disputeBox(r, p, h.hole)}
-        </div>`;
-    }).join("");
-
+    const next = nextHole(r, players);
+    r.gpsHole = next;
     return `
       ${ci}
-      ${personalSummary(r)}
       ${picker}
+      ${groupBoard(r, players)}
       ${disputeBanner(r, players)}
-      <div class="hole-strip">${strip}</div>
-      <div class="swipe-zone">
-      <div class="hole-head">
-        <button class="hh-arrow" data-action="prev-hole" aria-label="Previous hole" ${r.hole === 1 ? "disabled" : ""}>‹</button>
-        <div class="num"><small>HOLE</small>${h.hole}</div>
-        <div class="facts">
-          <div>Par<b>${h.par}</b></div>
-          <div>SI<b>${h.stroke_index}</b></div>
-          ${h.yards ? `<div>Yds<b>${h.yards}</b></div>` : ""}
-        </div>
-        <button class="hh-arrow" data-action="next-hole" aria-label="Next hole">›</button>
-      </div>
-      ${gpsBar(r, h.hole)}
-      <div class="card score-list">${cards}</div>
-      <p class="swipe-hint small muted">Swipe left or right to change hole</p>
-      </div>
-      <div class="hole-nav">
-        <button class="btn ghost" data-action="prev-hole" ${r.hole === 1 ? "disabled" : ""}>← Hole ${r.hole - 1 || ""}</button>
-        <button class="btn" data-action="next-hole">${r.hole === 18 ? "Review & submit" : "Hole " + (r.hole + 1) + " →"}</button>
+      ${gpsBar(r, next)}
+      ${scoreGrid(r, players)}
+      <div class="grid-actions">
+        <button class="btn gold block" data-action="review-cards">Review &amp; submit cards</button>
       </div>`;
+  }
+
+  // The first hole the group hasn't finished: where they are on the course.
+  function nextHole(r, players) {
+    const h = r.holes.find(x => players.some(p => !hasScore(p, x.hole)));
+    return h ? h.hole : r.holes.length;
+  }
+
+  // The group's own mini leaderboard at the top of the card, with the
+  // way through to the whole field and the pairs.
+  function groupBoard(r, players) {
+    const rows = players.map(p => ({ p, sum: S.summarise(r.holes, p.scores, p.ph) }));
+    const circ = (v, cls) => `<span class="gb-c ${cls || ""}">${v}</span>`;
+    const tp = n => n == null ? "–" : n === 0 ? "E" : n > 0 ? "+" + n : String(n);
+    const tpc = n => n == null || n === 0 ? "" : n < 0 ? "under" : "over";
+    const live = r.setup && r.setup.status === "live";
+    const label = r.groupKey === "me" ? "Your card" : r.groupKey && r.groupKey.startsWith("g") ? "Group " + r.groupKey.slice(1) : "Your players";
+    return `<div class="card group-board">
+      <div class="gb-head">
+        <span class="gb-title">${esc(label)}${live ? ' <span class="gb-live"><i></i>live</span>' : ""}</span>
+        <span>HCP</span><span>Thru</span><span>Gross</span><span>Net</span><span>Pts</span>
+      </div>
+      ${rows.map(({ p, sum }) => `
+        <button class="gb-row${r.me && p.id === r.me.id ? " me" : ""}" data-action="open-card" data-player="${p.id}">
+          <span class="gb-name"><span class="avatar${r.me && p.id === r.me.id ? " me" : ""}">${initials(p.name)}</span><b>${esc(shortName(p.name))}</b>${flags(r, p)}</span>
+          <span class="gb-n">${p.ph == null ? "?" : p.ph}</span>
+          <span class="gb-n">${sum.thru}</span>
+          ${circ(sum.pickups ? "NR" : tp(sum.thru ? sum.grossToPar : null), "dark")}
+          ${circ(sum.pickups ? "NR" : tp(sum.thru ? sum.netToPar : null), sum.pickups ? "dark" : tpc(sum.thru ? sum.netToPar : null) || "dark")}
+          ${circ(sum.points, "pts")}
+        </button>`).join("")}
+      <div class="gb-links">
+        <button class="btn ghost" data-action="tab" data-tab="board">Full leaderboard ›</button>
+        ${r.pairs && r.pairs.length ? `<button class="btn ghost" data-action="tab" data-tab="pairs">Pairs ›</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  // The whole card on one screen, Golfify style: a row per hole and a
+  // column per player. Tap a cell to put the score in.
+  function scoreGrid(r, players) {
+    const gaps = missingHoles(r, players);
+    const cols = `grid-template-columns: 30px 40px 36px 30px repeat(${players.length}, minmax(0, 1fr));`;
+    const teeDot = `<span class="tee-dot" style="background:${esc((r.tee && r.tee.colour) || "#f2c94c")}" title="${esc(r.tee ? r.tee.name : "")} tees"></span>`;
+    const head = `<div class="sg-row sg-head" style="${cols}">
+      ${teeDot}<span>Yds</span><span>SI</span><span>Par</span>
+      ${players.map(p => `<span class="sg-who"><span class="avatar${r.me && p.id === r.me.id ? " me" : ""}">${initials(p.name)}</span></span>`).join("")}
+    </div>`;
+    const sums = players.map(p => S.summarise(r.holes, p.scores, p.ph));
+    const row = h => `<div class="sg-row${gaps.has(h.hole) ? " gap" : ""}" style="${cols}">
+      <span class="sg-hole">${h.hole}</span>
+      <span class="sg-yds">${h.yards || ""}</span>
+      <span class="sg-si">${h.stroke_index}</span>
+      <span class="sg-par">${h.par}</span>
+      ${players.map((p, i) => {
+        const sc = p.scores[h.hole];
+        const x = sums[i].holes[h.hole];
+        const shots = x.shots;
+        const dots = shots > 0 ? `<span class="sg-shots">${"•".repeat(Math.min(shots, 3))}</span>` : shots < 0 ? `<span class="sg-shots minus">+</span>` : "";
+        let cls = "sg-cell", txt = "+";
+        if (x.played) {
+          cls += " set";
+          if (x.picked_up) { cls += " pu"; txt = "P"; }
+          else { const d = x.strokes - h.par; cls += d < 0 ? " under" : d > 0 ? " over" : " par"; txt = x.strokes; }
+        }
+        if (sc && sc.disputed) cls += " disputed";
+        if (locked(r, p.id)) cls += " locked";
+        return `<button class="${cls}" data-action="cell" data-player="${p.id}" data-hole="${h.hole}" aria-label="${esc(p.name)}, hole ${h.hole}: ${x.played ? (x.picked_up ? "pick-up" : x.strokes) : "no score"}">
+          ${dots}<span class="sg-val">${txt}</span>${x.played ? `<span class="sg-pts">${x.points}</span>` : ""}</button>`;
+      }).join("")}
+    </div>`;
+    const nine = (from, to) => r.holes.slice(from, to);
+    const tot = (label, hs, f) => `<div class="sg-row sg-tot" style="${cols}">
+      <span class="sg-label">${label}</span>
+      ${players.map((p, i) => `<span class="sg-tv">${f(sums[i], hs)}</span>`).join("")}
+    </div>`;
+    const grossOf = (sm, hs) => { let t = 0, any = false; hs.forEach(h => { const x = sm.holes[h.hole]; if (x.played && !x.picked_up) { t += x.strokes; any = true; } }); return any ? t : "–"; };
+    const ptsOf = (sm, hs) => hs.reduce((t, h) => t + (sm.holes[h.hole].played ? sm.holes[h.hole].points : 0), 0);
+    const front = nine(0, 9), back = nine(9, 18);
+    return `<div class="card score-grid">
+      <div class="sg-sticky">${head}</div>
+      ${front.map(row).join("")}
+      ${tot("Out", front, (sm, hs) => `${grossOf(sm, hs)}<small>${ptsOf(sm, hs)} pts</small>`)}
+      ${back.map(row).join("")}
+      ${tot("In", back, (sm, hs) => `${grossOf(sm, hs)}<small>${ptsOf(sm, hs)} pts</small>`)}
+      ${tot("Gross", r.holes, (sm) => sm.pickups ? "NR" : sm.thru ? sm.gross : "–")}
+      ${tot("Points", r.holes, (sm) => `<b>${sm.points}</b>`)}
+      <p class="small muted sg-key">Tap a box to enter a score · dots are shots received · small number is points</p>
+    </div>`;
+  }
+
+  // The big number pad for one player on one hole.
+  function keypadSheet(r, playerId, hole) {
+    const p = r.players.find(x => x.id === playerId);
+    const h = r.holes.find(x => x.hole === hole);
+    if (!p || !h) return;
+    if (locked(r, p.id)) { toast("That card's been submitted — ask the committee to change it.", true); return; }
+    if (!canScore(r)) { toast("Scoring isn't open on this round.", true); return; }
+    r.kp = { player: playerId, hole };
+    const shots = S.shotsOnHole(p.ph, h.stroke_index, 18);
+    const sc = p.scores[hole];
+    const mine = myEntry(r, p.id, hole);
+    const cur = mine ? (mine.picked_up ? "P" : mine.strokes) : sc ? (sc.picked_up ? "P" : sc.strokes) : null;
+    const keys = [];
+    for (let v = 1; v <= 12; v++) {
+      const d = v - h.par;
+      keys.push(`<button class="kp-key ${d < 0 ? "k-under" : d > 0 ? "k-over" : "k-par"}${cur === v ? " on" : ""}" data-action="kp" data-val="${v}">${v}<small>${d === -2 ? "Eagle" : d === -1 ? "Birdie" : d === 0 ? "Par" : d === 1 ? "Bogey" : d === 2 ? "Double" : ""}</small></button>`);
+    }
+    openSheet(`
+      <div class="kp-title">${esc(p.name)} – Hole ${hole}</div>
+      <div class="kp-facts">Par ${h.par} · SI ${h.stroke_index}${h.yards ? ` · ${h.yards} yds` : ""} · ${shots > 0 ? `<b>${shots} shot${shots > 1 ? "s" : ""}</b>` : shots < 0 ? "<b>gives a shot back</b>" : "no shot"}</div>
+      ${sc && sc.disputed ? `<div class="kp-dispute">${disputeBox(r, p, hole)}</div>` : ""}
+      <div class="kp-grid">${keys.join("")}
+        <button class="kp-key k-pu${cur === "P" ? " on" : ""}" data-action="kp" data-val="P">P/U<small>Pick up</small></button>
+        <button class="kp-key k-clear" data-action="kp" data-val="clear" ${mine ? "" : "disabled"}>Clear</button>
+        <button class="kp-key k-close" data-action="close-sheet">Close</button>
+      </div>`);
+  }
+
+  const warnedGaps = new Set();
+
+  // After a score: on to the next player on this hole, then close.
+  function afterKeypad(r, playerId, hole) {
+    const players = selectedPlayers(r);
+    const idx = players.findIndex(p => p.id === playerId);
+    const nextP = players.slice(idx + 1).find(p => !hasScore(p, hole) && !locked(r, p.id));
+    if (nextP) { keypadSheet(r, nextP.id, hole); return; }
+    closeSheet();
+    // A hole behind with somebody missing? Say so once, with the way back.
+    const gaps = [...missingHoles(r, players)].filter(x => x < hole);
+    const key = gaps.join(",");
+    if (gaps.length && !warnedGaps.has(r.id + key)) {
+      warnedGaps.add(r.id + key);
+      const g = gaps[0];
+      const who = players.filter(p => !hasScore(p, g));
+      missingSheet(r, who, g, null);
+    }
+  }
+
+  // "Anthony Dunn" -> "Anthony D." so names fit beside the figures.
+  function shortName(name) {
+    const w = String(name || "").trim().split(/\s+/);
+    return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0] || "";
   }
 
   function initials(name) {
@@ -924,15 +987,15 @@
   }
 
   // Moving on with a score missing: say who, and let them go back or carry on.
-  function missingSheet(r, players, hole, onward) {
-    if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120]); } catch (e) { /* not supported */ } }
+  function missingSheet(r, players, hole) {
+    buzz([120, 60, 120]);
     const names = players.map(p => esc(p.name));
     openSheet(`
       <h2>No score on hole ${hole}</h2>
       <p>${names.length === 1 ? `<b>${names[0]}</b> hasn't` : `<b>${names.slice(0, -1).join(", ")}</b> and <b>${names[names.length - 1]}</b> haven't`} got a score on hole ${hole} yet.</p>
-      <p class="small muted">You can come back to it — the hole stays marked until it's filled in. Every hole needs a score or a pick-up before the card can be submitted.</p>
-      <button class="btn block" data-action="close-sheet">Go back to hole ${hole}</button>
-      <button class="btn ghost block" style="margin-top:8px" data-action="carry-on" data-to="${onward}">Carry on anyway</button>`);
+      <p class="small muted">The hole stays marked in red until it's filled in. Every hole needs a score or a pick-up before the card can be submitted.</p>
+      <button class="btn block" data-action="cell" data-player="${players[0] ? players[0].id : ""}" data-hole="${hole}">Go back to hole ${hole}</button>
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Carry on</button>`);
   }
 
   function locked(r, playerId) {
@@ -982,6 +1045,7 @@
     }
     const on = store.get("gps-on", false);
     return `<div class="gps-bar">
+      <span class="gps-hole">Hole ${hole}</span>
       <span id="gps-yds" class="gps-yds">${on ? gpsText(r, hole) : `<button class="mv-link" data-action="gps-on">Show yardage to the green</button>`}</span>
       <span class="spacer"></span>
       <button class="btn ghost" style="min-height:36px" data-action="hole-map">Map</button>
@@ -1003,7 +1067,7 @@
   if (window.HoleMaps) {
     window.HoleMaps.onGps(() => {
       const el = document.getElementById("gps-yds");
-      if (el && app.round && store.get("gps-on", false)) el.innerHTML = gpsText(app.round, app.round.hole);
+      if (el && app.round && store.get("gps-on", false)) el.innerHTML = gpsText(app.round, app.round.gpsHole || app.round.hole);
     });
   }
 
@@ -2068,6 +2132,18 @@
       case "hole": r.hole = Number(el.dataset.hole); savePrefs(); renderRoundBody(); break;
       case "prev-hole": if (r.hole > 1) { r.hole -= 1; r.anim = "back"; savePrefs(); renderRoundBody(); } break;
       case "set": setStroke(el.dataset.player, Number(el.dataset.val)); break;
+      case "cell": keypadSheet(r, el.dataset.player, Number(el.dataset.hole)); break;
+      case "kp": {
+        const k = r.kp;
+        if (!k) break;
+        r.hole = k.hole;
+        const v = el.dataset.val;
+        setStroke(k.player, v === "P" ? "pickup" : v === "clear" ? "clear" : Number(v));
+        if (v === "clear") keypadSheet(app.round, k.player, k.hole);
+        else afterKeypad(app.round, k.player, k.hole);
+        break;
+      }
+      case "review-cards": submitSheet(r); break;
       case "next-hole": {
         const missing = selectedPlayers(r).filter(p => !hasScore(p, r.hole));
         if (missing.length && canScore(r)) { missingSheet(r, missing, r.hole, r.hole === 18 ? "submit" : r.hole + 1); break; }
@@ -2103,12 +2179,12 @@
       case "accept": {
         const { error } = await client.rpc("accept_score", { p_event: r.id, p_player: el.dataset.player, p_hole: Number(el.dataset.hole),
           p_strokes: el.dataset.strokes === "" ? null : Number(el.dataset.strokes), p_picked_up: el.dataset.pu === "1" });
-        if (error) toast(error.message, true); else { toast("Agreed"); await reloadRound(true); }
+        if (error) toast(error.message, true); else { closeSheet(); toast("Agreed"); await reloadRound(true); }
         break;
       }
       case "ask-committee": {
         const { error } = await client.rpc("ask_committee", { p_event: r.id, p_player: el.dataset.player, p_hole: Number(el.dataset.hole) });
-        if (error) toast(error.message, true); else { toast("The committee's been told — they'll settle it from the scorecard."); await reloadRound(true); }
+        if (error) toast(error.message, true); else { closeSheet(); toast("The committee's been told — they'll settle it from the scorecard."); await reloadRound(true); }
         break;
       }
       case "settle": {
@@ -2133,7 +2209,7 @@
       case "gps-on": store.set("gps-on", true); window.HoleMaps.startGps(); renderRoundBody(); break;
       case "hole-map":
         window.HoleMaps.openHoleMap({
-          course: r.course, holes: r.holes, geo: r.geo, hole: r.hole,
+          course: r.course, holes: r.holes, geo: r.geo, hole: r.gpsHole || r.hole,
           onClose: hole => { store.set("gps-on", true); if (app.round) { app.round.hole = hole; savePrefs(); renderRoundBody(); } },
         });
         break;
