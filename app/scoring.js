@@ -344,6 +344,36 @@
     return { index: Math.min(54, Math.round(avg * 10) / 10), used: rule[0], of: n, adjust: rule[1] };
   }
 
+  // A round typed in as Stableford points (no card): each hole is worth
+  // 2 + par + shots - strokes, and a blob is the same as net double bogey,
+  // so the capped gross is par + playing handicap + 36 - points. The cap
+  // is on the shots actually received, slightly stricter than WHS's.
+  function pointsGross(points, ph, par) {
+    if (points == null || ph == null || par == null) return null;
+    return Number(par) + Number(ph) + 36 - Number(points);
+  }
+
+  // The society index after a round.
+  //  old:   index going into the round (before any temporary cut)
+  //  diffs: every differential so far, oldest first, this round's last
+  //  diff:  this round's differential (null if the card didn't count)
+  //  free:  true for a provisional handicap - no 2.0 cap
+  // Exceptional scores (7+ better than the index) come off as WHS does.
+  // Until a player has 20 cards no index moves more than 2.0 in a round.
+  const HC_STEP = 2;
+  function societyIndex(o) {
+    const whs = whsIndex(o.diffs);
+    const gap = o.diff != null && o.old != null ? o.old - o.diff : 0;
+    const esr = gap >= 10 ? 2 : gap >= 7 ? 1 : 0;
+    let next = whs ? whs.index - esr : o.old == null ? null : o.old - esr;
+    let capped = null;
+    if (next != null && o.old != null && !o.free && o.diffs.length < 20 && Math.abs(next - o.old) > HC_STEP) {
+      capped = Math.round(next * 10) / 10;
+      next = next < o.old ? o.old - HC_STEP : o.old + HC_STEP;
+    }
+    return { next: next == null ? null : Math.max(-10, Math.min(54, Math.round(next * 10) / 10)), whs, esr, capped };
+  }
+
   function validateCourseHoles(holes) {
     const errors = [];
     if (holes.length !== 18) errors.push("A course needs all 18 holes.");
@@ -363,7 +393,7 @@
 
   const api = {
     courseHandicap, courseHandicapRaw, playingHandicap, shotsOnHole, stablefordPoints, summarise,
-    stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, teamMatch, sideHandicaps, adjustedGross, differential, whsIndex, validateCourseHoles,
+    stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, teamMatch, sideHandicaps, adjustedGross, differential, whsIndex, pointsGross, societyIndex, HC_STEP, validateCourseHoles,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Scoring = api;

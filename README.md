@@ -149,6 +149,8 @@ it again.
 30. `sql/ryder-cup.sql` — Ryder Cup teams, sessions, matches and live match-play scoring
 31. `sql/handicap-reviews.sql` — handicap reviews after each round (WHS differentials and society cuts, approved by the committee)
 32. `sql/reminders.sql` — hourly reminders (entries closing, unpaid, the day before). Redeploy `push-notify` first
+33. `sql/society-handicaps.sql` — society handicaps (England Golf index, temporary cuts), practice rounds, divisions, Ryder Cup captains
+34. `sql/handicap-history-2026.sql` — this year's rounds as handicap history, worked out from Stableford points
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

@@ -176,6 +176,7 @@
     if (app.approved) loadAvatars().then(() => { if (!app.round) return; refreshRound(); });
     $("#menu-btn").hidden = false;
     $("#menu-courses").hidden = !app.committee;
+    if ($("#menu-handicaps")) $("#menu-handicaps").hidden = !app.committee;
   }
 
   function renderSignIn(msg) {
@@ -222,13 +223,18 @@
   async function renderHome() {
     view.innerHTML = `<div class="loading">Loading rounds…</div>`;
     const me = app.user.id;
-    const [{ data: events, error }, { data: setups }, { data: prof }, { data: mine }] = await Promise.all([
+    const [{ data: events, error }, { data: setups }, { data: prof }, { data: mine }, practiceRes] = await Promise.all([
       client.from("events").select("id, name, venue, event_date, tee_time, format, hidden, is_trip").eq("hidden", false).order("event_date"),
       client.from("event_scoring").select("event_id, status"),
       client.from("profiles").select("display_name").eq("id", me).maybeSingle(),
       client.from("players").select("id").eq("profile_id", me),
+      // Practice rounds are hidden from the website; until the database has
+      // them this just comes back empty.
+      client.from("events").select("id, name, venue, event_date, tee_time, is_practice").eq("is_practice", true).order("event_date", { ascending: false }).limit(6),
     ]);
     if (error) { view.innerHTML = `<div class="card status-msg err">Couldn't load rounds: ${esc(error.message)}</div>`; return; }
+    const practice = practiceRes && !practiceRes.error ? (practiceRes.data || []).filter(e => e.is_practice) : [];
+    app.practiceOn = !!(practiceRes && !practiceRes.error);
     const myPlayers = (mine || []).map(p => p.id);
     // Rounds you're down to play, by your account or your name on the player list.
     const [byProfile, byPlayer, myResults] = await Promise.all([
@@ -261,6 +267,10 @@
       <div class="card" id="season-card"><div class="loading" style="padding:12px">Loading the Order of Merit…</div></div>
       ${live.length > 1 ? `<div class="section-label">Live now</div>${live.slice(1).map(e => roundItem(e, status, playing)).join("")}` : ""}
       ${(live.length ? upcoming : upcoming.slice(1)).length ? `<div class="section-label">Coming up</div>${(live.length ? upcoming : upcoming.slice(1)).map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${practice.length || (app.committee && app.practiceOn) ? `<div class="section-label">Practice rounds</div>
+        ${practice.map(e => roundItem(e, status, playing)).join("")}
+        ${app.committee && app.practiceOn ? `<button class="btn ghost block practice-new" data-action="practice-new">＋ New practice round</button>
+          <p class="small muted practice-note">Score from anywhere — no GPS needed. Practice rounds never reach the website, the Order of Merit, records or handicaps.</p>` : ""}` : ""}
       ${past.length ? `<div class="section-label">Played</div>${past.slice(0, 4).map(e => roundItem(e, status, playing)).join("")}
         ${past.length > 4 ? `<details class="more-rounds"><summary>All ${past.length} played rounds</summary>${past.slice(4).map(e => roundItem(e, status, playing)).join("")}</details>` : ""}` : ""}`;
     loadLastScoreRank(myResults.data || [], events, myPlayers);
@@ -284,7 +294,7 @@
       <a class="card round-item" href="${e.is_trip ? "#/ryder/" : "#/round/"}${e.id}">
         <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
         <div class="round-meta">
-          <strong>${esc(e.name)}</strong>
+          <strong>${esc(e.name)}${e.is_practice ? ' <span class="badge practice">Practice</span>' : ""}</strong>
           <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}${playing.has(e.id) ? (e.event_date < londonToday() ? ' · <span class="playing">You played</span>' : ' · <span class="playing">You\'re playing</span>') : ""}</span>
         </div>
         ${badgeFor(status.get(e.id))}
@@ -416,6 +426,24 @@
 
   // ---------- a player's stats ----------
 
+  // Every round behind a society handicap, newest first, with the cards
+  // that currently count marked.
+  function hcHistoryCard(list, p) {
+    const withDiff = list.filter(x => x.differential != null);
+    const last = withDiff.slice(-20);
+    const w = S.whsIndex(last.map(x => Number(x.differential)));
+    const counting = new Set(w ? last.slice().sort((a, b) => Number(a.differential) - Number(b.differential)).slice(0, w.used).map(x => x.id || x.event_id) : []);
+    const tag = x => x.source === "points" ? '<span class="hc-src pts">from points</span>' : x.source === "manual" ? '<span class="hc-src man">committee</span>' : '<span class="hc-src card">app card</span>';
+    return `<div class="card"><h2>Handicap history</h2>
+      <p class="small muted" style="margin-top:-4px">${w ? `Best ${w.used} of the last ${w.of} differentials${w.adjust ? ` ${w.adjust}` : ""} = <b>${w.index}</b>.` : `${withDiff.length} of 3 cards needed for a calculated handicap.`} Cards that count are marked ★. Rounds before the app are worked out from Stableford points, so they're a close estimate rather than exact.</p>
+      ${list.slice().reverse().map(x => `<div class="hc-hist">
+        <div class="hc-h-when"><b>${esc(x.events ? x.events.name : x.source === "manual" ? "Committee" : "Round")}</b><span class="thru">${fmtDate(hcDate(x).slice(0, 10))}</span></div>
+        <div class="hc-h-mid">${tag(x)}${x.differential != null ? `<span class="hc-diff">${counting.has(x.id || x.event_id) ? "★ " : ""}${Number(x.differential).toFixed(1)}</span>` : ""}
+          ${x.note ? `<div class="thru">${esc(x.note)}</div>` : ""}</div>
+        <div class="hc-h-val">${x.new_index != null ? `${x.old_index != null ? `<span class="muted">${x.old_index} →</span> ` : ""}<b>${x.new_index}</b>` : ""}${Number(x.cut) > 0 ? `<div class="thru">−${x.cut} next round</div>` : ""}</div>
+      </div>`).join("")}</div>`;
+  }
+
   async function renderStats(playerId) {
     view.innerHTML = `<div class="loading">Loading stats…</div>`;
     let pid = playerId;
@@ -433,6 +461,13 @@
     ]);
     if (!pl.data) { view.innerHTML = `<div class="card status-msg err">Couldn't find that player.</div>`; return; }
     const p = pl.data;
+    // The working behind their society handicap, open to every member.
+    const [hr, hx] = await Promise.all([
+      client.from("handicap_reviews").select("*, events(name, event_date)").eq("player_id", pid),
+      client.from("players").select("official_index, hcp_cut, hcp_cut_note").eq("id", pid).maybeSingle(),
+    ]);
+    const hcHistory = hr.error ? null : (hr.data || []).slice().sort((a, b) => hcDate(a).localeCompare(hcDate(b)));
+    const hcExtra = hx.error ? {} : (hx.data || {});
     const evById = new Map((evs.data || []).map(e => [e.id, e]));
     const all = res.data || [];
     const mine = all.filter(x => x.player_id === pid && x.points != null && evById.has(x.event_id))
@@ -492,7 +527,8 @@
     view.innerHTML = `
       <a class="back-link" href="${isMe ? "#/" : "#/season"}">‹ ${isMe ? "Home" : "Order of Merit"}</a>
       <div class="profile-head">${avatar(p.name, p.profile_id, "big-av" + (isMe ? " me" : ""))}<div style="flex:1;min-width:0"><h1 style="margin:0">${esc(p.name)}</h1>
-        <div class="small muted">Handicap index ${p.handicap == null ? "?" : p.handicap}${isMe ? " · set by the committee" : ""}</div>
+        <div class="small muted">Society handicap ${p.handicap == null ? "?" : p.handicap}${hcExtra.official_index != null ? ` · England Golf ${hcExtra.official_index}` : ""}</div>
+        ${Number(hcExtra.hcp_cut) > 0 ? `<div class="hc-pending">${esc(hcExtra.hcp_cut_note || `−${hcExtra.hcp_cut} next round`)} — next round only</div>` : ""}
         ${isMe ? `<label class="mv-link photo-link">${app.avatars.get(app.user.id) ? "Change" : "Add"} profile picture<input type="file" id="avatar-file" accept="image/*" hidden></label>` : ""}</div></div>
       ${oom ? `<a class="card oom-card" href="#/season"><div><div class="lc-label" style="color:var(--ink-soft)">Order of Merit</div>
           <div class="oom-pos">${ordinal(oom.pos)} <small>of ${oom.of}</small>${oom.move ? ` <span class="move ${oom.move > 0 ? "up" : "down"}" style="display:inline">${oom.move > 0 ? "▲" : "▼"}${Math.abs(oom.move)}</span>` : ""}</div></div>
@@ -503,6 +539,7 @@
         <div class="lc-col"><div class="big">${best == null ? "–" : best}</div><div class="thru">best</div></div>
       </div>
       ${chart ? `<div class="card"><h2>Points by round</h2>${chart}</div>` : ""}
+      ${hcHistory && hcHistory.length ? hcHistoryCard(hcHistory, p) : ""}
       ${holes ? `<div class="card"><h2>Scoring</h2><p class="small muted" style="margin-top:-4px">From ${holes} holes scored in the app.</p>
         ${bar("Eagle or better", tally.eagle, "e")}${bar("Birdie", tally.birdie, "b")}${bar("Par", tally.par, "p")}${bar("Bogey", tally.bogey, "o")}${bar("Double", tally.double, "d")}${bar("Worse", tally.worse, "w")}${bar("Pick-up", tally.pu, "u")}
         <div class="last-card" style="margin-top:12px">
@@ -1032,6 +1069,9 @@
     app.round = r;
     subscribe(r);
     renderRoundBody();
+    // A finished round's handicaps are worked out the first time the
+    // committee opens it, whichever tab they're on.
+    if (app.committee && r.setup && r.setup.status === "final" && !r.event.is_practice && !r.hc) loadHcReview(r);
   }
 
   function savePrefs() {
@@ -1061,8 +1101,9 @@
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
-        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${badge}</div>
+        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : ""}${badge}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
+        ${r.event.is_practice ? `<div class="practice-banner">Practice round — nothing here counts. It doesn't reach the website, the Order of Merit, records or handicaps.</div>` : ""}
         ${r.tab === "score" || r.tab === "setup" ? `<div id="wx-slot">${r.wx ? weatherChip(r.wx) : ""}</div>` : ""}
       </div>
       <div id="round-body" class="${r.anim ? "anim-" + r.anim : ""}"></div>`;
@@ -1858,7 +1899,7 @@
     const [ev, cup, team, sessions, matches, pls, manage, att] = await Promise.all([
       client.from("events").select("*").eq("id", eventId).maybeSingle(),
       client.from("rc_cups").select("*").eq("event_id", eventId).maybeSingle(),
-      client.from("rc_players").select("player_id, side").eq("event_id", eventId),
+      client.from("rc_players").select("player_id, side, captain").eq("event_id", eventId),
       client.from("rc_sessions").select("*").eq("event_id", eventId).order("position"),
       client.from("rc_matches").select("*").eq("event_id", eventId).order("match_no"),
       client.from("players").select("id, name, handicap, profile_id, active"),
@@ -1868,13 +1909,20 @@
     if (ev.error) throw ev.error;
     if (!ev.data) throw new Error("That fixture doesn't exist.");
     if (cup.error) throw new Error("The Ryder Cup tables aren't set up in the database yet.");
+    // Before the captains update, fall back to the teams without them.
+    if (team.error) Object.assign(team, await client.from("rc_players").select("player_id, side").eq("event_id", eventId));
     const d = {
       id: eventId, event: ev.data, cup: cup.data, canManage: !!manage.data,
       team: new Map((team.data || []).map(t => [t.player_id, t.side])),
       sessions: sessions.data || [], matches: matches.data || [],
       players: pls.data || [], scores: new Map(), tees: new Map(), allTees: [],
       onTrip: new Set(),
+      captains: new Set((team.data || []).filter(t => t.captain).map(t => t.player_id)),
+      captainsOn: !!(team.data || []).length && "captain" in ((team.data || [])[0] || {}),
     };
+    const mineIds = new Set(d.players.filter(p => p.profile_id && app.user && p.profile_id === app.user.id).map(p => p.id));
+    const capt = [...d.captains].find(id => mineIds.has(id));
+    d.captainSide = capt ? d.team.get(capt) : null;
     const playersByProfile = new Map(d.players.filter(p => p.profile_id).map(p => [p.profile_id, p.id]));
     (att.data || []).filter(a => !a.status || a.status === "playing").forEach(a => {
       const pid = a.player_id || playersByProfile.get(a.profile_id);
@@ -2016,7 +2064,7 @@
     try { rc.data = await loadRyder(eventId); }
     catch (e) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card status-msg err">${esc(e.message)}</div>`; return; }
     if (tab) rc.tab = tab;
-    if (!rc.data.canManage) rc.tab = "matches";
+    if (!rc.data.canManage && !(rc.tab === "pick" && rc.data.captainSide)) rc.tab = "matches";
     if (rc.tab === "setup") await rcEnsureTees();
     rcSubscribe(rc.data);
     rcFlush();
@@ -2028,6 +2076,7 @@
     if (!d) return;
     const tabs = [["matches", "Matches", TAB_ICONS.board]];
     if (d.canManage) tabs.push(["setup", "Setup", TAB_ICONS.setup]);
+    else if (d.captainSide) tabs.push(["pick", "Pairings", TAB_ICONS.pairs || TAB_ICONS.setup]);
     showTabbar(tabs.map(([k, l, ic]) => `<button role="tab" data-action="rc-tab" data-tab="${k}" aria-selected="${rc.tab === k}">${ic}<span>${l}</span></button>`).join(""));
     const head = `<div class="round-head"><a class="back-link" href="#/">‹ Rounds</a>
       <h1>${esc(d.event.name)}</h1><div class="muted small">${esc(d.event.venue || "")} · ${fmtDate(d.event.event_date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</div></div>`;
@@ -2038,11 +2087,11 @@
         : `<div class="card empty"><p>The teams haven't been announced yet.</p><p class="small">The committee will put the teams and matches up here before the weekend.</p></div>`);
       return;
     }
-    view.innerHTML = head + (rc.tab === "setup" && d.canManage ? rcSetupView(d) : rcBoardView(d));
+    view.innerHTML = head + (rc.tab === "setup" && d.canManage ? rcSetupView(d) : rc.tab === "pick" && d.captainSide ? rcCaptainView(d) : rcBoardView(d));
   }
 
   function rcNames(d, ids, colour) {
-    return ids.length ? ids.map(id => `<span class="rc-pl">${avatar(rcPlayer(d, id).name, rcPlayer(d, id).profile_id)}<span>${esc(shortName(rcPlayer(d, id).name))}</span></span>`).join("") : `<span class="muted small">TBC</span>`;
+    return ids.length ? ids.map(id => `<span class="rc-pl">${avatar(rcPlayer(d, id).name, rcPlayer(d, id).profile_id)}<span>${esc(shortName(rcPlayer(d, id).name))}${d.captains.has(id) ? ' <i class="rc-c" title="Captain">C</i>' : ""}</span></span>`).join("") : `<span class="muted small">TBC</span>`;
   }
 
   function rcBoardView(d) {
@@ -2093,8 +2142,10 @@
         <p class="small muted" style="margin-top:-4px">Playing handicaps are this % of course handicap. In every match the lowest plays off scratch and the others get the difference. Foursomes pairs play off half their combined handicap.</p>
         <button class="btn block" data-action="rc-save-cup">Save teams</button></div>
       <div class="card"><div class="row"><h2 style="margin:0">Players</h2><span class="spacer"></span><span class="small muted">${count(1)} v ${count(2)}</span></div>
+        ${d.captainsOn ? `<p class="small muted" style="margin:6px 0 0">Tap <b>C</b> to make a player captain. Captains can pick their own team's pairings for each session.</p>` : ""}
         <p class="small muted">${d.onTrip.size ? "Everyone registered for the fixture." : "Nobody's registered for the fixture yet."} <button class="mv-link" data-action="rc-show-all">${rc.showAll ? "Only show those registered" : "Show every player"}</button></p>
         ${pool.map(p => { const sd = d.team.get(p.id); return `<div class="row rc-prow"><span class="rc-pname">${esc(p.name)} <span class="muted small">${p.handicap == null ? "" : p.handicap}</span></span><span class="spacer"></span>
+          ${sd && d.captainsOn ? `<button class="rc-capt${d.captains.has(p.id) ? " on" : ""}" data-action="rc-captain" data-player="${p.id}" aria-pressed="${d.captains.has(p.id)}" title="Captain">C</button>` : ""}
           <div class="rc-seg"><button data-action="rc-side" data-player="${p.id}" data-side="1" class="${sd === 1 ? "on" : ""}" style="${sd === 1 ? `background:${esc(c.team1_colour)}` : ""}">${esc(shortName(c.team1_name) || "1")}</button><button data-action="rc-side" data-player="${p.id}" data-side="0" class="${!sd ? "on0" : ""}">–</button><button data-action="rc-side" data-player="${p.id}" data-side="2" class="${sd === 2 ? "on" : ""}" style="${sd === 2 ? `background:${esc(c.team2_colour)}` : ""}">${esc(shortName(c.team2_name) || "2")}</button></div></div>`; }).join("") || `<p class="small muted">No players to show.</p>`}
       </div>
       ${d.sessions.map(s => { const ms = d.matches.filter(m => m.session_id === s.id); const per = rcPerSide(s.format);
@@ -2124,6 +2175,23 @@
         <label class="field">Course and tee<select id="rc-new-tee">${teeOpts(null)}</select></label>
         <label class="field">Date<input id="rc-new-date" type="date" value="${d.event.event_date}"></label>
         <button class="btn block" data-action="rc-add-session">Add session</button></div>`;
+  }
+
+  // A captain picks their own team for each match; the other side and
+  // everything else stays as the committee set it.
+  function rcCaptainView(d) {
+    const side = d.captainSide;
+    const c = rcColour(d, side);
+    const team = d.players.filter(p => d.team.get(p.id) === side).sort((a, b) => a.name.localeCompare(b.name));
+    const used = (s, m, id) => d.matches.some(x => x.session_id === s.id && x.id !== m.id && x[side === 1 ? "side1" : "side2"].includes(id));
+    return `<div class="card"><h2>Your pairings</h2><p class="small muted" style="margin-top:0">You're captain of <b style="color:${esc(c)}">${esc(rcTeamName(d, side))}</b>. Pick who plays in each match. The committee sets the sessions, the matches and the other team.</p></div>
+      ${d.sessions.map(s => { const ms = d.matches.filter(m => m.session_id === s.id); const per = rcPerSide(s.format);
+        return `<div class="card rc-sess-edit"><div class="row"><h2 style="margin:0">${esc(s.name)}</h2><span class="spacer"></span><span class="small muted">${RC_FORMATS[s.format]}</span></div>
+          ${ms.map(m => { const mine = m[side === 1 ? "side1" : "side2"], theirs = m[side === 1 ? "side2" : "side1"];
+            return `<div class="rc-medit"><span class="rc-mno">${m.match_no}</span>
+              <div class="rc-mside" style="border-color:${esc(c)}">${Array.from({ length: per }, (_, i) => `<select class="rc-sel" data-rc-pick="${m.id}" data-side="${side}" data-i="${i}" ${s.status === "final" ? "disabled" : ""}><option value="">—</option>${team.map(p => `<option value="${p.id}" ${mine[i] === p.id ? "selected" : ""}>${esc(p.name)}${used(s, m, p.id) ? " (in another match)" : ""}</option>`).join("")}</select>`).join("")}</div>
+              <span class="muted small">v</span><div class="rc-mside rc-theirs">${theirs.length ? theirs.map(id => esc(shortName(rcPlayer(d, id).name))).join(" &amp; ") : '<span class="muted small">TBC</span>'}</div></div>`; }).join("") || `<p class="small muted">No matches in this session yet.</p>`}
+        </div>`; }).join("") || `<div class="card empty"><p>The committee hasn't added any sessions yet.</p></div>`}`;
   }
 
   async function rcEnsureTees() {
@@ -2233,6 +2301,149 @@
     drawRcMatch(matchId);
   }
 
+
+  // ---------- society handicaps: the committee's list ----------
+  // Everyone on the player list: their society handicap, their England
+  // Golf index if they have one (the starting point), how many cards are
+  // behind them and what those cards work out at. Players without an
+  // England Golf index can be given a provisional handicap from their
+  // society rounds in one go.
+
+  const hcList = { data: null, q: "", filter: "all" };
+
+  async function loadHandicaps() {
+    const [pl, rv] = await Promise.all([
+      client.from("players").select("id, name, handicap, active, official_index, hcp_cut, hcp_cut_note").order("name"),
+      client.from("handicap_reviews").select("player_id, event_id, differential, source, approved_at, events(event_date)"),
+    ]);
+    if (pl.error || rv.error) return { off: true };
+    const by = new Map();
+    (rv.data || []).filter(x => x.differential != null).forEach(x => { if (!by.has(x.player_id)) by.set(x.player_id, []); by.get(x.player_id).push(x); });
+    const rows = (pl.data || []).filter(p => p.active !== false).map(p => {
+      const h = (by.get(p.id) || []).sort((a, b) => hcDate(a).localeCompare(hcDate(b)));
+      const w = S.whsIndex(h.map(x => Number(x.differential)));
+      return { p, cards: h.length, calc: w ? w.index : null, w };
+    });
+    return { rows };
+  }
+
+  async function renderHandicaps() {
+    if (!app.committee) { view.innerHTML = `<div class="card empty">Committee only.</div>`; return; }
+    view.innerHTML = `<div class="loading">Loading handicaps…</div>`;
+    hcList.data = await loadHandicaps();
+    drawHandicaps();
+  }
+
+  function drawHandicaps() {
+    const d = hcList.data;
+    if (d.off) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card status-msg err">Society handicaps need a database update before they can work.</div>`; return; }
+    const q = hcList.q.toLowerCase();
+    const rows = d.rows.filter(x => (!q || x.p.name.toLowerCase().includes(q)) &&
+      (hcList.filter === "all" || (hcList.filter === "noeg" ? x.p.official_index == null : x.p.official_index != null)));
+    const prov = d.rows.filter(x => x.p.official_index == null && x.calc != null && x.calc !== Number(x.p.handicap));
+    view.innerHTML = `<a class="back-link" href="#/">‹ Home</a>
+      <h1>Society handicaps</h1>
+      <p class="small muted">Recalculated for everyone after every finished round — best 8 of the last 20 differentials, fewer while there aren't 20. Put in each player's England Golf index if they have one: it's their starting point, and no index then moves more than 2.0 in a round until they have 20 cards. Players without one can be given a provisional handicap from their society rounds.</p>
+      ${prov.length ? `<div class="card hc-prov"><b>${prov.length} player${prov.length > 1 ? "s" : ""} without an England Golf index ${prov.length > 1 ? "have" : "has"} a calculated handicap</b>
+        <p class="small muted" style="margin:4px 0 10px">From at least 3 society rounds. Setting it replaces their current figure.</p>
+        <button class="btn gold block" data-action="hc-provisional">Set ${prov.length} provisional handicap${prov.length > 1 ? "s" : ""}</button></div>` : ""}
+      <div class="row hc-tools"><input id="hc-find" placeholder="Find a player" value="${esc(hcList.q)}">
+        <select id="hc-filter"><option value="all">Everyone</option><option value="eg" ${hcList.filter === "eg" ? "selected" : ""}>England Golf</option><option value="noeg" ${hcList.filter === "noeg" ? "selected" : ""}>No England Golf</option></select></div>
+      <div class="card board-card"><table class="board hc-table">
+        <thead><tr><th>Player</th><th class="num">Society</th><th class="num">England Golf</th><th class="num">Cards</th><th class="num">Works out</th></tr></thead>
+        <tbody>${rows.map(x => `<tr>
+          <td><a href="#/stats/${x.p.id}"><strong>${esc(x.p.name)}</strong></a>${Number(x.p.hcp_cut) > 0 ? `<div class="thru">−${x.p.hcp_cut} next round</div>` : ""}</td>
+          <td class="num"><span class="big">${x.p.handicap == null ? "?" : x.p.handicap}</span></td>
+          <td class="num"><input class="hc-eg" data-eg="${x.p.id}" type="number" step="0.1" inputmode="decimal" value="${x.p.official_index == null ? "" : x.p.official_index}" placeholder="–" aria-label="England Golf index for ${esc(x.p.name)}"></td>
+          <td class="num thru">${x.cards}</td>
+          <td class="num">${x.calc == null ? '<span class="thru">–</span>' : `<b class="${x.calc < Number(x.p.handicap) ? "hc-new down" : x.calc > Number(x.p.handicap) ? "hc-new up" : ""}">${x.calc}</b>`}</td></tr>`).join("")}</tbody></table>
+        <p class="small muted" style="margin:10px 0 0">"Works out" is what their cards alone give, with no 2.0 cap. Tap a name for the full working.</p></div>`;
+    $("#hc-find").addEventListener("input", e => { hcList.q = e.target.value; const pos = e.target.selectionStart; drawHandicaps(); const f = $("#hc-find"); f.focus(); f.setSelectionRange(pos, pos); });
+    $("#hc-filter").addEventListener("change", e => { hcList.filter = e.target.value; drawHandicaps(); });
+  }
+
+  async function saveOfficial(pid, value) {
+    const v = value === "" ? null : Math.round(Number(value) * 10) / 10;
+    if (v != null && (isNaN(v) || v < -10 || v > 54)) { toast("Enter an index between −10 and 54, or leave it blank.", true); return; }
+    const { error } = await client.from("players").update({ official_index: v }).eq("id", pid);
+    if (error) { toast(error.message, true); return; }
+    const row = hcList.data.rows.find(x => x.p.id === pid); if (row) row.p.official_index = v;
+    toast(v == null ? "England Golf index cleared" : "England Golf index saved");
+  }
+
+  async function setProvisional() {
+    const list = hcList.data.rows.filter(x => x.p.official_index == null && x.calc != null && x.calc !== Number(x.p.handicap));
+    if (!list.length || !confirm(`Set provisional handicaps for ${list.length} player${list.length > 1 ? "s" : ""} from their society rounds?`)) return;
+    for (const x of list) {
+      const a = await client.from("handicap_reviews").insert({ event_id: null, player_id: x.p.id, old_index: x.p.handicap, new_index: x.calc, whs_index: x.calc,
+        source: "manual", note: `Provisional handicap from ${x.cards} society round${x.cards > 1 ? "s" : ""} (best ${x.w.used} of ${x.w.of}${x.w.adjust ? ` ${x.w.adjust}` : ""})`, approved_by: app.user.id });
+      if (a.error) { toast(a.error.message, true); return; }
+      const b = await client.from("players").update({ handicap: x.calc }).eq("id", x.p.id);
+      if (b.error) { toast(b.error.message, true); return; }
+    }
+    toast(`${list.length} provisional handicap${list.length > 1 ? "s" : ""} set`);
+    renderHandicaps();
+  }
+
+  // ---------- practice rounds ----------
+  // A round to try the app out, scored from anywhere. Hidden from the
+  // website; never copied to results; no handicap changes; cuts untouched.
+
+  async function practiceSheet() {
+    openSheet(`<div class="loading">Loading…</div>`);
+    const [t, pl] = await Promise.all([
+      client.from("course_tees").select("id, name, course_id, courses(name)"),
+      client.from("players").select("id, name, profile_id, active").order("name"),
+    ]);
+    const tees = (t.data || []).sort((a, b) => ((a.courses && a.courses.name) || "").localeCompare((b.courses && b.courses.name) || "") || a.name.localeCompare(b.name));
+    const players = (pl.data || []).filter(x => x.active !== false);
+    const mine = players.find(x => x.profile_id === app.user.id);
+    openSheet(`<h2>New practice round</h2>
+      <p class="small muted" style="margin-top:-4px">Pick a course and the players. They're put in fours in the order ticked; you can change groups, contests and formats in Setup afterwards.</p>
+      <label class="field">Name<input id="pr-name" value="Practice round"></label>
+      <label class="field">Date<input id="pr-date" type="date" value="${londonToday()}"></label>
+      <label class="field">Course and tee<select id="pr-tee">${tees.map(x => `<option value="${x.id}">${esc(x.courses ? x.courses.name : "")} · ${esc(x.name)}</option>`).join("")}</select></label>
+      <label class="field" style="margin-bottom:6px">Players<input id="pr-find" placeholder="Find a player" autocomplete="off"></label>
+      <div class="pr-list">${players.map(x => `<label class="pr-pl" data-name="${esc(x.name.toLowerCase())}"><input type="checkbox" value="${x.id}" ${mine && mine.id === x.id ? "checked" : ""}><span>${esc(x.name)}</span></label>`).join("")}</div>
+      <p class="small muted" id="pr-count"></p>
+      <button class="btn gold block" data-action="practice-create">Create practice round</button>
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Cancel</button>`);
+    const count = () => { const n = document.querySelectorAll(".pr-list input:checked").length; $("#pr-count").textContent = `${n} player${n === 1 ? "" : "s"} · ${Math.ceil(n / 4) || 0} group${Math.ceil(n / 4) === 1 ? "" : "s"}`; };
+    $("#sheet").addEventListener("change", e => { if (e.target.closest(".pr-list")) { if (e.target.checked) e.target.dataset.at = Date.now(); count(); } });
+    $("#pr-find").addEventListener("input", e => { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll(".pr-pl").forEach(l => { l.hidden = q && !l.dataset.name.includes(q); }); });
+    count();
+  }
+
+  async function createPractice() {
+    const ids = [...document.querySelectorAll(".pr-list input:checked")].sort((a, b) => (Number(a.dataset.at) || 0) - (Number(b.dataset.at) || 0)).map(x => x.value);
+    const tee = $("#pr-tee").value, date = $("#pr-date").value || londonToday();
+    if (!tee) { toast("Choose a course first.", true); return; }
+    if (!ids.length) { toast("Tick at least one player.", true); return; }
+    const teeName = $("#pr-tee").selectedOptions[0].textContent.split(" · ")[0];
+    const btn = document.querySelector("[data-action=practice-create]"); btn.disabled = true; btn.textContent = "Creating…";
+    const ev = await client.from("events").insert({ name: $("#pr-name").value.trim() || "Practice round", venue: teeName, event_date: date,
+      hidden: true, is_practice: true, order_of_merit: false }).select().single();
+    if (ev.error || !ev.data) { toast((ev.error && ev.error.message) || "Couldn't create it.", true); btn.disabled = false; btn.textContent = "Create practice round"; return; }
+    const id = ev.data.id;
+    const steps = [
+      client.from("event_scoring").upsert({ event_id: id, tee_id: tee, handicap_method: "whs", allowance: DEFAULT_ALLOWANCE, formats: ["stableford"], skins_mode: "off", status: "setup", updated_at: new Date().toISOString() }, { onConflict: "event_id" }),
+      client.from("attendance").insert(ids.map(pid => ({ event_id: id, player_id: pid, status: "playing", payment_status: "confirmed" }))),
+      client.from("groupings").insert(ids.map((pid, i) => ({ event_id: id, player_id: pid, group_type: "fours", group_number: Math.floor(i / 4) + 1, position: i % 4 }))),
+    ];
+    for (const st of steps) { const res = await st; if (res.error) { toast(res.error.message, true); break; } }
+    closeSheet();
+    toast("Practice round ready — publish it in Setup to start scoring");
+    location.hash = "#/round/" + id;
+  }
+
+  async function deletePractice(r) {
+    if (!r || !r.event.is_practice) return;
+    if (!confirm(`Delete ${r.event.name} and every score in it?`)) return;
+    const { error } = await client.from("events").delete().eq("id", r.id).eq("is_practice", true);
+    if (error) { toast(error.message, true); return; }
+    toast("Practice round deleted");
+    location.hash = "#/";
+  }
 
   // ---------- records & honours ----------
 
@@ -2492,106 +2703,138 @@
   }
 
 
-  // ---------- handicap review after the round (committee) ----------
-  // England Golf's way of working out an index (score differentials, best
-  // 8 of the last 20) on the society's own cards, plus the society's cuts
-  // for the winners. Nothing changes until the committee approves it.
+  // ---------- society handicaps ----------
+  // Everyone's society index is recalculated when a round is finished:
+  // each card's differential (holes capped at net double bogey, adjusted
+  // for slope and rating), then the best 8 of the last 20 - fewer while
+  // there aren't 20 - with exceptional scores taken off as WHS does. Until
+  // a player has 20 cards no index moves more than 2.0 in one round.
+  // The winner and runner-up get a temporary cut (2 and 1) for the next
+  // round they play only; it carries over if they miss rounds, and the
+  // recalculation ignores it. The committee can change any figure after.
+  // Every round's working is kept, and every member can read it.
+  const HC_CUTS = [2, 1];
 
   async function loadHcReview(r) {
     const ids = r.players.map(p => p.id);
-    const { data, error } = ids.length ? await client.from("handicap_reviews").select("*, events(event_date)").in("player_id", ids) : { data: [] };
-    r.hc = { prior: error ? null : (data || []), cuts: r.hc && r.hc.cuts || { w: 2, r: 1 }, edits: {}, off: !!error };
+    const [rev, pl] = await Promise.all([
+      ids.length ? client.from("handicap_reviews").select("*, events(event_date, name)").in("player_id", ids) : Promise.resolve({ data: [] }),
+      ids.length ? client.from("players").select("id, handicap, official_index, hcp_cut, hcp_cut_note").in("id", ids) : Promise.resolve({ data: [] }),
+    ]);
+    r.hc = { prior: rev.error ? [] : (rev.data || []), off: !!rev.error, v2: !pl.error, players: new Map((pl.data || []).map(x => [x.id, x])), edit: r.hc && r.hc.edit || null };
+    const pending = r.hc.v2 && !r.hc.off && app.committee ? hcRows(r).filter(x => !x.done && x.next != null) : [];
+    if (pending.length && !r.hcApplying) { r.hcApplying = true; await hcApply(r, pending); r.hcApplying = false; return; }
     if (app.round && app.round.id === r.id && app.round.tab === "setup") renderRoundBody();
   }
 
-  const HC_STEP = 2;
-  function hcSuggest(r, p, board) {
-    const hc = r.hc;
-    const old = p.index;
+  const hcDate = x => String((x.events && x.events.event_date) || x.approved_at || "");
+
+  // Finishing positions for the cuts: per division when the round has them.
+  function hcPositions(r) {
+    const split = r.setup && r.setup.division_split;
+    const groups = split ? [r.players.filter(p => p.index != null && p.index <= split), r.players.filter(p => !(p.index != null && p.index <= split))] : [r.players];
+    const pos = new Map();
+    groups.forEach(g => S.stablefordBoard(r.holes, g).forEach(x => { if (x.sum.complete) pos.set(x.player.id, x.pos); }));
+    return pos;
+  }
+
+  function hcSuggest(r, p, positions) {
+    const h = r.hcps.get(p.id) || {};
+    const cutUsed = Number(h.cut) || 0;
+    // The index going into the round, before any temporary cut.
+    const old = p.index == null ? null : Math.round((Number(p.index) + cutUsed) * 10) / 10;
     const t = r.tee, par = parTotal(r);
     const sum = S.summarise(r.holes, p.scores, p.ph);
-    const done = hc.prior.find(x => x.event_id === r.id && x.player_id === p.id);
-    const out = { p, old, done, notes: [] };
-    let diff = null;
+    const done = r.hc.prior.find(x => x.event_id === r.id && x.player_id === p.id);
+    const out = { p, old, cutUsed, done, notes: [], diff: null };
     if (sum.thru === 18 && t && t.slope && t.course_rating != null && old != null) {
       const ch = S.courseHandicap(old, t.slope, t.course_rating, par);
-      const ag = S.adjustedGross(r.holes, p.scores, ch);
-      diff = S.differential(ag.ags, t.slope, Number(t.course_rating));
-      out.ags = ag.ags;
-    } else if (sum.thru !== 18) out.notes.push("card not complete");
-    else if (!t || !t.slope || t.course_rating == null) out.notes.push("tee has no slope or rating");
-    out.diff = diff;
-    const prior = hc.prior.filter(x => x.player_id === p.id && x.event_id !== r.id && x.differential != null)
-      .sort((a, b) => String((a.events || {}).event_date || a.approved_at).localeCompare(String((b.events || {}).event_date || b.approved_at)));
-    const diffs = prior.map(x => Number(x.differential)).concat(diff != null ? [diff] : []);
-    const whs = S.whsIndex(diffs);
-    out.whs = whs;
-    const pos = (board.find(x => x.player.id === p.id) || {}).pos;
-    const cut = pos === 1 ? Number(hc.cuts.w) || 0 : pos === 2 ? Number(hc.cuts.r) || 0 : 0;
-    out.cut = cut;
-    const yearAgo = new Date(Date.now() - 365 * 864e5).toISOString();
-    const cum = hc.prior.filter(x => x.player_id === p.id && x.event_id !== r.id && x.approved_at >= yearAgo).reduce((t2, x) => t2 + (Number(x.cut) || 0), 0);
-    let esr = 0;
-    if (diff != null && old != null) { const gap = old - diff; esr = gap >= 10 ? 2 : gap >= 7 ? 1 : 0; }
-    let next;
-    if (whs) { next = whs.index - cum - cut - esr; out.notes.unshift(`best ${whs.used} of ${whs.of}${whs.adjust ? ` ${whs.adjust}` : ""}${cum ? ` · −${cum} earlier cuts` : ""}`); }
-    else { next = old == null ? null : old - cut - esr; out.notes.unshift(`${diffs.length} of 3 cards needed for a WHS index`); }
-    if (cut) out.notes.push(`−${cut} for ${pos === 1 ? "winning" : "runner-up"}`);
-    if (esr) out.notes.push(`−${esr} exceptional score`);
-    // Until a player has 20 society cards their WHS figure rests on too few
-    // rounds to trust in full, so no index moves more than 2.0 in one go.
-    if (next != null && old != null && diffs.length < 20 && Math.abs(next - old) > HC_STEP) {
-      out.capped = Math.round(next * 10) / 10;
-      next = next < old ? old - HC_STEP : old + HC_STEP;
-      out.notes.push(`capped at ${HC_STEP.toFixed(1)} a round until 20 cards (uncapped ${out.capped})`);
+      out.ags = S.adjustedGross(r.holes, p.scores, ch).ags;
+      out.diff = S.differential(out.ags, t.slope, Number(t.course_rating));
     }
-    out.next = next == null ? null : Math.max(-10, Math.min(54, Math.round(next * 10) / 10));
+    const prior = r.hc.prior.filter(x => x.player_id === p.id && x.event_id !== r.id && x.differential != null)
+      .sort((a, b) => hcDate(a).localeCompare(hcDate(b)));
+    out.later = r.hc.prior.some(x => x.player_id === p.id && x.event_id !== r.id && hcDate(x) > String(r.event.event_date));
+    if (out.diff == null) {
+      out.next = old;
+      out.notes.push(sum.thru < 18 ? "card not complete — no change" : old == null ? "no index" : "tee has no slope or rating — no change");
+    } else {
+      const diffs = prior.map(x => Number(x.differential)).concat([out.diff]);
+      const res = S.societyIndex({ old, diffs, diff: out.diff });
+      out.next = res.next; out.whs = res.whs;
+      if (res.whs) out.notes.push(`best ${res.whs.used} of ${res.whs.of}${res.whs.adjust ? ` ${res.whs.adjust}` : ""}`);
+      else out.notes.push(`${diffs.length} of 3 cards needed — no change yet`), out.next = old;
+      const fromPoints = prior.slice(-20).filter(x => x.source === "points").length;
+      if (res.whs && fromPoints) out.notes.push(`${fromPoints} from points`);
+      if (res.esr && res.whs) out.notes.push(`−${res.esr} exceptional score`);
+      if (res.capped != null) out.notes.push(`capped at ${S.HC_STEP.toFixed(1)} a round until 20 cards (uncapped ${res.capped})`);
+    }
+    const pos = positions.get(p.id);
+    out.pos = pos;
+    out.cut = pos === 1 ? HC_CUTS[0] : pos === 2 ? HC_CUTS[1] : 0;
+    if (cutUsed) out.notes.push(`played off −${cutUsed} cut`);
+    if (out.cut) out.notes.push(`−${out.cut} for the next round (${pos === 1 ? "winner" : "runner-up"})`);
     return out;
   }
 
-  function hcReviewCard(r) {
-    if (!app.committee || !r.setup || r.setup.status !== "final") return "";
-    if (!r.hc) { loadHcReview(r); return `<div class="card"><h2>Handicap review</h2><p class="small muted">Working out the new indexes…</p></div>`; }
-    if (r.hc.off) return `<div class="card"><h2>Handicap review</h2><p class="small muted">Handicap reviews aren't switched on in the database yet.</p></div>`;
-    const board = S.stablefordBoard(r.holes, r.players);
-    const rows = r.players.map(p => hcSuggest(r, p, board));
-    // Every card is approved, even when the index stays the same: the saved
-    // differential is what the next round's calculation is built on.
-    const pending = rows.filter(x => !x.done && x.next != null);
-    return `<div class="card" id="hc-review"><h2>Handicap review</h2>
-      <p class="small muted" style="margin-top:0">The England Golf method on the society's cards: each card's score differential (holes capped at net double bogey, adjusted for slope and rating), then the best 8 of the last 20 — fewer when there aren't 20 yet. Society cuts are taken off on top and last a year. Until a player has 20 society cards, no index moves more than 2.0 in one round. England Golf's soft and hard caps aren't applied. Nothing changes until you approve it.</p>
-      <div class="row" style="gap:10px;margin-bottom:8px"><label class="small">Winner cut <input class="hc-cut" data-cut="w" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.w}"></label>
-        <label class="small">Runner-up cut <input class="hc-cut" data-cut="r" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.r}"></label></div>
-      ${rows.map(x => `<div class="hc-row">
-        <div class="hc-who"><b>${esc(x.p.name)}</b><span class="thru">${x.diff != null ? `Differential ${x.diff.toFixed(1)} · ` : ""}${x.notes.map(esc).join(" · ")}</span>${!x.done && x.next != null && x.old != null && Math.abs(x.next - x.old) >= 3 ? `<span class="hc-big">Big change — worth a second look</span>` : ""}</div>
-        <div class="hc-vals"><span class="hc-old">${x.old == null ? "?" : x.old}</span><span class="muted">→</span>
-          ${x.done ? `<span class="hc-new">${x.done.new_index}</span><span class="tick">✓</span>`
-            : `<input class="hc-input" data-hc="${x.p.id}" type="number" step="0.1" value="${r.hc.edits[x.p.id] != null ? r.hc.edits[x.p.id] : x.next == null ? "" : x.next}">
-               <button class="btn ghost" style="min-height:34px" data-action="hc-approve" data-player="${x.p.id}">Approve</button>`}</div></div>`).join("")}
-      ${pending.length > 1 ? `<button class="btn gold block" style="margin-top:10px" data-action="hc-approve-all">Approve all ${pending.length}</button>` : ""}
-      <p class="small muted" style="margin:8px 0 0">Approve every card, even when the index doesn't change — each one is kept for the next round's calculation.</p>
-    </div>`;
+  function hcRows(r) {
+    const positions = hcPositions(r);
+    return r.players.map(p => hcSuggest(r, p, positions));
   }
 
-  async function hcApprove(r, ids) {
-    const board = S.stablefordBoard(r.holes, r.players);
-    for (const pid of ids) {
-      const p = r.players.find(x => x.id === pid);
-      const x = hcSuggest(r, p, board);
-      if (x.done) continue;
-      const input = document.querySelector(`[data-hc="${pid}"]`);
-      const val = input && input.value !== "" ? Math.round(Number(input.value) * 10) / 10 : x.next;
-      if (val == null || isNaN(val)) continue;
-      const row = { event_id: r.id, player_id: pid, old_index: x.old, differential: x.diff, whs_index: x.whs ? x.whs.index : null, cut: x.cut,
-        new_index: val, note: x.notes.join(" · "), approved_by: app.user.id, approved_at: new Date().toISOString() };
+  async function hcApply(r, list) {
+    let changed = 0, cuts = 0;
+    for (const x of list) {
+      const row = { event_id: r.id, player_id: x.p.id, old_index: x.old, differential: x.diff, ags: x.ags == null ? null : x.ags, whs_index: x.whs ? x.whs.index : null,
+        cut: x.cut, new_index: x.next, note: x.notes.join(" · "), source: "card", approved_by: app.user.id, approved_at: new Date().toISOString() };
       const a = await client.from("handicap_reviews").upsert(row, { onConflict: "event_id,player_id" });
-      if (a.error) { toast(a.error.message, true); return; }
-      const b = await client.from("players").update({ handicap: val }).eq("id", pid);
-      if (b.error) { toast(b.error.message, true); return; }
+      if (a.error) { toast("Handicaps not updated: " + a.error.message, true); return; }
+      // A later round already worked out? Then this one is history only.
+      if (x.later) continue;
+      const upd = {};
+      if (x.next != null && x.next !== Number((r.hc.players.get(x.p.id) || {}).handicap)) { upd.handicap = x.next; changed++; }
+      if (x.cut) { upd.hcp_cut = x.cut; upd.hcp_cut_note = `−${x.cut} for ${x.pos === 1 ? "winning" : "runner-up in"} ${r.event.name}`; cuts++; }
+      if (Object.keys(upd).length) {
+        const b = await client.from("players").update(upd).eq("id", x.p.id);
+        if (b.error) { toast(b.error.message, true); return; }
+      }
     }
-    toast(ids.length > 1 ? "Handicaps updated" : "Handicap updated");
-    r.hc = null;
+    toast(`Handicaps worked out: ${changed} changed${cuts ? `, ${cuts} cut${cuts > 1 ? "s" : ""} for the next round` : ""}`);
+    await loadHcReview(r);
+  }
+
+  async function hcOverride(r, pid) {
+    const input = document.querySelector(`[data-hc="${pid}"]`);
+    const val = input && input.value !== "" ? Math.round(Number(input.value) * 10) / 10 : null;
+    if (val == null || isNaN(val) || val < -10 || val > 54) { toast("Enter an index between −10 and 54.", true); return; }
+    const x = hcRows(r).find(y => y.p.id === pid);
+    const note = ((x.done && x.done.note) || "") + ` · changed by the committee to ${val}`;
+    const a = await client.from("handicap_reviews").update({ new_index: val, overridden: true, note: note.replace(/^ · /, ""), approved_by: app.user.id }).eq("event_id", r.id).eq("player_id", pid);
+    if (a.error) { toast(a.error.message, true); return; }
+    if (!x.later) { const b = await client.from("players").update({ handicap: val }).eq("id", pid); if (b.error) { toast(b.error.message, true); return; } }
+    toast("Handicap changed");
+    r.hc.edit = null;
     loadHcReview(r);
+  }
+
+  function hcReviewCard(r) {
+    if (!r.setup || r.setup.status !== "final" || r.event.is_practice) return "";
+    if (!r.hc) { loadHcReview(r); return `<div class="card"><h2>Handicaps</h2><p class="small muted">Working out the new handicaps…</p></div>`; }
+    if (r.hc.off || !r.hc.v2) return `<div class="card"><h2>Handicaps</h2><p class="small muted">Society handicaps need a database update before they can work.</p></div>`;
+    const rows = hcRows(r);
+    const pending = rows.filter(x => !x.done && x.next != null);
+    const cutRows = rows.filter(x => (x.done ? Number(x.done.cut) : x.cut) > 0);
+    return `<div class="card" id="hc-review"><h2>Handicaps</h2>
+      <p class="small muted" style="margin-top:0">Worked out for everyone when the round finished: each card's differential, then the best 8 of the last 20 (fewer while there aren't 20). No index moves more than 2.0 in a round until a player has 20 cards. Every member can see the working on each player's profile.</p>
+      ${cutRows.length ? `<div class="hc-cuts">${cutRows.map(x => `<span><b>${esc(x.p.name)}</b> −${x.done ? Number(x.done.cut) : x.cut} next round</span>`).join("")}</div>` : ""}
+      ${rows.map(x => { const d = x.done; const val = d ? d.new_index : x.next; const editing = r.hc.edit === x.p.id;
+        return `<div class="hc-row">
+        <div class="hc-who"><b><a href="#/stats/${x.p.id}">${esc(x.p.name)}</a></b><span class="thru">${(d ? d.differential : x.diff) != null ? `Differential ${Number(d ? d.differential : x.diff).toFixed(1)} · ` : ""}${esc(d && d.note ? d.note : x.notes.join(" · "))}</span></div>
+        <div class="hc-vals"><span class="hc-old">${x.old == null ? "?" : x.old}</span><span class="muted">→</span>
+          ${editing ? `<input class="hc-input" data-hc="${x.p.id}" type="number" step="0.1" value="${val == null ? "" : val}"><button class="btn gold" style="min-height:34px" data-action="hc-save" data-player="${x.p.id}">Save</button>`
+            : `<span class="hc-new${val != null && x.old != null && val < x.old ? " down" : val != null && x.old != null && val > x.old ? " up" : ""}">${val == null ? "–" : val}</span>${d ? `${d.overridden ? '<span class="hc-tag">changed</span>' : ""}${app.committee ? `<button class="mv-link" data-action="hc-edit" data-player="${x.p.id}">Change</button>` : ""}` : ""}`}</div></div>`; }).join("")}
+      ${pending.length && app.committee ? `<button class="btn gold block" style="margin-top:10px" data-action="hc-apply">Work out ${pending.length} handicap${pending.length > 1 ? "s" : ""}</button>` : ""}
+    </div>`;
   }
 
   // ---------- side contests: the stake on the hole ----------
@@ -3061,16 +3304,34 @@
     </div>`;
   }
 
+  // Two divisions when the round splits them: up to the split index, then
+  // the rest. Each has its own winner (and its own handicap cuts).
+  function divisionsOf(r) {
+    const split = r.setup && r.setup.division_split;
+    if (!split) return null;
+    return [{ n: 1, label: `Division 1 · up to ${split}`, short: `Div 1 · up to ${split}`, players: r.players.filter(p => p.index != null && p.index <= split) },
+            { n: 2, label: `Division 2 · ${split + 1} and over`, short: `Div 2 · ${split + 1}+`, players: r.players.filter(p => !(p.index != null && p.index <= split)) }];
+  }
+
   function stablefordTable(r) {
-    const rows = S.stablefordBoard(r.holes, r.players);
+    const divs = divisionsOf(r);
+    if (!divs) return stablefordDiv(r, r.players, "stableford", null);
+    if (!r.div || !divs.some(d => d.n === r.div)) r.div = r.me && divs[1].players.some(p => p.id === r.me.id) ? 2 : 1;
+    const d = divs.find(x => x.n === r.div);
+    return `<div class="subtabs div-tabs">${divs.map(x => `<button data-action="division" data-div="${x.n}" aria-selected="${x.n === r.div}">${esc(x.short)} <span class="div-n">${x.players.length}</span></button>`).join("")}</div>`
+      + stablefordDiv(r, d.players, "stableford-d" + d.n, d.label);
+  }
+
+  function stablefordDiv(r, players, key, label) {
+    const rows = S.stablefordBoard(r.holes, players);
     const started = rows.filter(x => x.sum.thru);
-    const move = movement(r, "stableford", rows.map(x => ({ ...x, started: !!x.sum.thru })), x => x.player.id);
+    const move = movement(r, key, rows.map(x => ({ ...x, started: !!x.sum.thru })), x => x.player.id);
     let hero = "";
     if (started.length) {
       const top = started.filter(x => x.pos === 1);
       const next = started.find(x => x.pos > 1);
       const lead = next ? top[0].sum.points - next.sum.points : 0;
-      hero = leaderCard(top.length > 1 ? "Joint leaders" : "Leader",
+      hero = leaderCard((top.length > 1 ? "Joint leaders" : "Leader") + (label ? ` · ${esc(label.split(" · ")[0])}` : ""),
         top.map(x => esc(x.player.name)).join(" &amp; "), top[0].sum.points, "pts",
         `${top.length > 1 ? "" : thruText(top[0].sum) + (lead > 0 ? ` · ${lead} clear` : "")}`);
     }
@@ -3250,7 +3511,14 @@
 
 
     const missingPh = r.players.filter(p => p.ph == null).length;
-    const statusBtns = s.status === "setup" || !r.setup
+    const practice = !!r.event.is_practice;
+    const statusBtns = practice
+      ? (s.status === "setup" || !r.setup ? `<button class="btn gold block" data-action="go-live">Publish practice round — open scoring</button>`
+        : s.status === "live" ? `<button class="btn block" data-action="set-status" data-status="final">Finish practice round</button>
+           <button class="btn ghost block" data-action="set-status" data-status="setup" style="margin-top:8px">Unpublish — pause scoring</button>`
+        : `<button class="btn ghost block" data-action="set-status" data-status="live">Reopen scoring</button>`)
+        + `<button class="btn ghost block danger-text" data-action="practice-delete" style="margin-top:8px">Delete this practice round</button>`
+      : s.status === "setup" || !r.setup
       ? `<button class="btn gold block" data-action="go-live">Publish round — open scoring</button>`
       : s.status === "live"
         ? `<button class="btn block" data-action="finalise">Finish round & copy points to Results</button>
@@ -3288,6 +3556,9 @@
         <label class="field">Minutes between tee groups
           <input type="number" name="tee_interval" min="0" max="30" step="1" inputmode="numeric" value="${s.tee_interval != null ? s.tee_interval : ""}" placeholder="e.g. 8 — leave blank if not known">
         </label>
+        <label class="field">Divisions — split the leaderboard at index
+          <input type="number" name="division_split" min="1" max="53" step="1" inputmode="numeric" value="${s.division_split != null ? s.division_split : ""}" placeholder="e.g. 18 — leave blank for one leaderboard">
+        </label>
         <label class="field">Skins
           <select name="skins_mode">
             <option value="net" ${s.skins_mode === "net" ? "selected" : ""}>Net</option>
@@ -3310,7 +3581,7 @@
       ${checkinsSetupCard(r)}
       ${r.contestsOff ? "" : contestsSetupCard(r)}
       ${adminsCard(r)}
-      ${hcReviewCard(r)}
+      ${practice ? "" : hcReviewCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
       <div class="card">
@@ -3404,8 +3675,14 @@
       if (!row.tee_id) { st.hidden = false; st.className = "status-msg err"; st.textContent = "Choose a course and tee first."; return false; }
       const tee = setupCache.tees.find(t => t.id === row.tee_id);
       if (tee && tee.holeCount !== 18) { st.hidden = false; st.className = "status-msg err"; st.textContent = "That tee doesn't have all 18 holes yet — finish it under Courses."; return false; }
+      if (f.has("division_split")) row.division_split = f.get("division_split") === "" ? null : Math.max(1, Math.min(53, Math.round(Number(f.get("division_split")))));
       st.hidden = false; st.className = "status-msg"; st.textContent = "Saving…";
-      const { error } = await client.from("event_scoring").upsert(row, { onConflict: "event_id" });
+      let { error } = await client.from("event_scoring").upsert(row, { onConflict: "event_id" });
+      if (error && /division_split/.test(error.message || "")) {
+        delete row.division_split;
+        if (f.get("division_split")) toast("Divisions need a database update first — saved without them.", true);
+        ({ error } = await client.from("event_scoring").upsert(row, { onConflict: "event_id" }));
+      }
       if (error) { st.className = "status-msg err"; st.textContent = error.message; return false; }
       return true;
   }
@@ -3459,6 +3736,11 @@
       const { error } = await client.from("event_handicaps").insert(rows);
       if (error) { toast(error.message, true); return; }
     }
+    // Winners' and runners-up's temporary cuts come off this round only.
+    if (!r.event.is_practice) {
+      const cut = await client.rpc("take_handicap_cuts", { p_event: r.id });
+      if (!cut.error && cut.data) toast(`${cut.data} handicap cut${cut.data > 1 ? "s" : ""} taken for this round`);
+    }
     await setStatus(r, "live");
   }
 
@@ -3480,6 +3762,7 @@
   }
 
   async function finalise(r) {
+    if (r.event.is_practice) { setStatus(r, "final"); return; }
     const scored = r.players.map(p => ({ p, sum: S.summarise(r.holes, p.scores, p.ph) })).filter(x => x.sum.thru > 0);
     if (!scored.length) { toast("No scores to copy yet.", true); return; }
     const disputed = disputesFor(r, r.players).length;
@@ -3760,6 +4043,11 @@
     const a = el.dataset.action;
     switch (a) {
       case "close-sheet": closeSheet(); break;
+      case "practice-new": practiceSheet(); break;
+      case "division": if (r) { r.div = Number(el.dataset.div); renderRoundBody(); } break;
+      case "hc-provisional": setProvisional(); break;
+      case "practice-create": createPractice(); break;
+      case "practice-delete": deletePractice(r); break;
       case "hide-tip": store.set("hide-install-tip", Date.now()); el.closest(".install-tip").remove(); break;
       case "install-help": $("#menu").hidden = true; installSheet(); break;
       case "push-help": $("#menu").hidden = true; pushSheet(); break;
@@ -3775,6 +4063,13 @@
       case "rc-save-cup": await rcDo(client.from("rc_cups").update({ team1_name: $("#rc-n1").value.trim() || "Team 1", team2_name: $("#rc-n2").value.trim() || "Team 2",
         team1_colour: $("#rc-c1").value, team2_colour: $("#rc-c2").value, allowance: Math.max(0, Math.min(100, Number($("#rc-allow").value) || 75)), updated_at: new Date().toISOString() }).eq("event_id", rc.data.id), "Teams saved"); break;
       case "rc-show-all": rc.showAll = !rc.showAll; drawRyder(); break;
+      case "rc-captain": {
+        const pid = el.dataset.player, on = !rc.data.captains.has(pid), side = rc.data.team.get(pid);
+        // One captain a team: making a new one stands the old one down.
+        if (on) for (const id of rc.data.captains) if (rc.data.team.get(id) === side) await client.from("rc_players").update({ captain: false }).eq("event_id", rc.data.id).eq("player_id", id);
+        await rcDo(client.from("rc_players").update({ captain: on }).eq("event_id", rc.data.id).eq("player_id", pid), on ? "Captain picked" : "Captain removed");
+        break;
+      }
       case "rc-side": {
         const side = Number(el.dataset.side), pid = el.dataset.player;
         if (side) await rcDo(client.from("rc_players").upsert({ event_id: rc.data.id, player_id: pid, side }, { onConflict: "event_id,player_id" }));
@@ -3801,8 +4096,9 @@
         rcSave({ match_id: k.matchId, player_id: k.pid, hole: k.hole, strokes: k.pending === "P" ? null : k.pending, picked_up: k.pending === "P" });
         rcAfterKeypad(k.matchId, k.pid, k.hole); break; }
       case "rc-kp-clear": { const k = rc.kp; if (!k) break; rcSave({ match_id: k.matchId, player_id: k.pid, hole: k.hole, clear: true }); closeSheet(); drawRcMatch(k.matchId); break; }
-      case "hc-approve": hcApprove(r, [el.dataset.player]); break;
-      case "hc-approve-all": hcApprove(r, r.players.filter(p => document.querySelector(`[data-hc="${p.id}"]`)).map(p => p.id)); break;
+      case "hc-edit": r.hc.edit = el.dataset.player; renderRoundBody(); break;
+      case "hc-save": hcOverride(r, el.dataset.player); break;
+      case "hc-apply": hcApply(r, hcRows(r).filter(x => !x.done && x.next != null)); break;
       case "text-size": $("#menu").hidden = true; textSizeSheet(); break;
       case "set-text-size": store.set("text-size", el.dataset.size); applyTextSize(el.dataset.size); textSizeSheet(); break;
       case "push-on":
@@ -3981,9 +4277,9 @@
   });
 
   document.addEventListener("change", async e => {
-    if (e.target && e.target.classList && e.target.classList.contains("hc-cut") && app.round && app.round.hc) { app.round.hc.cuts[e.target.dataset.cut] = Number(e.target.value) || 0; renderRoundBody(); return; }
-    if (e.target && e.target.dataset && e.target.dataset.hc && app.round && app.round.hc) { app.round.hc.edits[e.target.dataset.hc] = e.target.value; return; }
+    if (e.target && e.target.dataset && e.target.dataset.hc) return;
     const t = e.target;
+    if (t && t.dataset && t.dataset.eg) { saveOfficial(t.dataset.eg, t.value); return; }
     if (t && t.dataset && t.dataset.rcPick && rc.data) {
       const m = rc.data.matches.find(x => x.id === t.dataset.rcPick);
       const key = t.dataset.side === "1" ? "side1" : "side2";
@@ -4073,6 +4369,7 @@
     if (parts[0] === "courses") return renderCourses();
     if (parts[0] === "season") return renderSeason();
     if (parts[0] === "records") return renderRecords();
+    if (parts[0] === "handicaps") return renderHandicaps();
     if (parts[0] === "ryder" && parts[1]) return renderRyder(parts[1], parts[2]);
     if (parts[0] === "rc" && parts[1]) return renderRcMatch(parts[1]);
     if (parts[0] === "print" && parts[1]) return renderPrint(parts[1]);
