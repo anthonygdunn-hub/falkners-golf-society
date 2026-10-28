@@ -2488,6 +2488,7 @@
     if (app.round && app.round.id === r.id && app.round.tab === "setup") renderRoundBody();
   }
 
+  const HC_STEP = 2;
   function hcSuggest(r, p, board) {
     const hc = r.hc;
     const old = p.index;
@@ -2521,6 +2522,13 @@
     else { next = old == null ? null : old - cut - esr; out.notes.unshift(`${diffs.length} of 3 cards needed for a WHS index`); }
     if (cut) out.notes.push(`−${cut} for ${pos === 1 ? "winning" : "runner-up"}`);
     if (esr) out.notes.push(`−${esr} exceptional score`);
+    // Until a player has 20 society cards their WHS figure rests on too few
+    // rounds to trust in full, so no index moves more than 2.0 in one go.
+    if (next != null && old != null && diffs.length < 20 && Math.abs(next - old) > HC_STEP) {
+      out.capped = Math.round(next * 10) / 10;
+      next = next < old ? old - HC_STEP : old + HC_STEP;
+      out.notes.push(`capped at ${HC_STEP.toFixed(1)} a round until 20 cards (uncapped ${out.capped})`);
+    }
     out.next = next == null ? null : Math.max(-10, Math.min(54, Math.round(next * 10) / 10));
     return out;
   }
@@ -2535,7 +2543,7 @@
     // differential is what the next round's calculation is built on.
     const pending = rows.filter(x => !x.done && x.next != null);
     return `<div class="card" id="hc-review"><h2>Handicap review</h2>
-      <p class="small muted" style="margin-top:0">The England Golf method on the society's cards: each card's score differential (holes capped at net double bogey, adjusted for slope and rating), then the best 8 of the last 20 — fewer when there aren't 20 yet. Society cuts are taken off on top and last a year. Soft and hard caps aren't applied. Nothing changes until you approve it.</p>
+      <p class="small muted" style="margin-top:0">The England Golf method on the society's cards: each card's score differential (holes capped at net double bogey, adjusted for slope and rating), then the best 8 of the last 20 — fewer when there aren't 20 yet. Society cuts are taken off on top and last a year. Until a player has 20 society cards, no index moves more than 2.0 in one round. England Golf's soft and hard caps aren't applied. Nothing changes until you approve it.</p>
       <div class="row" style="gap:10px;margin-bottom:8px"><label class="small">Winner cut <input class="hc-cut" data-cut="w" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.w}"></label>
         <label class="small">Runner-up cut <input class="hc-cut" data-cut="r" type="number" step="0.5" min="0" max="5" value="${r.hc.cuts.r}"></label></div>
       ${rows.map(x => `<div class="hc-row">
