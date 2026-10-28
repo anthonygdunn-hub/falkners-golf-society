@@ -285,7 +285,7 @@
         <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
         <div class="round-meta">
           <strong>${esc(e.name)}</strong>
-          <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}${playing.has(e.id) ? ' · <span class="playing">You\'re playing</span>' : ""}</span>
+          <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}${playing.has(e.id) ? (e.event_date < londonToday() ? ' · <span class="playing">You played</span>' : ' · <span class="playing">You\'re playing</span>') : ""}</span>
         </div>
         ${badgeFor(status.get(e.id))}
         <span class="chev" aria-hidden="true">›</span>
@@ -1023,6 +1023,12 @@
       else if (r.me) r.groupKey = "me";
       history.replaceState(null, "", "#/round/" + eventId);
     }
+    // A played round the app didn't score (results typed in on the
+    // website): show the results, like the website's results page.
+    if (r.event.event_date <= londonToday() && !Object.keys(r.scores).length) {
+      const { data: res } = await client.from("results").select("player_id, points, gross_score, handicap, players(name, profile_id)").eq("event_id", eventId);
+      if (res && res.length) { r.results = res; r.tab = "results"; }
+    }
     app.round = r;
     subscribe(r);
     renderRoundBody();
@@ -1042,6 +1048,16 @@
     if (!r.feedOff && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
     if (r.canManage) tabs.push(["setup", "Setup"]);
     if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
+    if (r.results && r.tab === "results") {
+      hideTabbar();
+      view.innerHTML = `
+      <div class="round-head">
+        <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
+        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span><span class="badge final">Final</span></div>
+        <div class="muted small">${esc(r.event.venue || "")} · ${fmtDate(r.event.event_date)}</div>
+      </div>${resultsView(r)}`;
+      return;
+    }
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
@@ -2989,6 +3005,53 @@
   }
 
   // The top of the board, Golfify style: who's leading and by how much.
+  // Results for a round scored off the app: podium, side contests and the
+  // full table. Prizes the committee recorded beat the raw order, because
+  // ties are settled on the day - the same as the website.
+  function resultsView(r) {
+    const rows = r.results.slice().sort((a, b) => Number(b.points) - Number(a.points) || (a.gross_score || 999) - (b.gross_score || 999));
+    const p = r.prizes || {};
+    const nm = x => (x && x.players && x.players.name) || "Unknown";
+    const prof = x => x && x.players && x.players.profile_id;
+    const mine = x => app.user && prof(x) === app.user.id;
+    const byName = new Map(rows.map(x => [nm(x).trim().toLowerCase(), x]));
+    const who = text => String(text).split(/\s*&\s*/).map(part => {
+      const x = byName.get(part.trim().toLowerCase());
+      return x ? `<a href="#/stats/${esc(x.player_id)}">${esc(part.trim())}</a>` : esc(part.trim());
+    }).join(" &amp; ");
+    const podium = [["p1", "1st", p.first_place, rows[0]], ["p2", "2nd", p.second_place, rows[1]], ["p3", "3rd", p.third_place, rows[2]]]
+      .map(([cls, label, prize, row]) => {
+        const text = prize && String(prize).trim() ? String(prize).trim() : row ? nm(row) : "";
+        if (!text) return "";
+        const x = byName.get(text.toLowerCase()) || (prize ? null : row);
+        return `<div class="rs-pod ${cls}">${x ? avatar(nm(x), prof(x), "rs-av") : `<span class="avatar rs-av"><i>${initials(text)}</i></span>`}
+          <span class="rs-place">${label}</span><b>${who(text)}</b>${x && x.points != null ? `<span class="rs-pts">${x.points} pts</span>` : ""}</div>`;
+      }).join("");
+    const contests = (window.ROUND_COMPETITIONS || []).map(c => {
+      const v = p[c.winner]; if (!v || !String(v).trim()) return "";
+      const hole = window.competitionHole ? window.competitionHole(r.event, c) : null;
+      return `<div class="rs-ct"><span class="rs-ico">${COMP_ICON[compKind(c)] || "🏅"}</span><div><small>${esc(window.competitionName ? window.competitionName(c) : c.title)}${hole ? ` · hole ${hole}` : ""}</small><b>${who(v)}</b></div></div>`;
+    }).join("");
+    const pair = p.winning_pair && String(p.winning_pair).trim()
+      ? `<div class="rs-ct"><span class="rs-ico">🤝</span><div><small>Winning pair</small><b>${who(p.winning_pair)}</b></div></div>` : "";
+    const meRow = rows.findIndex(mine);
+    return `
+      ${podium ? `<div class="rs-podium">${podium}</div>` : ""}
+      ${meRow >= 0 ? `<div class="card rs-you"><span>You finished</span><b>${meRow + 1}<small>${ordinal(meRow + 1).replace(/^\d+/, "")}</small></b><span>of ${rows.length} · ${rows[meRow].points} pts</span></div>` : ""}
+      ${contests || pair ? `<div class="card"><h2>On the day</h2><div class="rs-cts">${pair}${contests}</div></div>` : ""}
+      <div class="card board-card"><table class="board">
+        <thead><tr><th></th><th colspan="2">Player</th><th class="num">HCP</th><th class="num">Pts</th></tr></thead>
+        <tbody>${rows.map((x, i) => `
+          <tr class="${mine(x) ? "me" : ""}">
+            <td class="pos">${posCell(i + 1)}</td>
+            <td class="av">${avatar(nm(x), prof(x), mine(x) ? "me" : "")}</td>
+            <td><a class="rs-name" href="#/stats/${esc(x.player_id)}"><strong>${esc(nm(x))}</strong></a>${x.gross_score ? `<div class="thru">Gross ${x.gross_score}</div>` : ""}</td>
+            <td class="num thru">${x.handicap == null ? "–" : esc(String(x.handicap))}</td>
+            <td class="num"><span class="big">${x.points == null ? "–" : x.points}</span></td>
+          </tr>`).join("")}</tbody></table>
+        <p class="small muted" style="margin:10px 0 0">${rows.length} players · tap a name for their season</p></div>`;
+  }
+
   function leaderCard(label, name, big, unit, sub) {
     return `<div class="leader-card">
       <div class="lc-label">${label}</div>

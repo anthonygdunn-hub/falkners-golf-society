@@ -869,3 +869,27 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
 .hc-big { display: block; margin-top: 3px; font-size: .74rem; font-weight: 600; color: #9a5b00; }
 .pz-slide > .pz-kicker { margin-bottom: 3vmin; }
 .pz-slide:has(.pz-award) > .pz-kicker { text-align: center; }
+
+/* results for rounds scored off the app */
+.rs-podium { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 8px; align-items: end; margin-bottom: 14px; }
+.rs-pod { background: var(--card, #fff); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 6px 12px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.rs-pod.p1 { order: 2; background: linear-gradient(160deg, var(--navy-mid), var(--navy-dark)); color: #fff; padding-top: 20px; box-shadow: 0 8px 22px rgba(15,34,64,.28); }
+.rs-pod.p2 { order: 1; } .rs-pod.p3 { order: 3; }
+.rs-pod b { font-size: .92rem; line-height: 1.2; overflow-wrap: anywhere; }
+.rs-pod b a { color: inherit; text-decoration: none; }
+.rs-pod .avatar.rs-av { width: 52px; height: 52px; font-size: 1.05rem; }
+.rs-pod.p1 .avatar.rs-av { width: 64px; height: 64px; box-shadow: 0 0 0 3px var(--gold-light, #d9be7c); }
+.rs-pod.p2 .avatar.rs-av { box-shadow: 0 0 0 3px #b9c0cc; }
+.rs-pod.p3 .avatar.rs-av { box-shadow: 0 0 0 3px #c99a6e; }
+.rs-place { font: 600 .72rem var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--gold, #b8923c); }
+.rs-pod.p1 .rs-place { color: var(--gold-light, #d9be7c); }
+.rs-pts { font-size: .78rem; opacity: .75; }
+.rs-you { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 16px; background: #fff8e6; box-shadow: inset 4px 0 0 var(--gold, #b8923c); }
+.rs-you b { font: 600 1.9rem var(--font-display); color: var(--navy-dark); line-height: 1; }
+.rs-you b small { font-size: .9rem; }
+.rs-you span { font-size: .9rem; color: var(--ink-soft); }
+.rs-cts { display: grid; gap: 10px; }
+.rs-ct { display: flex; align-items: center; gap: 12px; }
+.rs-ico { font-size: 1.5rem; width: 34px; text-align: center; }
+.rs-ct small { display: block; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); }
+.rs-ct b a, .rs-name { color: inherit; text-decoration: none; }
