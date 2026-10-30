@@ -154,6 +154,7 @@ it again.
 35. `sql/private-games.sql` — members' private games with friends (guest logins need Authentication → Anonymous sign-ins switched on, and the `guest-invite` Edge Function for emailed invites); members can add courses; fixes practice rounds for non-trip-admin committee
 36. `sql/equipment.sql` — what's in each player's bag, used for the club suggestion and the Course Preview plan
 37. `sql/course-preview.sql` — Course Preview: playing notes and the society's hole averages
+38. `sql/private-game-setup.sql` — the step-by-step private game setup: up to 16 players in tee groups, format, handicaps, stake holes, draft or tee off now
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

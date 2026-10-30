@@ -1247,7 +1247,7 @@
 
   async function reloadRound(quiet) {
     if (!app.round) return;
-    const keep = { hc: app.round.hc, wx: app.round.wx, tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments };
+    const keep = { hc: app.round.hc, wx: app.round.wx, tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments, manage: app.round.manage };
     try {
       const r = await loadRound(app.round.id);
       Object.assign(r, keep);
@@ -1266,9 +1266,10 @@
     const prefs = store.get("round-" + eventId, {});
     const live = r.setup && r.setup.status === "live";
     const preview = r.setup && r.setup.status === "setup" && !r.canManage;
-    r.tab = prefs.tab || ((live || preview) && r.me ? "score" : r.setup ? "board" : (r.canManage ? "setup" : "board"));
+    r.tab = (prefs.tab === "setup" && !r.canManage ? null : prefs.tab) || ((live || preview) && r.me ? "score" : r.setup ? "board" : (r.canManage ? "setup" : "board"));
     if (app.guest && !["score", "board", "pairs"].includes(r.tab)) r.tab = "score";
     r.hole = prefs.hole || 1;
+    r.manage = prefs.manage != null ? prefs.manage : null;
     r.groupKey = prefs.groupKey || (r.me && r.me.group ? "g" + r.me.group : null);
     r.board = prefs.board || null;
     // Arriving from "Start round" on the fixture page: straight to your group's card.
@@ -1295,7 +1296,7 @@
 
   function savePrefs() {
     const r = app.round;
-    store.set("round-" + r.id, { tab: r.tab, hole: r.hole, groupKey: r.groupKey, board: r.board });
+    store.set("round-" + r.id, { tab: r.tab, hole: r.hole, groupKey: r.groupKey, board: r.board, manage: r.manage });
   }
 
   function renderRoundBody() {
@@ -1305,7 +1306,6 @@
     const tabs = [["score", "Score"], ["board", "Leaderboard"]];
     if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
     if (!r.feedOff && !app.guest && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
-    if (r.canManage) tabs.push(["setup", "Setup"]);
     if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
     if (r.results && r.tab === "results") {
       hideTabbar();
@@ -1320,7 +1320,7 @@
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
-        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : r.event.is_private ? '<span class="badge private">Private</span>' : ""}${badge}</div>
+        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : r.event.is_private ? '<span class="badge private">Private</span>' : ""}${badge}${r.canManage ? `<button type="button" class="gear-btn ${r.tab === "setup" ? "on" : ""}" data-action="manage" aria-label="Manage ${r.event.is_private || r.event.is_practice ? "game" : "round"}">${ICO_GEAR}</button>` : ""}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
         ${r.event.is_practice ? `<div class="practice-banner">Practice round — nothing here counts. It doesn't reach the website, the Order of Merit, records or handicaps.</div>` : ""}
         ${r.event.is_private && !app.guest ? `<div class="practice-banner private-banner">Private game${r.event.private_visible ? " · all members can see it" : " · only the players can see it"}. It never counts for the Order of Merit or handicaps; your result goes on your profile.</div>` : ""}
@@ -1369,6 +1369,7 @@
     records: icon('<circle cx="12" cy="9" r="6"/><path d="M8.5 14 7 21l5-3 5 3-1.5-7"/>'),
     me: icon('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>'),
   };
+  const ICO_GEAR = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="6.2"/><circle cx="12" cy="12" r="2.2"/><path d="M19.2 12.0L21.8 12.0 M17.1 17.1L18.9 18.9 M12.0 19.2L12.0 21.8 M6.9 17.1L5.1 18.9 M4.8 12.0L2.2 12.0 M6.9 6.9L5.1 5.1 M12.0 4.8L12.0 2.2 M17.1 6.9L18.9 5.1"/></svg>';
   function mainTabbar(active) {
     const tabs = [["play", "Play", "#/"], ["season", "Order of Merit", "#/season"], ["records", "Records", "#/records"], ["me", "Profile", "#/me"]];
     showTabbar(tabs.map(([k, l, h]) => `<button role="tab" data-action="main-tab" data-href="${h}" aria-selected="${active === k}">${MAIN_ICONS[k]}<span>${l}</span></button>`).join(""));
@@ -1421,7 +1422,7 @@
     if (!r.setup || !r.tee || r.holes.length !== 18) {
       return `<div class="card empty">
         <p>This round hasn't been set up for scoring yet.</p>
-        ${r.canManage ? `<button class="btn" data-action="tab" data-tab="setup">Set it up</button>` : `<p class="small">The committee will open it on the day.</p>`}
+        ${r.canManage ? `<button class="btn" data-action="manage-go" data-panel="settings">Set it up</button>` : `<p class="small">The committee will open it on the day.</p>`}
       </div>`;
     }
     return null;
@@ -2814,6 +2815,323 @@
 
   const PRIVATE_MAX = 4;
 
+  // ---------- new private game: step by step ----------
+
+  const WIZ_MAX = 16;
+  const WIZ_STEPS = ["start", "details", "course", "format", "handicaps", "contests", "players", "tees", "review"];
+  let wiz = null;
+
+  function wizFresh(me) {
+    return {
+      step: 0, me, name: `${String(me.name).trim().split(/\s+/)[0]}'s game`, date: londonToday(), time: "",
+      courseId: null, teeId: null, main: "stableford", pairs: false, skins: false, skinsMode: "net", both: true,
+      useHcp: true, method: "whs", allowance: 95, contestsOn: false, contests: [],
+      players: [], guests: [], groupSize: 4, interval: 8, visible: false,
+    };
+  }
+
+  async function renderNewGame() {
+    hideTabbar();
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    const [{ courses, tees }, pl, ch, mg] = await Promise.all([
+      loadCourses(),
+      client.from("players").select("id, name, profile_id, handicap, active, guest_event_id").order("name"),
+      client.from("course_holes").select("tee_id, hole, par, yards, stroke_index"),
+      client.rpc("my_games"),
+    ]);
+    const me = (pl.data || []).find(x => x.profile_id === app.user.id && !x.guest_event_id);
+    if (!me) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card empty"><p>You need to be on the player list first. Ask the committee to link your account to your name.</p></div>`; return; }
+    const holesByTee = new Map();
+    (ch.data || []).forEach(h => { if (!holesByTee.has(h.tee_id)) holesByTee.set(h.tee_id, []); holesByTee.get(h.tee_id).push(h); });
+    holesByTee.forEach(v => v.sort((a, b) => a.hole - b.hole));
+    const past = ((mg && mg.data) || []).filter(e => e.is_private && e.owner_id === app.user.id).sort((a, b) => b.event_date.localeCompare(a.event_date)).slice(0, 3);
+    wiz = wizFresh(me);
+    Object.assign(wiz, {
+      data: { courses: courses.filter(c => tees.some(t => t.course_id === c.id && (holesByTee.get(t.id) || []).length === 18)), tees: tees.filter(t => (holesByTee.get(t.id) || []).length === 18), holesByTee, past,
+        members: (pl.data || []).filter(x => x.active !== false && !x.guest_event_id && x.id !== me.id) },
+    });
+    if (!past.length) wiz.step = 1;
+    drawWiz();
+  }
+
+  const wizTee = () => wiz.data.tees.find(t => t.id === wiz.teeId);
+  const wizHoles = () => wiz.teeId ? wiz.data.holesByTee.get(wiz.teeId) || [] : [];
+  const wizCount = () => 1 + wiz.players.length + wiz.guests.filter(g => g.name.trim()).length;
+  const wizToday = () => wiz.date === londonToday();
+  const addMins = (t, m) => { const [h, mm] = t.split(":").map(Number); const x = h * 60 + mm + m; return String(Math.floor(x / 60) % 24).padStart(2, "0") + ":" + String(x % 60).padStart(2, "0"); };
+
+  // Contest slots the round can hold: a long drive on each nine, and up
+  // to two nearest the pins on each nine.
+  function contestSlot(kind, hole, taken) {
+    const half = hole <= 9 ? "front" : "back";
+    const opts = kind === "ld" ? [`ld_${half}_hole`] : [`ntp_${half}_hole`, `ntp2_${half}_hole`];
+    return opts.find(k => !taken.some(c => c.slot === k)) || null;
+  }
+  function addContest(kind, hole) {
+    if (wiz.contests.some(c => c.kind === kind && c.hole === hole)) return true;
+    const slot = contestSlot(kind, hole, wiz.contests);
+    if (!slot) { toast(kind === "ld" ? `There's already a longest drive on the ${hole <= 9 ? "front" : "back"} nine.` : `Two nearest the pins is the most on the ${hole <= 9 ? "front" : "back"} nine.`, true); return false; }
+    wiz.contests.push({ kind, hole, slot });
+    wiz.contests.sort((a, b) => a.hole - b.hole);
+    return true;
+  }
+
+  function wizStepHtml() {
+    const w = wiz, s = WIZ_STEPS[w.step];
+    const seg = (key, opts) => `<div class="wz-seg">${opts.map(([v, l]) => `<button type="button" data-wz-set="${key}" data-v="${v}" class="${String(w[key]) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>`;
+    const toggle = (key, title, sub) => `<label class="wz-toggle"><span><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</span><input type="checkbox" data-wz-check="${key}" ${w[key] ? "checked" : ""}><i></i></label>`;
+    if (s === "start") return `<h2 class="wz-h">Fancy a game, ${esc(String(w.me.name).split(" ")[0])}?</h2>
+      <p class="wz-label">Play one of yours again</p>
+      ${w.data.past.map(e => `<div class="wz-card wz-again"><span class="wz-ico">${icon('<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>')}</span><span class="wz-grow"><b>${esc(e.name)}</b><small>${fmtDate(e.event_date)} · ${esc(e.venue || "")}</small></span><button type="button" class="btn ghost small" data-action="wz-again" data-id="${e.id}">Use</button></div>`).join("")}
+      <p class="wz-label">Or a brand new game</p>
+      <button type="button" class="wz-card wz-pick on" data-action="wz-next"><span class="wz-ico solid">${icon('<path d="M12 5v14M5 12h14"/>')}</span><span class="wz-grow"><b>New game</b><small>Course, format, handicaps, the stake holes and the field, one step at a time</small></span><span class="ci-chev">›</span></button>`;
+    if (s === "details") return `<h2 class="wz-h">The basics</h2><p class="wz-sub">What it's called and when you're out.</p>
+      <label class="field">Game name<input data-wz-in="name" value="${esc(w.name)}" maxlength="60"></label>
+      <div class="wz-2"><label class="field">Date<input type="date" data-wz-in="date" value="${w.date}" min="${londonToday()}"></label>
+      <label class="field">First tee time<input type="time" data-wz-in="time" value="${w.time}"></label></div>
+      <p class="small muted">Tee time is optional. Leave it blank if you haven't booked yet.</p>`;
+    if (s === "course") {
+      const tees = w.data.tees.filter(t => t.course_id === w.courseId);
+      return `<h2 class="wz-h">Which course?</h2><p class="wz-sub">The tees decide the pars, stroke index and yardages.</p>
+      <label class="field">Course<select data-wz-in="courseId"><option value="">Choose a course</option>${w.data.courses.map(c => `<option value="${c.id}" ${c.id === w.courseId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+      ${w.courseId ? `<p class="wz-label">Tees</p>${tees.map(t => `<button type="button" class="wz-card wz-pick ${t.id === w.teeId ? "on" : ""}" data-wz-set="teeId" data-v="${t.id}"><span class="wz-dot" style="background:${esc(t.colour || "#ccc")}"></span><span class="wz-grow"><b>${esc(t.name)}</b><small>Par ${t.par}${t.course_rating ? ` · ${t.course_rating}/${t.slope || "–"}` : ""} · ${wiz.data.holesByTee.get(t.id).reduce((a, h) => a + (h.yards || 0), 0) || "–"} yds</small></span><span class="wz-radio"></span></button>`).join("")}` : ""}
+      <div class="wz-note">${icon('<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>')}<span>Not on the list? <a href="#/courses">Add the course from its scorecard</a>, then come back.</span></div>`;
+    }
+    if (s === "format") return `<h2 class="wz-h">What's the game?</h2><p class="wz-sub">The main leaderboard, the same for everyone.</p>
+      ${seg("main", [["stableford", "Stableford"], ["medal", "Strokeplay"]])}
+      <p class="wz-label">On the side</p>
+      ${toggle("both", w.main === "stableford" ? "Strokeplay board too" : "Stableford board too", "A second leaderboard from the same scores")}
+      ${toggle("pairs", "Pairs", "Partners in the same group, both Stableford scores count")}
+      ${toggle("skins", "Skins", "Win a hole outright to take the skin; ties carry over")}
+      ${w.skins ? seg("skinsMode", [["net", "Net skins"], ["gross", "Gross skins"]]) : ""}
+      <div class="wz-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>')}<span>Better ball, scramble, alternate shot, greensomes and match play are coming in the next update.</span></div>`;
+    if (s === "handicaps") return `<h2 class="wz-h">Handicaps</h2><p class="wz-sub">Off handicap, or everyone off the back pegs of scratch?</p>
+      ${seg("useHcp", [["true", "Off handicap"], ["false", "Off scratch"]])}
+      ${w.useHcp ? `<p class="wz-label">Course or index?</p>
+      <button type="button" class="wz-card wz-pick ${w.method === "whs" ? "on" : ""}" data-wz-set="method" data-v="whs"><span class="wz-grow"><b>Course handicap <em class="wz-tag">Society standard</em></b><small>Index worked through this tee's slope and rating, as the society does</small></span><span class="wz-radio"></span></button>
+      <button type="button" class="wz-card wz-pick ${w.method === "profile" ? "on" : ""}" data-wz-set="method" data-v="profile"><span class="wz-grow"><b>Straight off the index</b><small>No slope or rating applied</small></span><span class="wz-radio"></span></button>
+      <p class="wz-label">Allowance</p>${seg("allowance", [[100, "100%"], [95, "95%"], [90, "90%"], [85, "85%"], [75, "75%"]])}
+      <p class="small muted">95% is the WHS allowance for individual Stableford and strokeplay.</p>` : `<div class="wz-note"><span>Everyone plays off scratch: gross scores only.</span></div>`}`;
+    if (s === "contests") {
+      const holes = wizHoles();
+      const par3 = holes.filter(h => h.par === 3);
+      const card = (a, ico, t, sub) => `<button type="button" class="wz-card wz-pick" data-action="${a}"><span class="wz-ico">${icon(ico)}</span><span class="wz-grow"><b>${t}</b><small>${sub}</small></span><span class="ci-chev">›</span></button>`;
+      return `<h2 class="wz-h">The stake holes</h2><p class="wz-sub">Nearest the pin and longest drive, like the society days. Whoever's in front gets named on the card.</p>
+      ${seg("contestsOn", [["true", "Yes"], ["false", "No"]])}
+      ${w.contestsOn ? `${w.contests.length ? `<p class="wz-label">Added</p>${w.contests.map((c, i) => `<div class="wz-card"><span class="wz-ico">${icon(c.kind === "ld" ? '<circle cx="12" cy="9" r="5"/><path d="M12 14v7"/>' : '<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>')}</span><span class="wz-grow"><b>${c.kind === "ld" ? "Longest drive" : "Nearest the pin"}</b><small>Hole ${c.hole} · par ${(holes.find(h => h.hole === c.hole) || {}).par || "?"}</small></span><button type="button" class="mv-link" data-action="wz-del-contest" data-i="${i}" aria-label="Remove">✕</button></div>`).join("")}` : ""}
+        <p class="wz-label">Add a stake</p>
+        ${card("wz-c-ntp", '<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>', "Nearest the pin", "Pick a par 3")}
+        ${card("wz-c-ld", '<circle cx="12" cy="9" r="5"/><path d="M12 14v7"/>', "Longest drive", "Pick a long par 4 or a par 5")}
+        ${card("wz-c-classic", '<path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/>', "One of each", "A nearest the pin and a longest drive")}
+        ${par3.length ? card("wz-c-par3", '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>', "Every par 3", `Nearest the pin on each one (${par3.length} hole${par3.length === 1 ? "" : "s"})`) : ""}
+        <p class="small muted">Up to one longest drive and two nearest the pins on each nine. Other side contests come in the next update.</p>` : ""}`;
+    }
+    if (s === "players") {
+      const n = wizCount();
+      return `<h2 class="wz-h">The field</h2><p class="wz-sub">You and up to ${WIZ_MAX - 1} more: society members, or mates who aren't.</p>
+      <div class="wz-count"><b>${n}</b> of ${WIZ_MAX} players</div>
+      <div class="wz-card"><span class="wz-av">${esc(initials(w.me.name))}</span><span class="wz-grow"><b>${esc(w.me.name)}</b><small>Host · handicap ${w.me.handicap ?? "?"}</small></span></div>
+      <input class="wz-find" data-wz-find placeholder="Find a member" autocomplete="off">
+      <div class="pr-list wz-members">${w.data.members.map(x => `<label class="pr-pl" data-name="${esc(x.name.toLowerCase())}"><input type="checkbox" data-wz-member="${x.id}" ${w.players.includes(x.id) ? "checked" : ""} ${!w.players.includes(x.id) && n >= WIZ_MAX ? "disabled" : ""}><span>${esc(x.name)}</span><span class="muted small">${x.handicap ?? ""}</span></label>`).join("")}</div>
+      <p class="wz-label">Mates who aren't members</p>
+      ${w.guests.map((g, i) => `<div class="pg-guest"><div class="row" style="gap:8px"><input data-wz-guest="${i}" data-f="name" placeholder="Name" maxlength="60" value="${esc(g.name)}" style="flex:1;min-width:0"><input data-wz-guest="${i}" data-f="handicap" type="number" step="0.1" inputmode="decimal" placeholder="Handicap" value="${g.handicap ?? ""}" style="width:96px"><button type="button" class="mv-link" data-action="wz-del-guest" data-i="${i}" aria-label="Remove">✕</button></div>
+        <input data-wz-guest="${i}" data-f="contact" placeholder="Their email or mobile (for the invite)" value="${esc(g.contact || "")}" autocomplete="off" style="margin-top:6px"></div>`).join("")}
+      <button type="button" class="btn ghost block" style="min-height:44px" data-action="wz-add-guest" ${n >= WIZ_MAX ? "disabled" : ""}>＋ Add a friend</button>
+      <p class="small muted" style="margin-top:6px">A friend's email gets a link and code from the app. With a mobile, you send it from your phone once the game's made.</p>`;
+    }
+    if (s === "tees") {
+      const n = wizCount(), groups = Math.ceil(n / w.groupSize);
+      const order = [w.me.name, ...w.players.map(id => (w.data.members.find(m => m.id === id) || {}).name), ...w.guests.filter(g => g.name.trim()).map(g => g.name.trim())];
+      return `<h2 class="wz-h">Groups & tee times</h2><p class="wz-sub">How you'll go out. You can shuffle the groups later.</p>
+      <p class="wz-label">In each group</p>${seg("groupSize", [[2, "2"], [3, "3"], [4, "4"]])}
+      ${w.pairs && w.groupSize === 3 ? `<p class="small" style="color:#9a3412">Pairs need groups of 2 or 4, or someone's left without a partner.</p>` : ""}
+      ${groups > 1 ? `<p class="wz-label">Gap between groups</p>${seg("interval", [[8, "8 min"], [10, "10 min"], [12, "12 min"]])}` : ""}
+      <div class="wz-summary">${groups} tee time${groups === 1 ? "" : "s"} · ${n} player${n === 1 ? "" : "s"}${w.time ? ` · ${w.time} onward${groups > 1 ? `, ${w.interval} min apart` : ""}` : ""}</div>
+      ${Array.from({ length: groups }, (_, g) => `<div class="wz-group"><b>Group ${g + 1}${w.time ? ` · ${addMins(w.time, g * (groups > 1 ? w.interval : 0))}` : ""}</b><span>${order.slice(g * w.groupSize, (g + 1) * w.groupSize).map(esc).join(", ")}</span></div>`).join("")}`;
+    }
+    if (s === "review") {
+      const t = wizTee(), c = w.data.courses.find(x => x.id === w.courseId);
+      const fmt = [w.main === "stableford" ? "Stableford" : "Strokeplay", w.both ? (w.main === "stableford" ? "strokeplay" : "Stableford") : null, w.pairs ? "pairs" : null, w.skins ? `${w.skinsMode} skins` : null].filter(Boolean).join(" · ");
+      const opt = (mode, title, sub, tag, primary) => `<button type="button" class="wz-card wz-create ${primary ? "on" : ""}" data-action="wz-create" data-mode="${mode}"><span class="wz-grow"><b>${title}${tag ? ` <em class="wz-tag">${tag}</em>` : ""}</b><small>${sub}</small></span><span class="ci-chev">›</span></button>`;
+      return `<h2 class="wz-h">All set?</h2><p class="wz-sub">Check it over. Everything can be changed later with the settings button.</p>
+      <div class="wz-review">
+        <div><span>Game</span><b>${esc(w.name)}</b></div>
+        <div><span>When</span><b>${fmtDate(w.date)}${w.time ? ` · ${w.time}` : ""}</b></div>
+        <div><span>Course</span><b>${esc(c ? c.name : "")} · ${esc(t ? t.name : "")}</b></div>
+        <div><span>Format</span><b>${esc(fmt)}</b></div>
+        <div><span>Handicaps</span><b>${w.useHcp ? `${w.allowance}% · ${w.method === "whs" ? "course adjusted" : "as they are"}` : "Off scratch"}</b></div>
+        <div><span>Contests</span><b>${w.contestsOn && w.contests.length ? w.contests.map(x => `${x.kind === "ld" ? "LD" : "NTP"} ${x.hole}`).join(", ") : "None"}</b></div>
+        <div><span>Players</span><b>${wizCount()} in ${Math.ceil(wizCount() / w.groupSize)} group${Math.ceil(wizCount() / w.groupSize) === 1 ? "" : "s"}</b></div>
+      </div>
+      <p class="wz-label">Who can see it</p>${seg("visible", [["false", "Just the players"], ["true", "All members"]])}
+      <p class="small muted">Private games never count for the Order of Merit or anyone's handicap.</p>
+      ${opt("draft", "Save it for now", "Nothing gets sent. Send the invites when you're ready", "", true)}
+      ${opt("invite", "Create and invite", "Mates get their link and code now. Scoring opens on the day")}
+      ${wizToday() ? opt("live", "Create and tee off", "Invites go out and the card opens now", "Today") : ""}`;
+    }
+    return "";
+  }
+
+  function wizCheck() {
+    const w = wiz, s = WIZ_STEPS[w.step];
+    if (s === "details" && !w.name.trim()) return "Give the game a name.";
+    if (s === "details" && (!w.date || w.date < londonToday())) return "Choose today or a date ahead.";
+    if (s === "course" && !w.teeId) return "Choose the course and tees.";
+    if (s === "contests" && w.contestsOn && !w.contests.length) return "Add a contest, or choose No.";
+    if (s === "players") {
+      const named = w.guests.filter(g => g.name.trim());
+      const bad = named.find(g => g.handicap === "" || g.handicap == null || isNaN(Number(g.handicap)));
+      if (bad && w.useHcp) return `Put in a handicap for ${bad.name.trim()} (54 if they haven't got one).`;
+      const badC = named.find(g => g.contact && !isEmail(g.contact.trim()) && !isMobile(g.contact.trim()));
+      if (badC) return `${badC.name.trim()}'s email or mobile doesn't look right.`;
+    }
+    if (s === "tees" && w.pairs && w.groupSize === 3) return "Pairs need groups of 2 or 4.";
+    return null;
+  }
+
+  function drawWiz() {
+    const w = wiz, s = WIZ_STEPS[w.step];
+    const first = w.data.past.length ? 0 : 1;
+    const shown = WIZ_STEPS.length - 1;
+    view.innerHTML = `
+      <div class="wz-top"><button type="button" class="wz-x" data-action="wz-back" aria-label="Back">‹</button><span class="wz-title"><small>Step ${Math.max(1, w.step)} of ${shown}</small><b>New private game</b></span><button type="button" class="wz-x" data-action="wz-close" aria-label="Close">✕</button></div>
+      <div class="wz-progress"><i style="width:${Math.round(Math.max(1, w.step) / shown * 100)}%"></i></div>
+      <div class="wz-body">${wizStepHtml()}</div>
+      ${s !== "start" && s !== "review" ? `<div class="wz-foot"><button type="button" class="btn ghost" data-action="wz-back">Back</button><button type="button" class="btn" data-action="wz-next">${s === "tees" ? "Check it over" : "Next"}</button></div>`
+        : s === "review" ? `<div class="wz-foot"><button type="button" class="btn ghost" data-action="wz-back">Back</button></div>` : ""}`;
+    document.body.classList.add("has-wzfoot");
+    if (w.step < first) w.step = first;
+    window.scrollTo(0, 0);
+  }
+
+  function wizSet(key, v) {
+    const w = wiz;
+    if (["useHcp", "contestsOn", "visible"].includes(key)) v = v === "true";
+    if (["allowance", "groupSize", "interval"].includes(key)) v = Number(v);
+    w[key] = v;
+    if (key === "teeId") w.contests = [];
+    if (key === "pairs" && v && w.groupSize === 3) w.groupSize = 4;
+    drawWiz();
+  }
+
+  function holePicker(kind) {
+    const holes = wizHoles();
+    const pick = kind === "classic" ? "ntp" : kind;
+    const title = pick === "ld" ? "Longest drive" : "Nearest the pin";
+    openSheet(`<h2>${kind === "classic" ? "One of each: nearest the pin" : title}</h2><p class="small muted" style="margin-top:-4px">Pick the hole.</p>
+      <div class="wz-holes">${holes.map(h => `<button type="button" class="${(pick === "ntp" && h.par === 3) || (pick === "ld" && h.par === 5) ? "hint" : ""}" data-action="wz-hole" data-kind="${pick}" data-next="${kind === "classic" ? "ld" : ""}" data-hole="${h.hole}"><b>${h.hole}</b><small>Par ${h.par}</small></button>`).join("")}</div>
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Cancel</button>`);
+  }
+
+  async function wizAgain(id) {
+    const w = wiz;
+    const [{ data: ev }, { data: sc }, { data: att }, { data: gp }, { data: pr }] = await Promise.all([
+      client.rpc("game_event", { target: id }),
+      client.from("event_scoring").select("*").eq("event_id", id).maybeSingle(),
+      client.from("attendance").select("player_id").eq("event_id", id),
+      client.from("players").select("id, name, handicap").eq("guest_event_id", id),
+      client.from("groupings").select("player_id").eq("event_id", id).eq("group_type", "pairs").limit(1),
+    ]);
+    const e = ev && ev[0];
+    if (!e || !sc) { toast("Couldn't load that game.", true); return; }
+    const t = w.data.tees.find(x => x.id === sc.tee_id);
+    const guestIds = new Set((gp || []).map(x => x.id));
+    Object.assign(w, {
+      name: e.name, time: e.tee_time ? e.tee_time.slice(0, 5) : "", courseId: t ? t.course_id : null, teeId: t ? t.id : null,
+      main: (sc.formats || [])[0] === "medal" ? "medal" : "stableford", both: (sc.formats || []).includes("stableford") && (sc.formats || []).includes("medal"),
+      skins: (sc.formats || []).includes("skins"), skinsMode: sc.skins_mode === "gross" ? "gross" : "net", pairs: !!(pr && pr.length),
+      useHcp: Number(sc.allowance) > 0, method: sc.handicap_method === "profile" ? "profile" : "whs", allowance: Number(sc.allowance) > 0 ? Number(sc.allowance) : 95,
+      interval: sc.tee_interval || 8,
+      players: (att || []).map(a => a.player_id).filter(pid => pid && pid !== w.me.id && !guestIds.has(pid) && w.data.members.some(m => m.id === pid)),
+      guests: (gp || []).map(g => ({ name: g.name, handicap: g.handicap, contact: "" })),
+      contests: [], contestsOn: false,
+    });
+    [["ld_front_hole", "ld"], ["ld_back_hole", "ld"], ["ntp_front_hole", "ntp"], ["ntp_back_hole", "ntp"], ["ntp2_front_hole", "ntp"], ["ntp2_back_hole", "ntp"]]
+      .forEach(([k, kind]) => { if (e[k]) { w.contests.push({ kind, hole: e[k], slot: k }); w.contestsOn = true; } });
+    w.contests.sort((a, b) => a.hole - b.hole);
+    w.step = 1; drawWiz();
+    toast("Copied — check the date, then step through");
+  }
+
+  async function wizCreate(mode, btn) {
+    const w = wiz;
+    const guests = w.guests.filter(g => g.name.trim()).map(g => ({ name: g.name.trim(), handicap: g.handicap === "" || g.handicap == null ? 54 : Number(g.handicap), contact: (g.contact || "").trim() }));
+    const formats = [w.main, w.both ? (w.main === "stableford" ? "medal" : "stableford") : null, w.skins ? "skins" : null].filter(Boolean);
+    const contests = {}; if (w.contestsOn) w.contests.forEach(c => { contests[c.slot] = c.hole; });
+    btn.disabled = true;
+    const { data: ev, error } = await client.rpc("create_private_game_v2", { p: {
+      name: w.name.trim(), date: w.date, tee_time: w.time || null, tee: w.teeId, visible: w.visible,
+      players: w.players, guests: guests.map(g => ({ name: g.name, handicap: g.handicap })),
+      group_size: w.groupSize, pairs: w.pairs, formats, skins_mode: w.skinsMode,
+      handicap_method: w.method, allowance: w.useHcp ? w.allowance : 0, contests,
+      tee_interval: Math.ceil(wizCount() / w.groupSize) > 1 ? w.interval : null, status: mode === "live" ? "live" : "setup",
+    } });
+    if (error || !ev) { toast((error && error.message) || "Couldn't create the game.", true); btn.disabled = false; return; }
+    const { data: gp } = await client.from("players").select("id, name").eq("guest_event_id", ev);
+    let emailed = 0, toShare = 0;
+    for (const g of guests) {
+      if (!g.contact) continue;
+      const p = (gp || []).find(x => x.name === g.name.slice(0, 60));
+      if (!p) continue;
+      const inv = await makeInvite(p.id, g.contact);
+      if (!inv || mode === "draft") continue;
+      if (isEmail(g.contact)) { if (await emailInvite(inv.invite_id)) emailed++; } else toShare++;
+    }
+    document.body.classList.remove("has-wzfoot");
+    wiz = null;
+    toast(mode === "draft" ? "Draft saved · send invites from Setup when you're ready"
+      : `Game created${emailed ? ` · ${emailed} invite${emailed > 1 ? "s" : ""} emailed` : ""}${toShare ? ` · share ${toShare} invite${toShare > 1 ? "s" : ""} from Setup` : ""}`);
+    store.set("round-" + ev, { tab: mode === "live" ? "score" : "setup" });
+    location.hash = "#/round/" + ev;
+  }
+
+  function wizInput(t) {
+    if (!wiz) return false;
+    if (t.dataset.wzIn) {
+      const k = t.dataset.wzIn; wiz[k] = t.value;
+      if (k === "courseId") { const ts = wiz.data.tees.filter(x => x.course_id === t.value); wiz.teeId = (ts.find(x => x.name.toLowerCase() === DEFAULT_TEE) || ts[0] || {}).id || null; wiz.contests = []; drawWiz(); }
+      return true;
+    }
+    if (t.dataset.wzCheck) { wiz[t.dataset.wzCheck] = t.checked; if (t.dataset.wzCheck === "pairs" && t.checked && wiz.groupSize === 3) wiz.groupSize = 4; drawWiz(); return true; }
+    if (t.dataset.wzMember) {
+      const id = t.dataset.wzMember;
+      wiz.players = t.checked ? [...wiz.players, id] : wiz.players.filter(x => x !== id);
+      const n = wizCount();
+      document.querySelectorAll("[data-wz-member]").forEach(i => { if (!i.checked) i.disabled = n >= WIZ_MAX; });
+      const c = document.querySelector(".wz-count b"); if (c) c.textContent = n;
+      return true;
+    }
+    if (t.dataset.wzGuest != null) { wiz.guests[Number(t.dataset.wzGuest)][t.dataset.f] = t.value; const c = document.querySelector(".wz-count b"); if (c) c.textContent = wizCount(); return true; }
+    if (t.dataset.wzFind != null) { const q = t.value.trim().toLowerCase(); document.querySelectorAll(".wz-members .pr-pl").forEach(l => { l.hidden = q && !l.dataset.name.includes(q); }); return true; }
+    return false;
+  }
+
+  async function wizAction(a, el) {
+    const w = wiz; if (!w) return false;
+    switch (a) {
+      case "wz-next": { const why = wizCheck(); if (why) { toast(why, true); break; } w.step = Math.min(WIZ_STEPS.length - 1, w.step + 1); drawWiz(); break; }
+      case "wz-back": { const first = w.data.past.length ? 0 : 1; if (w.step <= first) { wizClose(); break; } w.step--; drawWiz(); break; }
+      case "wz-close": wizClose(); break;
+      case "wz-again": wizAgain(el.dataset.id); break;
+      case "wz-c-ntp": holePicker("ntp"); break;
+      case "wz-c-ld": holePicker("ld"); break;
+      case "wz-c-classic": holePicker("classic"); break;
+      case "wz-c-par3": { let n = 0; wizHoles().filter(h => h.par === 3).forEach(h => { if (addContest("ntp", h.hole)) n++; }); drawWiz(); if (n) toast(`Nearest the pin added on ${n} par 3${n === 1 ? "" : "s"}`); break; }
+      case "wz-hole": { const ok = addContest(el.dataset.kind, Number(el.dataset.hole)); if (ok && el.dataset.next) { holePicker(el.dataset.next); const h = $("#sheet-body h2"); if (h) h.textContent = "One of each: longest drive"; break; } closeSheet(); drawWiz(); break; }
+      case "wz-del-contest": w.contests.splice(Number(el.dataset.i), 1); drawWiz(); break;
+      case "wz-add-guest": w.guests.push({ name: "", handicap: "", contact: "" }); drawWiz(); { const ins = document.querySelectorAll('[data-f="name"]'); if (ins.length) ins[ins.length - 1].focus(); } break;
+      case "wz-del-guest": w.guests.splice(Number(el.dataset.i), 1); drawWiz(); break;
+      case "wz-create": wizCreate(el.dataset.mode, el); break;
+      default: return false;
+    }
+    return true;
+  }
+
+  function wizClose() {
+    if (wiz && wiz.step > 1 && !confirm("Leave without creating the game?")) return;
+    wiz = null; document.body.classList.remove("has-wzfoot"); location.hash = "#/";
+  }
+
   async function privateSheet() {
     openSheet(`<div class="loading">Loading…</div>`);
     const [t, pl] = await Promise.all([
@@ -4107,8 +4425,38 @@
         : `<button class="btn ghost block" data-action="set-status" data-status="live">Republish — reopen scoring</button>
            <button class="btn ghost block" data-action="finalise" style="margin-top:8px">Copy points to Results again</button>`;
 
-    return `
-      <form id="setup-form" class="card">
+    const what = practice || r.event.is_private ? "game" : "round";
+    const panels = {
+      status: () => `<div class="card">
+        <h2>Round status</h2>
+        <p class="small muted">${!r.setup ? "Not set up yet. Save the course above and players can preview the round." : s.status === "setup" ? "<b>Preview</b> — players can see the card, groups and handicaps, and check in. Nobody can score until you publish." : s.status === "live" ? "<b>Published</b> — anyone on the round can score." : "<b>Finished</b> — scores are locked."}</p>
+        ${missingPh ? `<p class="status-msg err">${missingPh} player${missingPh > 1 ? "s have" : " has"} no playing handicap yet.</p>` : ""}
+        ${statusBtns}
+      </div>`,
+      checkin: () => checkinsSetupCard(r) || `<div class="card empty small">Check-in opens once the ${what} is set up.</div>`,
+      cards: () => (r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : "") || `<div class="card empty small">Scorecards show here once scoring is open.</div>`,
+      tees: () => `${teeSheetCard(r)}<div class="card">
+        <h2>Pairs</h2>
+        ${pairsSetupSummary(r)}
+      </div>${r.setup && r.tee ? `<div class="card"><h2>Print pack</h2><p class="small muted" style="margin-top:0">The start sheet, a paper card for every group with the shots marked, and a sheet for each stake. A backup if phones or signal fail.</p>
+        <a class="btn ghost block" href="#/print/${r.id}">🖨️ Open the print pack</a></div>` : ""}`,
+      contests: () => contestsSetupCard(r),
+      players: () => `${r.event.is_private ? guestsCard(r) : ""}<div class="card">
+        <div class="row"><h2 style="margin:0">Playing handicaps</h2><span class="spacer"></span>
+          ${app.committee ? `<button class="btn ghost" style="min-height:36px" data-action="toggle-hcp-edit">${editing ? "Done" : "Adjust"}</button>` : ""}</div>
+        <p class="small muted">Worked out automatically for ${teeRow ? esc(teeRow.name) + " tees" : "the chosen tee"}: index × slope ÷ 113 + (course rating − par), then ${esc(String(s.allowance))}%. Indexes come from the player list on the <a href="../admin.html">admin page</a>; only the committee can change them.
+          ${editing ? "Change an index for this round, or type a playing handicap to set it by hand — clear it to go back to automatic." : ""}</p>
+        ${r.unlinked.length ? `<div class="status-msg err">${r.unlinked.length} member${r.unlinked.length > 1 ? "s aren't" : " isn't"} on the player list yet, so can't be scored:
+          ${r.unlinked.map(u => `<div class="row" style="margin-top:6px"><span>${esc(u.name)}</span><span class="spacer"></span>
+          <button class="btn ghost" style="min-height:34px" data-action="link-player" data-profile="${u.profile_id}">Add</button></div>`).join("")}</div>` : ""}
+        <table class="hcp-table">
+          <thead><tr><th>Player</th><th>Index</th><th>${editing ? "Set PH" : "Course"}</th><th>Plays off</th></tr></thead>
+          <tbody>${hcpRows || `<tr><td colspan="4" class="muted">Nobody registered yet.</td></tr>`}</tbody>
+        </table>
+      </div>`,
+      admins: () => adminsCard(r),
+      review: () => hcReviewCard(r) || `<div class="card empty small">The handicap review shows once the round is finished.</div>`,
+      settings: () => `<form id="setup-form" class="card">
         <h2>Course & format</h2>
         <label class="field">Course and tee
           <select name="tee_id" required>
@@ -4148,42 +4496,42 @@
         </label>
         <button class="btn block" type="submit">Save setup</button>
         <div id="setup-status" class="status-msg" hidden></div>
-      </form>
-
-      <div class="card">
-        <h2>Round status</h2>
-        <p class="small muted">${!r.setup ? "Not set up yet. Save the course above and players can preview the round." : s.status === "setup" ? "<b>Preview</b> — players can see the card, groups and handicaps, and check in. Nobody can score until you publish." : s.status === "live" ? "<b>Published</b> — anyone on the round can score." : "<b>Finished</b> — scores are locked."}</p>
-        ${missingPh ? `<p class="status-msg err">${missingPh} player${missingPh > 1 ? "s have" : " has"} no playing handicap yet.</p>` : ""}
-        ${statusBtns}
+      </form>`,
+    };
+    const view_ = r.manage && panels[r.manage] ? r.manage : !r.setup && r.manage !== "" ? "settings" : null;
+    if (view_) return `<button type="button" class="back-link" data-action="manage-go" data-panel="menu">‹ Manage ${what}</button>${panels[view_]()}`;
+    const st = !r.setup ? ["Not set up", "Choose the course to get going"] : s.status === "setup" ? ["Draft", "Players can preview it; nobody can score yet"] : s.status === "live" ? ["Live", "Scoring is open"] : ["Finished", "Results are in"];
+    const row = (panel, ico, label, badge) => `<button type="button" class="ci-row" data-action="manage-go" data-panel="${panel}"><span class="ci-ico">${icon(ico)}</span><span class="ci-label">${label}</span>${badge != null && badge !== "" ? `<span class="mg-badge">${badge}</span>` : ""}<span class="ci-chev">›</span></button>`;
+    const groupsN = new Set(r.players.map(p => p.group).filter(Boolean)).size;
+    return `<h2 class="mg-title">Manage ${what}</h2>
+      <button type="button" class="card mg-status" data-action="manage-go" data-panel="status"><span><b>${st[0]}</b><small>${st[1]}</small></span><span class="ci-chev">›</span></button>
+      ${missingPh ? `<p class="status-msg err">${missingPh} player${missingPh > 1 ? "s have" : " has"} no playing handicap yet.</p>` : ""}
+      <div class="card ci-list mg-list"><p class="mg-head">Round day</p>
+        ${row("checkin", '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6"/><path d="M14 18l2.5 2.5L22 15"/>', "Check-in")}
+        ${row("cards", '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6"/>', "Scorecards")}
+        ${row("tees", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', "Tee sheet", groupsN || "")}
+        ${r.contestsOff ? "" : row("contests", '<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>', "Stake holes")}
+        ${r.feedOff ? "" : `<button type="button" class="ci-row" data-action="tab" data-tab="feed"><span class="ci-ico">${TAB_ICONS.feed}</span><span class="ci-label">Message the players<small>Post to the ${what} feed</small></span><span class="ci-chev">›</span></button>`}
       </div>
-
-      ${r.setup && r.tee ? `<div class="card"><h2>Print pack</h2><p class="small muted" style="margin-top:0">The start sheet, a paper card for every group with the shots marked, and a sheet for each stake. A backup if phones or signal fail.</p>
-        <a class="btn ghost block" href="#/print/${r.id}">🖨️ Open the print pack</a></div>` : ""}
-      ${checkinsSetupCard(r)}
-      ${r.contestsOff ? "" : contestsSetupCard(r)}
-      ${practice ? "" : adminsCard(r)}
-      ${r.event.is_private ? guestsCard(r) : ""}
-      ${practice ? "" : hcReviewCard(r)}
-      ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
-
-      <div class="card">
-        <h2>Pairs</h2>
-        ${pairsSetupSummary(r)}
+      <div class="card ci-list mg-list"><p class="mg-head">Players</p>
+        ${row("players", '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M19 8v6M16 11h6"/>', "Players & handicaps", r.players.length)}
+        ${practice ? "" : row("admins", '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>', "Admins & scorers")}
+        ${practice || r.event.is_private ? "" : row("review", '<path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/>', "Handicap review")}
       </div>
+      <div class="card ci-list mg-list"><p class="mg-head">Settings</p>
+        ${row("settings", '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>', `${what === "game" ? "Game" : "Round"} settings`)}
+        ${r.course ? `<a class="ci-row" href="#/courses/${r.course.id}"><span class="ci-ico">${icon('<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>')}</span><span class="ci-label">Course data<small>${esc(r.course.name)}${r.tee ? " · " + esc(r.tee.name) : ""}</small></span><span class="ci-chev">›</span></a>` : ""}
+      </div>
+      ${r.event.is_private || practice ? `<div class="card ci-list mg-list"><button type="button" class="ci-row mg-delete" data-action="practice-delete"><span class="ci-ico">${icon('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>')}</span><span class="ci-label">Delete ${what}</span><span class="ci-chev">›</span></button></div>` : ""}`;
+  }
 
-      <div class="card">
-        <div class="row"><h2 style="margin:0">Playing handicaps</h2><span class="spacer"></span>
-          ${app.committee ? `<button class="btn ghost" style="min-height:36px" data-action="toggle-hcp-edit">${editing ? "Done" : "Adjust"}</button>` : ""}</div>
-        <p class="small muted">Worked out automatically for ${teeRow ? esc(teeRow.name) + " tees" : "the chosen tee"}: index × slope ÷ 113 + (course rating − par), then ${esc(String(s.allowance))}%. Indexes come from the player list on the <a href="../admin.html">admin page</a>; only the committee can change them.
-          ${editing ? "Change an index for this round, or type a playing handicap to set it by hand — clear it to go back to automatic." : ""}</p>
-        ${r.unlinked.length ? `<div class="status-msg err">${r.unlinked.length} member${r.unlinked.length > 1 ? "s aren't" : " isn't"} on the player list yet, so can't be scored:
-          ${r.unlinked.map(u => `<div class="row" style="margin-top:6px"><span>${esc(u.name)}</span><span class="spacer"></span>
-          <button class="btn ghost" style="min-height:34px" data-action="link-player" data-profile="${u.profile_id}">Add</button></div>`).join("")}</div>` : ""}
-        <table class="hcp-table">
-          <thead><tr><th>Player</th><th>Index</th><th>${editing ? "Set PH" : "Course"}</th><th>Plays off</th></tr></thead>
-          <tbody>${hcpRows || `<tr><td colspan="4" class="muted">Nobody registered yet.</td></tr>`}</tbody>
-        </table>
-      </div>`;
+  // Tee groups and their times, from the tee sheet.
+  function teeSheetCard(r) {
+    const groups = new Map();
+    r.players.forEach(p => { const g = p.group || 0; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p); });
+    const nums = [...groups.keys()].sort((a, b) => (a || 99) - (b || 99));
+    return `<div class="card"><h2>Tee sheet</h2>${nums.length ? nums.map(g => `<div class="wz-group"><b>${g ? `Group ${g}${teeTimeFor(r, g) ? " · " + teeTimeFor(r, g) : ""}` : "No group yet"}</b><span>${groups.get(g).map(p => esc(p.name)).join(", ")}</span></div>`).join("")
+      : `<p class="small muted">Nobody in the field yet.</p>`}</div>`;
   }
 
   // Every disputed hole in the round, the ones a group has asked about
@@ -4271,8 +4619,7 @@
 
   function wireSetup(r) {
     const form = $("#setup-form");
-    if (!form) return;
-    form.addEventListener("submit", async e => {
+    if (form) form.addEventListener("submit", async e => {
       e.preventDefault();
       if (await saveSetup(r, form)) { toast("Setup saved"); await reloadRound(); }
     });
@@ -4863,6 +5210,8 @@
   // ---------- event delegation ----------
 
   document.addEventListener("click", async e => {
+    const wzs = e.target.closest("[data-wz-set]");
+    if (wzs && wiz) { wizSet(wzs.dataset.wzSet, wzs.dataset.v); return; }
     const el = e.target.closest("[data-action]");
     if (!el) {
       const tr = e.target.closest("tr[data-player]");
@@ -4875,11 +5224,14 @@
     }
     const r = app.round;
     const a = el.dataset.action;
+    if (a.startsWith("wz-") && await wizAction(a, el)) return;
     switch (a) {
       case "close-sheet": closeSheet(); break;
       case "guest-signout": await client.auth.signOut(); location.hash = "#/"; break;
       case "practice-new": practiceSheet(); break;
       case "fab": fabSheet(); break;
+      case "manage": if (!r) break; if (r.tab === "setup" && (r.manage === "" || (r.manage == null && r.setup))) { r.tab = r.setup ? "score" : "board"; } else { r.tab = "setup"; r.manage = ""; } savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
+      case "manage-go": if (!r) break; r.tab = "setup"; r.manage = el.dataset.panel === "menu" ? "" : el.dataset.panel || null; savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
       case "ci-scorecard": courseCardSheet(); break;
       case "ci-notes": notesSheet(); break;
       case "stat-trend": statTrend(el.dataset.key); break;
@@ -4897,7 +5249,7 @@
       case "kit-edit": kitSheet(bagView.data.find(x => x.id === el.dataset.id)); break;
       case "kit-retire": { const it = bagView.data.find(x => x.id === el.dataset.id); kitChange(el.dataset.id, it && it.retired ? "unretire" : "retire"); break; }
       case "kit-delete": if (confirm("Delete this from the bag? Retire keeps it listed instead.")) kitChange(el.dataset.id, "delete"); break;
-      case "private-new": privateSheet(); break;
+      case "private-new": closeSheet(); location.hash = "#/new-game"; break;
       case "private-create": createPrivate(); break;
       case "pg-add-guest": addGuestRow(); break;
       case "pg-del-guest": el.closest(".pg-guest").remove(); if (app.pgCount) app.pgCount(); break;
@@ -5137,6 +5489,9 @@
     }
   });
 
+  document.addEventListener("input", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn === "name" || e.target.dataset.wzGuest != null || e.target.dataset.wzFind != null)) wizInput(e.target); });
+  document.addEventListener("change", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn || e.target.dataset.wzCheck || e.target.dataset.wzMember)) wizInput(e.target); });
+
   document.addEventListener("submit", e => {
     const f = e.target.closest && e.target.closest(".pv-note-form");
     if (!f) return;
@@ -5227,6 +5582,7 @@
     const parts = hash.slice(2).split("/");
     if (parts[0] !== "present") { document.body.classList.remove("presenting"); clearInterval(present.timer); }
     if (parts[0] !== "print") document.body.classList.remove("printing-pack");
+    if (parts[0] !== "new-game") { document.body.classList.remove("has-wzfoot"); wiz = null; }
     if (parts[0] !== "preview") { document.body.classList.remove("has-pvholes"); if (window.HoleMaps && window.HoleMaps.closePreview) window.HoleMaps.closePreview(); }
     if (!((parts[0] === "round" || parts[0] === "present") && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
     if (parts[0] !== "round" && parts[0] !== "ryder") hideTabbar();
@@ -5246,6 +5602,7 @@
     if (mainKey != null) mainTabbar(mainKey);
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return parts[1] ? renderCourseInfo(parts[1]) : renderCourses();
+    if (parts[0] === "new-game") return renderNewGame();
     if (parts[0] === "preview" && parts[1]) return renderPreview(parts[1], Number(parts[2]) || 1);
     if (parts[0] === "season") return renderSeason();
     if (parts[0] === "records") return renderRecords();
