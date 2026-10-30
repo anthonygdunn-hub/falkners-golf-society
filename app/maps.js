@@ -435,5 +435,80 @@
     };
   }
 
-  window.HoleMaps = { yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, greensFromOsm, prefetch, gps };
+  // ---------- course preview: one hole, turned so the tee is at the
+  // bottom and the green at the top, with the planned shots ----------
+  // opts: { el, g (geo row), shots: [{ carry, label }] }. Each shot's label
+  // sits where it's played from, along the tee-to-green line.
+  let previewMap = null;
+  function bearing(a, b) {
+    const r = d => d * Math.PI / 180;
+    const y = Math.sin(r(b.lng - a.lng)) * Math.cos(r(b.lat));
+    const x = Math.cos(r(a.lat)) * Math.sin(r(b.lat)) - Math.sin(r(a.lat)) * Math.cos(r(b.lat)) * Math.cos(r(b.lng - a.lng));
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+  let glideFrame = null;
+  function closePreview() { if (glideFrame) { cancelAnimationFrame(glideFrame); glideFrame = null; } if (previewMap) { try { previewMap.remove(); } catch (e) { /* gone */ } previewMap = null; } }
+  async function previewHole(opts) {
+    const tee = teeOf(opts.g), green = greenOf(opts.g);
+    if (!tee || !green) return false;
+    const L = await loadLeaflet();
+    closePreview();
+    const host = opts.el;
+    const W = host.clientWidth || 360, H = host.clientHeight || 520;
+    const side = Math.ceil(Math.sqrt(W * W + H * H)) + 40;
+    const rot = bearing(tee, green);
+    host.innerHTML = `<div class="pv-rot" style="width:${side}px;height:${side}px;left:${(W - side) / 2}px;top:${(H - side) / 2}px;transform:rotate(${-rot}deg)"></div>`;
+    const inner = host.firstChild;
+    const map = L.map(inner, { zoomControl: false, attributionControl: false, dragging: false, touchZoom: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, zoomSnap: 0 });
+    baseLayers(L).sat.addTo(map);
+    previewMap = map;
+    const lenM = Math.max(60, metres(tee, green));
+    const mid = { lat: (tee.lat + green.lat) / 2, lng: (tee.lng + green.lng) / 2 };
+    const z = Math.log2(156543.03 * Math.cos(mid.lat * Math.PI / 180) * (H * 0.8) / lenM);
+    map.setView([mid.lat, mid.lng], Math.min(19, z), { animate: false });
+    const upright = html => L.divIcon({ className: "pv-lbl-icon", html: `<span style="transform:translate(-50%,-50%) rotate(${rot}deg)">${html}</span>`, iconSize: [0, 0] });
+    const total = yards(tee, green) || 1;
+    const along = y => { const f = Math.min(1, y / total); return [tee.lat + (green.lat - tee.lat) * f, tee.lng + (green.lng - tee.lng) * f]; };
+    L.polyline([[tee.lat, tee.lng], [green.lat, green.lng]], { color: "#ffffff", weight: 2, opacity: 0.85 }).addTo(map);
+    let run = 0;
+    (opts.shots || []).forEach(s => {
+      const at = along(run);
+      L.circleMarker(at, { radius: 4, color: "#fff", weight: 2, fillColor: "#10233F", fillOpacity: 1 }).addTo(map);
+      L.marker(at, { icon: upright(`<b class="pv-lbl">${s.label}</b>`), interactive: false }).addTo(map);
+      run += s.carry;
+    });
+    L.marker([green.lat, green.lng], { icon: upright('<b class="pv-flag">⚑</b>'), interactive: false }).addTo(map);
+
+    // The glide: start low over the tee, fly up the hole past each label,
+    // then rise to show the whole hole. About six seconds.
+    const zEnd = Math.min(19, z), zLow = Math.min(19.5, zEnd + 1.6);
+    const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const glide = () => {
+      if (glideFrame) cancelAnimationFrame(glideFrame);
+      const t0 = performance.now(), A = 4300, B = 1500;
+      const step = now => {
+        if (previewMap !== map) return;
+        const e = now - t0;
+        if (e < A) {
+          const f = ease(e / A);
+          map.setView([tee.lat + (green.lat - tee.lat) * f, tee.lng + (green.lng - tee.lng) * f], zLow, { animate: false });
+        } else if (e < A + B) {
+          const f = ease((e - A) / B);
+          map.setView([green.lat + (mid.lat - green.lat) * f, green.lng + (mid.lng - green.lng) * f], zLow + (zEnd - zLow) * f, { animate: false });
+        } else { map.setView([mid.lat, mid.lng], zEnd, { animate: false }); glideFrame = null; return; }
+        glideFrame = requestAnimationFrame(step);
+      };
+      map.setView([tee.lat, tee.lng], zLow, { animate: false });
+      glideFrame = requestAnimationFrame(step);
+    };
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "pv-replay"; btn.textContent = "▶ Fly the hole";
+    btn.addEventListener("click", glide);
+    host.appendChild(btn);
+    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!still && opts.glide !== false) setTimeout(() => { if (previewMap === map) glide(); }, 350);
+    return true;
+  }
+
+  window.HoleMaps = { previewHole, closePreview, yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, greensFromOsm, prefetch, gps };
 })();

@@ -181,6 +181,7 @@
       document.body.classList.add("guest-mode");
     } else document.body.classList.remove("guest-mode");
     if (app.approved) loadAvatars().then(() => { if (!app.round) return; refreshRound(); });
+    if (app.approved) loadMyBag().catch(() => {});
     $("#menu-btn").hidden = false;
     $("#menu-courses").hidden = !app.approved;
     if ($("#menu-handicaps")) $("#menu-handicaps").hidden = !app.committee;
@@ -512,6 +513,151 @@
       </div>`).join("")}</div>`;
   }
 
+  // ---------- statistics (the member themselves, and the committee) ----------
+
+  // Every hole they've scored in the app: society rounds and private
+  // games (practice rounds left out), with par, putts and fairway.
+  async function loadHoleRecords(pid) {
+    const [hs, st, evs, mg] = await Promise.all([
+      client.from("hole_scores").select("event_id, hole, strokes, picked_up").eq("player_id", pid),
+      client.from("hole_stats").select("event_id, hole, putts, fairway").eq("player_id", pid),
+      client.from("events").select("id, name, venue, event_date"),
+      client.rpc("my_games"),
+    ]);
+    const evById = new Map([...(evs.data || []), ...((mg && mg.data) || []).filter(e => !e.is_practice)].map(e => [e.id, e]));
+    const scores = (hs.data || []).filter(h => evById.has(h.event_id));
+    const evIds = [...new Set(scores.map(h => h.event_id))];
+    const { data: setups } = evIds.length ? await client.from("event_scoring").select("event_id, tee_id").in("event_id", evIds) : { data: [] };
+    const teeIds = [...new Set((setups || []).map(x => x.tee_id).filter(Boolean))];
+    const { data: ch } = teeIds.length ? await client.from("course_holes").select("tee_id, hole, par").in("tee_id", teeIds) : { data: [] };
+    const teeOfEv = new Map((setups || []).map(x => [x.event_id, x.tee_id]));
+    const parOf = new Map((ch || []).map(h => [h.tee_id + ":" + h.hole, h.par]));
+    const statOf = new Map((st.data || []).map(x => [x.event_id + ":" + x.hole, x]));
+    return scores.map(h => {
+      const par = parOf.get(teeOfEv.get(h.event_id) + ":" + h.hole);
+      const sx = statOf.get(h.event_id + ":" + h.hole) || {};
+      return par ? { ev: evById.get(h.event_id), par, strokes: h.picked_up ? null : h.strokes, putts: sx.putts ?? null, fairway: sx.fairway || null } : null;
+    }).filter(Boolean);
+  }
+
+  function statSummary(recs) {
+    const t = { birdie: 0, par: 0, bogey: 0, double: 0, n: 0 };
+    const byPar = { 3: [], 4: [], 5: [] };
+    const fw = { hit: 0, left: 0, right: 0, n: 0 };
+    let gir = 0, girN = 0, putts = 0, puttN = 0, puttsGir = 0, scr = 0, scrN = 0;
+    recs.forEach(r => {
+      t.n++;
+      if (r.strokes == null) { t.double++; return; }
+      const d = r.strokes - r.par;
+      if (d <= -1) t.birdie++; else if (d === 0) t.par++; else if (d === 1) t.bogey++; else t.double++;
+      if (byPar[r.par]) byPar[r.par].push(r.strokes - r.par);
+      if (r.fairway && r.par >= 4) { fw.n++; fw[r.fairway]++; }
+      if (r.putts != null) {
+        putts += r.putts; puttN++; girN++;
+        const hit = r.strokes - r.putts <= r.par - 2;
+        if (hit) { gir++; puttsGir += r.putts; } else { scrN++; if (d <= 0) scr++; }
+      }
+    });
+    const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    return { t, byPar: { 3: mean(byPar[3]), 4: mean(byPar[4]), 5: mean(byPar[5]) }, fw, gir, girN, putts: puttN ? putts / puttN : null, puttN, puttsGir: gir ? puttsGir / gir : null, scr, scrN };
+  }
+  const pct = (a, b) => b ? Math.round(a / b * 100) : null;
+
+  // A ring of coloured segments, like the one in a scoring app.
+  function ring(parts, size = 76) {
+    const total = parts.reduce((s, p) => s + p.v, 0);
+    const r = 28, c = 2 * Math.PI * r;
+    let off = 0;
+    const segs = total ? parts.filter(p => p.v > 0).map(p => { const len = p.v / total * c; const s = `<circle r="${r}" cx="38" cy="38" fill="none" stroke="${p.col}" stroke-width="12" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-off}" transform="rotate(-90 38 38)"/>`; off += len; return s; }).join("") : "";
+    return `<svg class="st-ring" width="${size}" height="${size}" viewBox="0 0 76 76" aria-hidden="true"><circle r="${r}" cx="38" cy="38" fill="none" stroke="#e6e9ef" stroke-width="12"/>${segs}</svg>`;
+  }
+  // Average over par on 3s, 4s and 5s as bars from -1 to +3.
+  function parBars(bp) {
+    const x = v => 8 + (Math.max(-1, Math.min(3, v)) + 1) / 4 * 64;
+    const rows = [[3, "#2f6fd6"], [4, "#e8c547"], [5, "#d64541"]];
+    return `<svg class="st-ring" width="80" height="76" viewBox="0 0 80 76" aria-hidden="true">
+      ${[-1, 0, 1, 2, 3].map(v => `<line x1="${x(v)}" x2="${x(v)}" y1="12" y2="74" stroke="#9aa3b5" stroke-width="${v === 0 ? 1.2 : .6}"/><text x="${x(v)}" y="9" font-size="7" text-anchor="middle" fill="#57617A">${v === 0 ? "E" : v > 0 ? "+" + v : v}</text>`).join("")}
+      ${rows.map(([p, col], i) => bp[p] == null ? "" : `<rect x="${x(Math.min(0, bp[p]))}" y="${16 + i * 19}" width="${Math.max(2, Math.abs(x(bp[p]) - x(0)))}" height="14" fill="${col}"/>`).join("")}</svg>`;
+  }
+  function puttBars(s) {
+    const w = v => v == null ? 0 : Math.min(1, v / 4) * 64;
+    return `<svg class="st-ring" width="80" height="76" viewBox="0 0 80 76" aria-hidden="true">
+      ${[1, 2, 3, 4].map(v => `<line x1="${8 + v * 16}" x2="${8 + v * 16}" y1="12" y2="74" stroke="#9aa3b5" stroke-width=".6"/><text x="${8 + v * 16}" y="9" font-size="7" text-anchor="middle" fill="#57617A">${v}</text>`).join("")}
+      <rect x="8" y="24" width="${w(s.putts)}" height="14" fill="#e8923a"/><rect x="8" y="46" width="${w(s.puttsGir)}" height="14" fill="#2f6fd6"/></svg>`;
+  }
+
+  const STAT_ROWS = [
+    { key: "scoring", title: "Scoring", ok: s => s.t.n, art: s => ring([{ v: s.t.birdie, col: "#d64541" }, { v: s.t.par, col: "#2f6fd6" }, { v: s.t.bogey, col: "#4f9d55" }, { v: s.t.double, col: "#6b7280" }]),
+      vals: s => [[pct(s.t.birdie, s.t.n) + "%", "Birdie+", "#d64541"], [pct(s.t.par, s.t.n) + "%", "Pars", "#2f6fd6"], [pct(s.t.bogey, s.t.n) + "%", "Bogeys", "#4f9d55"], [pct(s.t.double, s.t.n) + "%", "2 Bogeys+", "#6b7280"]],
+      base: s => `${s.t.n} holes · pick-ups count as 2 bogeys+`, trend: s => s.t.n ? Math.round((s.t.birdie + s.t.par) / s.t.n * 100) : null, trendLabel: "% pars or better" },
+    { key: "pars", title: "Pars", ok: s => s.t.n - s.t.double >= 0 && (s.byPar[3] != null || s.byPar[4] != null), art: s => parBars(s.byPar),
+      vals: s => [[3, "#2f6fd6"], [4, "#c9a227"], [5, "#d64541"]].map(([p, col]) => [s.byPar[p] == null ? "–" : (p + s.byPar[p]).toFixed(1), "Par " + p, col]),
+      base: () => "Average score on each, pick-ups left out", trend: s => { const v = [3, 4, 5].map(p => s.byPar[p]).filter(x => x != null); return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(2) : null; }, trendLabel: "average over par per hole", lowGood: true },
+    { key: "fairways", title: "Fairways", ok: s => s.fw.n, art: s => ring([{ v: s.fw.hit, col: "#4f9d55" }, { v: s.fw.left, col: "#d64541" }, { v: s.fw.right, col: "#e8923a" }]),
+      vals: s => [[pct(s.fw.hit, s.fw.n) + "%", "Hit", "#4f9d55"], [pct(s.fw.left, s.fw.n) + "%", "Left", "#d64541"], [pct(s.fw.right, s.fw.n) + "%", "Right", "#e8923a"]],
+      base: s => `${s.fw.n} par 4s and 5s with the fairway logged`, trend: s => pct(s.fw.hit, s.fw.n), trendLabel: "% fairways hit" },
+    { key: "gir", title: "Greens in Regulation", ok: s => s.girN, art: s => ring([{ v: s.gir, col: "#4f9d55" }, { v: s.girN - s.gir, col: "#e6e9ef" }]),
+      vals: s => [[pct(s.gir, s.girN) + "%", "Hit", "#4f9d55"], [pct(s.girN - s.gir, s.girN) + "%", "Miss", "#9aa3b5"]],
+      base: s => `${s.girN} holes with putts logged`, trend: s => pct(s.gir, s.girN), trendLabel: "% greens hit" },
+    { key: "scramble", title: "Scrambling", ok: s => s.scrN, art: s => ring([{ v: s.scr, col: "#7b4fc9" }, { v: s.scrN - s.scr, col: "#e6e9ef" }]),
+      vals: s => [[pct(s.scr, s.scrN) + "%", "Saved par or better", "#7b4fc9"]],
+      base: s => `${s.scrN} missed greens`, trend: s => pct(s.scr, s.scrN), trendLabel: "% par saves after missing the green" },
+    { key: "putting", title: "Putting", ok: s => s.puttN, art: s => puttBars(s),
+      vals: s => [[s.putts == null ? "–" : s.putts.toFixed(2), "Per hole", "#e8923a"], [s.puttsGir == null ? "–" : s.puttsGir.toFixed(2), "Per green hit", "#2f6fd6"]],
+      base: s => `${s.puttN} holes with putts logged · ${s.putts == null ? "–" : (s.putts * 18).toFixed(1)} per 18`, trend: s => s.putts == null ? null : +(s.putts * 18).toFixed(1), trendLabel: "putts per 18", lowGood: true },
+  ];
+
+  const statsView = { pid: null, recs: null, name: "" };
+  async function renderStatistics(playerId) {
+    view.innerHTML = `<div class="loading">Loading statistics…</div>`;
+    let pid = playerId;
+    if (!pid) {
+      const { data } = await client.from("players").select("id").eq("profile_id", app.user.id).is("guest_event_id", null).limit(1);
+      pid = data && data[0] ? data[0].id : null;
+    }
+    const { data: p } = pid ? await client.from("players").select("id, name, profile_id").eq("id", pid).maybeSingle() : { data: null };
+    if (!p) { view.innerHTML = `<a class="back-link" href="#/me">‹ My profile</a><div class="card empty"><p>You're not on the player list yet, so there are no statistics.</p></div>`; return; }
+    const isMe = p.profile_id === app.user.id;
+    if (!isMe && !app.committee) { view.innerHTML = `<a class="back-link" href="#/stats/${p.id}">‹ ${esc(p.name)}</a><div class="card empty"><p>Statistics are private to each member.</p></div>`; return; }
+    const recs = await loadHoleRecords(p.id);
+    Object.assign(statsView, { pid: p.id, recs, name: p.name });
+    const s = statSummary(recs);
+    const rounds = new Set(recs.map(r => r.ev.id)).size;
+    const back = isMe ? `<a class="back-link" href="#/me">‹ My profile</a>` : `<a class="back-link" href="#/stats/${p.id}">‹ ${esc(p.name)}</a>`;
+    if (!recs.length) { view.innerHTML = `${back}<h1>Statistics</h1><div class="card empty"><p>Statistics start from the first round scored in the app.</p></div>`; return; }
+    view.innerHTML = `${back}
+      <h1 style="margin-bottom:2px">Statistics${isMe ? "" : ` · ${esc(p.name)}`}</h1>
+      <p class="small muted" style="margin-top:0">${rounds} round${rounds === 1 ? "" : "s"} · ${recs.length} holes · society rounds and private games${isMe ? " · only you and the committee see these" : ""}</p>
+      <div class="card st-list">${STAT_ROWS.map(row => { const ok = row.ok(s); return `
+        <button type="button" class="st-row" data-action="stat-trend" data-key="${row.key}" ${ok ? "" : "disabled"}>
+          <span class="st-art">${row.art(s)}</span>
+          <span class="st-body"><b class="st-title">${row.title}</b>
+            ${ok ? `<span class="st-vals">${row.vals(s).map(([v, l, col]) => `<span><em><i style="border-color:${col}"></i>${v}</em><small>${l}</small></span>`).join("")}</span>
+            <small class="st-base">${row.base(s)}</small>` : `<small class="st-base">Nothing logged yet${row.key === "fairways" || row.key === "gir" || row.key === "putting" || row.key === "scramble" ? ": add putts and fairways on the number pad when you score" : ""}</small>`}</span>
+          ${ok ? `<span class="ci-chev">›</span>` : ""}
+        </button>`; }).join("")}</div>`;
+  }
+
+  function statTrend(key) {
+    const row = STAT_ROWS.find(r => r.key === key); if (!row || !statsView.recs) return;
+    const byEv = new Map();
+    statsView.recs.forEach(r => { if (!byEv.has(r.ev.id)) byEv.set(r.ev.id, { ev: r.ev, recs: [] }); byEv.get(r.ev.id).recs.push(r); });
+    const pts = [...byEv.values()].sort((a, b) => a.ev.event_date.localeCompare(b.ev.event_date))
+      .map(x => ({ ev: x.ev, v: row.trend(statSummary(x.recs)) })).filter(x => x.v != null);
+    const W = 320, H = 150, pad = 26;
+    let chart = `<p class="small muted">Not enough rounds yet to show a trend.</p>`;
+    if (pts.length) {
+      const vs = pts.map(x => x.v), lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo || 1;
+      const X = i => pts.length === 1 ? W / 2 : pad + i * (W - pad * 2) / (pts.length - 1), Y = v => H - 22 - (v - lo) / span * (H - 50);
+      chart = `<svg class="st-trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(row.title)} by round">
+        <polyline fill="none" stroke="#1B3A6C" stroke-width="2.5" points="${pts.map((x, i) => X(i) + "," + Y(x.v)).join(" ")}"/>
+        ${pts.map((x, i) => `<circle cx="${X(i)}" cy="${Y(x.v)}" r="4" fill="#B8923C"/><text x="${X(i)}" y="${Y(x.v) - 9}" font-size="10" text-anchor="middle" fill="#10233F">${x.v}</text><text x="${X(i)}" y="${H - 6}" font-size="8.5" text-anchor="middle" fill="#57617A">${esc(fmtDate(x.ev.event_date, { day: "numeric", month: "short" }))}</text>`).join("")}</svg>`;
+    }
+    openSheet(`<h2>${esc(row.title)}</h2><p class="small muted" style="margin-top:-4px">Round by round: ${row.trendLabel}${row.lowGood ? " (lower is better)" : ""}.</p>${chart}
+      <div class="st-trend-list">${pts.slice().reverse().map(x => `<div class="row"><span>${esc(x.ev.name)}<span class="thru"> · ${esc(fmtDate(x.ev.event_date))}</span></span><span class="spacer"></span><b>${x.v}</b></div>`).join("")}</div>
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Done</button>`);
+  }
+
   async function renderStats(playerId) {
     view.innerHTML = `<div class="loading">Loading stats…</div>`;
     let pid = playerId;
@@ -540,6 +686,7 @@
       client.from("game_results").select("event_id, points, gross, position, field").eq("player_id", pid),
       client.rpc("my_games"),
     ]);
+    const bagItems = await loadBag(pid);
     const gameById = new Map(((mg && mg.data) || []).filter(e => e.is_private).map(e => [e.id, e]));
     const privateRows = ((gr && gr.data) || []).filter(x => gameById.has(x.event_id))
       .sort((a, b) => gameById.get(b.event_id).event_date.localeCompare(gameById.get(a.event_id).event_date));
@@ -615,23 +762,13 @@
         <div class="lc-col"><div class="big">${best == null ? "–" : best}</div><div class="thru">best</div></div>
       </div>
       ${chart ? `<div class="card"><h2>Points by round</h2>${chart}</div>` : ""}
+      ${bagItems ? bagCard(bagItems, p, isMe) : ""}
       ${hcHistory && hcHistory.length ? hcHistoryCard(hcHistory, p) : ""}
       ${privateRows.length ? `<div class="card"><h2>Private games</h2><p class="small muted" style="margin-top:-4px">Friendly rounds — they don't count for the Order of Merit or handicaps.</p>
         ${privateRows.map(x => { const e = gameById.get(x.event_id); return `<a class="row stat-round" href="#/round/${e.id}"><div><b>${esc(e.name)}</b><div class="thru">${esc(e.venue || "")} · ${fmtDate(e.event_date)}</div></div><span class="spacer"></span>
           <span class="small muted">${x.position ? `${ordinal(x.position)} of ${x.field}` : ""}${x.gross ? ` · ${x.gross} gross` : ""}</span><span class="big" style="margin-left:12px">${x.points == null ? "–" : x.points}</span></a>`; }).join("")}</div>` : ""}
-      ${holes ? `<div class="card"><h2>Scoring</h2><p class="small muted" style="margin-top:-4px">From ${holes} holes scored in the app.</p>
-        ${bar("Eagle or better", tally.eagle, "e")}${bar("Birdie", tally.birdie, "b")}${bar("Par", tally.par, "p")}${bar("Bogey", tally.bogey, "o")}${bar("Double", tally.double, "d")}${bar("Worse", tally.worse, "w")}${bar("Pick-up", tally.pu, "u")}
-        <div class="last-card" style="margin-top:12px">
-          <div class="lc-col"><div class="big">${avg(byPar[3])}</div><div class="thru">par 3 average</div></div>
-          <div class="lc-col"><div class="big">${avg(byPar[4])}</div><div class="thru">par 4 average</div></div>
-          <div class="lc-col"><div class="big">${avg(byPar[5])}</div><div class="thru">par 5 average</div></div>
-        </div></div>` : `<div class="card small muted">Hole-by-hole stats start from the first round scored in the app.</div>`}
-      ${puttHoles || fwTotal ? `<div class="card"><h2>Putts &amp; fairways</h2><div class="last-card">
-          <div class="lc-col"><div class="big">${puttHoles ? (putts / puttHoles * 18).toFixed(1) : "–"}</div><div class="thru">putts per 18</div></div>
-          <div class="lc-col"><div class="big">${fwTotal ? Math.round(fwHit / fwTotal * 100) + "%" : "–"}</div><div class="thru">fairways hit</div></div>
-          <div class="lc-col"><div class="big">${girHoles ? Math.round(gir / girHoles * 100) + "%" : "–"}</div><div class="thru">greens in reg</div></div>
-        </div><p class="small muted" style="margin:8px 0 0">Only holes where putts or fairways were logged.</p></div>`
-        : isMe ? `<div class="card small muted">Want putts and fairways? Tap <b>Add putts &amp; fairways</b> on the number pad when you score.</div>` : ""}
+      ${isMe || app.committee ? `<a class="card st-link" href="${isMe ? "#/me/statistics" : `#/statistics/${p.id}`}"><span class="st-art">${ring([{ v: tally.eagle + tally.birdie, col: "#d64541" }, { v: tally.par, col: "#2f6fd6" }, { v: tally.bogey, col: "#4f9d55" }, { v: tally.double + tally.worse + tally.pu, col: "#6b7280" }], 56)}</span>
+        <span class="st-body"><b class="st-title">Statistics</b><small class="st-base">${holes ? `Scoring, par averages, fairways, greens, putting and scrambling · ${holes} holes` : "Start from the first round scored in the app"}</small>${isMe ? "" : `<small class="st-base">Private: you see this as committee</small>`}</span><span class="ci-chev">›</span></a>` : ""}
       ${fixtures}
       <div class="card"><h2>Rounds</h2>${mine.slice().reverse().map(x => { const e = evById.get(x.event_id); const q = posIn(x);
         return `<a class="row stat-round" href="#/round/${e.id}"><div><b>${esc(e.name)}</b><div class="thru">${esc(e.venue || "")} · ${fmtDate(e.event_date)}</div></div><span class="spacer"></span>
@@ -1224,14 +1361,56 @@
     setup: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   };
 
+  // The main menu along the bottom of every screen outside a round, with
+  // the + button for the things people do most.
+  const MAIN_ICONS = {
+    play: icon('<path d="M7 21V3l10 4-10 4"/><path d="M4 21h8"/>'),
+    season: icon('<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="1.5"/>'),
+    records: icon('<circle cx="12" cy="9" r="6"/><path d="M8.5 14 7 21l5-3 5 3-1.5-7"/>'),
+    me: icon('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>'),
+  };
+  function mainTabbar(active) {
+    const tabs = [["play", "Play", "#/"], ["season", "Order of Merit", "#/season"], ["records", "Records", "#/records"], ["me", "Profile", "#/me"]];
+    showTabbar(tabs.map(([k, l, h]) => `<button role="tab" data-action="main-tab" data-href="${h}" aria-selected="${active === k}">${MAIN_ICONS[k]}<span>${l}</span></button>`).join(""));
+    $("#fab").hidden = false;
+  }
+
+  function fabSheet() {
+    const item = (action, title, sub, ico) => `<button type="button" class="fab-item" data-action="${action}"><span class="fab-ico">${ico}</span><span><b>${title}</b><small>${sub}</small></span></button>`;
+    openSheet(`<h2>Quick actions</h2><div class="fab-list">
+      ${item("private-new", "New private game", "You and up to 3 others: members or friends", MAIN_ICONS.play)}
+      ${item("fab-checkin", "Check in for today's round", "Open today's society round", icon('<path d="M5 12l5 5L20 7"/>'))}
+      ${app.committee ? item("practice-new", "Practice round", "Committee: try the app out, nothing counts", icon('<path d="M4 20h16M7 16l4-12 3 8 2-4 3 8"/>')) : ""}
+      ${item("fab-bag", "Add to my bag", "A club, glove, shoes or ball", icon('<path d="M14 3 11 15"/><path d="M11 15 5 19c-1 1 0 2 1 2h6c1 0 2-1 1-2z"/>'))}
+      ${item("fab-register", "Register for the next round", "Enter on the website", icon('<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>'))}
+      ${item("fab-post", "Post to the round feed", "A photo or comment on the live round", TAB_ICONS.feed)}
+      ${item("fab-course", "Add a course", "Name and address, then the scorecard", icon('<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>'))}
+    </div><button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Close</button>`);
+  }
+
+  // The society round to check in for: today's, else the next one set up.
+  async function fabRound(liveOnly) {
+    const today = londonToday();
+    const [{ data: evs }, { data: sc }] = await Promise.all([
+      client.from("events").select("id, name, event_date").order("event_date"),
+      client.from("event_scoring").select("event_id, status"),
+    ]);
+    const st = new Map((sc || []).map(x => [x.event_id, x.status]));
+    const list = (evs || []).filter(e => st.has(e.id));
+    if (liveOnly) return list.find(e => st.get(e.id) === "live");
+    return list.find(e => e.event_date === today) || list.find(e => e.event_date > today);
+  }
+
   function showTabbar(html) {
     const bar = $("#tabbar");
+    if ($("#fab")) $("#fab").hidden = true;
     bar.innerHTML = html;
     bar.hidden = false;
     document.body.classList.add("has-tabbar");
   }
   function hideTabbar() {
     $("#tabbar").hidden = true;
+    if ($("#fab")) $("#fab").hidden = true;
     document.body.classList.remove("has-tabbar");
   }
 
@@ -1572,7 +1751,7 @@
   // green, and the button that opens the satellite view.
   function gpsBar(r, hole) {
     const g = r.geo && r.geo.get(hole);
-    const mapped = g && g.green_lat != null;
+    const mapped = g && g.green_lat != null && g.tee_lat != null;
     if (!mapped) {
       return app.committee && r.course
         ? `<div class="gps-bar muted small">Hole ${hole} isn't on the map yet. <a href="#/course-map/${r.course.id}">Map the holes</a></div>` : "";
@@ -1595,9 +1774,9 @@
     if (!d) return `<span class="small muted">Finding you…</span>`;
     if (d.off) return `<span class="small muted">Not on the course — yardage shows when you are</span>`;
     if (d.front != null || d.back != null) {
-      return `<span class="fcb">${d.front != null ? `<span><small>F</small>${d.front}</span>` : ""}<span class="m"><small>Mid</small><b>${d.yards}</b></span>${d.back != null ? `<span><small>B</small>${d.back}</span>` : ""}</span>`;
+      return `<span class="fcb">${d.front != null ? `<span><small>F</small>${d.front}</span>` : ""}<span class="m"><small>Mid</small><b>${d.yards}</b></span>${d.back != null ? `<span><small>B</small>${d.back}</span>` : ""}</span>${clubTip(d.yards)}`;
     }
-    return `<b>${d.yards}</b> yds <span class="small muted">to the middle · ±${d.acc}</span>`;
+    return `<b>${d.yards}</b> yds <span class="small muted">to the middle · ±${d.acc}</span>${clubTip(d.yards)}`;
   }
 
   // Keep the yardage ticking over without redrawing the whole screen.
@@ -2385,6 +2564,164 @@
     drawRcMatch(matchId);
   }
 
+
+  // ---------- the bag ----------
+  // Each player's clubs (with how far they hit them), glove, shoes and
+  // ball. Every member can see every bag; only the player changes theirs.
+  // On the course the yardage line suggests a club from it.
+
+  const CLUBS = [
+    ["DR", "Driver", "wood"], ["2W", "2 wood", "wood"], ["3W", "3 wood", "wood"], ["4W", "4 wood", "wood"], ["5W", "5 wood", "wood"], ["7W", "7 wood", "wood"], ["9W", "9 wood", "wood"],
+    ["1H", "1 hybrid", "hybrid"], ["2H", "2 hybrid", "hybrid"], ["3H", "3 hybrid", "hybrid"], ["4H", "4 hybrid", "hybrid"], ["5H", "5 hybrid", "hybrid"], ["6H", "6 hybrid", "hybrid"], ["7H", "7 hybrid", "hybrid"],
+    ["1I", "1 iron", "iron"], ["2I", "2 iron", "iron"], ["3I", "3 iron", "iron"], ["4I", "4 iron", "iron"], ["5I", "5 iron", "iron"], ["6I", "6 iron", "iron"], ["7I", "7 iron", "iron"], ["8I", "8 iron", "iron"], ["9I", "9 iron", "iron"],
+    ["PW", "Pitching wedge", "wedge"], ["GW", "Gap wedge", "wedge"], ["AW", "Approach wedge", "wedge"], ["SW", "Sand wedge", "wedge"], ["LW", "Lob wedge", "wedge"], ["PT", "Putter", "putter"],
+  ];
+  const CLUB = new Map(CLUBS.map(([code, name, family], i) => [code, { code, name, family, order: i }]));
+  const clubShort = code => { const c = CLUB.get(code); if (!c) return code || "?"; return c.family === "iron" ? code[0] + "i" : c.family === "hybrid" ? code[0] + "Hy" : c.family === "wood" && code !== "DR" ? code[0] + "W" : code === "DR" ? "Driver" : code === "PT" ? "Putter" : code[0] + "w"; };
+  const KIT = { club: "Club", glove: "Glove", shoes: "Shoes", ball: "Ball" };
+  const kitOrder = x => x.kind === "club" ? (CLUB.get(x.club) || { order: 99 }).order : { ball: 100, glove: 101, shoes: 102 }[x.kind] || 103;
+
+  // Simple line drawings, one per kind of club: never a maker's photo.
+  function kitIcon(x) {
+    const fam = x.kind === "club" ? (CLUB.get(x.club) || {}).family : x.kind;
+    const paths = {
+      wood: '<path d="M30 6 30 40"/><path d="M30 40c-10 0-18 4-18 10 0 5 7 7 15 7s13-3 13-8-3-9-10-9z"/>',
+      hybrid: '<path d="M32 6 30 40"/><path d="M30 40c-8 0-15 3-15 9 0 4 6 6 13 6s11-3 11-7-3-8-9-8z"/>',
+      iron: '<path d="M34 6 31 38"/><path d="M31 38 16 48c-2 2-1 6 3 6h14c3 0 4-2 3-5z"/>',
+      wedge: '<path d="M34 6 31 36"/><path d="M31 36 15 46c-3 3-1 8 4 8h13c3 0 5-3 3-6z"/>',
+      putter: '<path d="M30 6 30 44"/><path d="M14 44h26a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4H14z"/>',
+      ball: '<circle cx="30" cy="30" r="16"/><circle cx="25" cy="25" r="1.4"/><circle cx="32" cy="23" r="1.4"/><circle cx="36" cy="30" r="1.4"/><circle cx="27" cy="33" r="1.4"/>',
+      glove: '<path d="M20 52V30l-4-10a3 3 0 0 1 5-2l4 8V12a3 3 0 0 1 6 0v12V10a3 3 0 0 1 6 0v14-10a3 3 0 0 1 6 0v22c0 10-5 16-13 16z"/>',
+      shoes: '<path d="M8 38h20l8-8 6 4c4 2 10 4 12 8v6H8z"/><path d="M8 48h46"/>',
+    };
+    return `<svg class="kit-ico" viewBox="0 0 60 60" aria-hidden="true">${paths[fam] || paths.iron}</svg>`;
+  }
+
+  async function loadBag(pid) {
+    const { data, error } = await client.from("player_equipment").select("*").eq("player_id", pid);
+    if (error) return null;
+    return (data || []).sort((a, b) => kitOrder(a) - kitOrder(b) || String(a.created_at).localeCompare(String(b.created_at)));
+  }
+
+  // My bag, for the club suggestion on the course.
+  async function loadMyBag() {
+    if (!app.approved || app.guest) return;
+    const { data } = await client.from("players").select("id").eq("profile_id", app.user.id).is("guest_event_id", null).limit(1);
+    const pid = data && data[0] && data[0].id;
+    if (!pid) return;
+    const bag = await loadBag(pid);
+    app.bag = (bag || []).filter(x => x.kind === "club" && !x.retired && x.distance);
+  }
+
+  // The club for a yardage: the shortest one that gets there (5 yds of
+  // leeway), never the driver or putter; past everything, the longest.
+  function clubFor(yds) {
+    const bag = (app.bag || []).filter(x => x.club !== "DR" && x.club !== "PT");
+    if (!bag.length || !(yds > 15)) return null;
+    const byDist = bag.slice().sort((a, b) => a.distance - b.distance || kitOrder(b) - kitOrder(a));
+    const reach = byDist.find(x => x.distance >= yds - 5);
+    return reach ? { c: reach, over: false } : { c: byDist[byDist.length - 1], over: true };
+  }
+
+  function clubTip(yds) {
+    const t = clubFor(yds);
+    if (!t) return app.bag && app.bag.length ? "" : (app.approved && !app.guest ? `<span class="club-tip muted"><a href="#/me/bag">Add your clubs</a> for a club suggestion</span>` : "");
+    const name = (CLUB.get(t.c.club) || { name: t.c.club }).name;
+    return `<span class="club-tip">${t.over ? "Longest" : "Club"}: <b>${esc(name)}</b> <span class="muted">· you hit it ${t.c.distance}</span></span>`;
+  }
+
+  function bagCard(items, p, isMe) {
+    const clubs = items.filter(x => x.kind === "club" && !x.retired);
+    const ball = items.find(x => x.kind === "ball" && !x.retired);
+    const href = isMe ? "#/me/bag" : `#/bag/${p.id}`;
+    if (!clubs.length && !ball) return isMe ? `<a class="card bag-card" href="${href}"><h2>In the bag</h2><p class="small muted" style="margin:0">Add your clubs and how far you hit them — the scorecard then suggests a club from the yardage. ›</p></a>` : "";
+    return `<a class="card bag-card" href="${href}"><div class="row"><h2 style="margin:0">In the bag</h2><span class="spacer"></span><span class="small muted">${clubs.length} clubs ›</span></div>
+      <div class="bag-chips">${clubs.map(x => `<span class="bag-chip"><b>${esc(clubShort(x.club))}</b>${x.distance ? ` ${x.distance}` : ""}</span>`).join("")}</div>
+      ${ball && (ball.make || ball.model) ? `<p class="small muted" style="margin:8px 0 0">Ball: ${esc([ball.make, ball.model].filter(Boolean).join(" "))}</p>` : ""}</a>`;
+  }
+
+  const bagView = { pid: null, tab: "active", data: null, player: null, mine: false };
+
+  async function renderBag(pid) {
+    view.innerHTML = `<div class="loading">Loading the bag…</div>`;
+    if (!pid) {
+      const { data } = await client.from("players").select("id").eq("profile_id", app.user.id).is("guest_event_id", null).limit(1);
+      pid = data && data[0] ? data[0].id : null;
+      if (!pid) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card empty"><p>You're not on the player list yet. Ask the committee to link your account.</p></div>`; return; }
+    }
+    const [pl, bag] = await Promise.all([client.from("players").select("id, name, profile_id").eq("id", pid).maybeSingle(), loadBag(pid)]);
+    if (!pl.data) { view.innerHTML = `<div class="card status-msg err">Couldn't find that player.</div>`; return; }
+    if (bag == null) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card status-msg err">The bag needs a database update before it can work.</div>`; return; }
+    Object.assign(bagView, { pid, data: bag, player: pl.data, mine: pl.data.profile_id === app.user.id || app.committee });
+    if (pl.data.profile_id === app.user.id) app.bag = bag.filter(x => x.kind === "club" && !x.retired && x.distance);
+    drawBag();
+    if (app.openKitAdd) { app.openKitAdd = false; if (bagView.mine) kitSheet(null); }
+  }
+
+  function drawBag() {
+    const b = bagView;
+    const list = b.data.filter(x => !!x.retired === (b.tab === "retired"));
+    const clubs = b.data.filter(x => x.kind === "club" && !x.retired).length;
+    const mine = b.player.profile_id === app.user.id;
+    view.innerHTML = `
+      <div class="row bag-head"><a class="back-link" href="${mine ? "#/me" : `#/stats/${b.pid}`}">‹ ${mine ? "My profile" : esc(b.player.name)}</a><span class="spacer"></span>
+        ${b.mine ? `<button class="btn gold bag-add" data-action="kit-add" aria-label="Add equipment">＋ Add</button>` : ""}</div>
+      <h1>${mine ? "My bag" : `${esc(b.player.name)}'s bag`}</h1>
+      <div class="seg2 bag-tabs" role="tablist"><button type="button" class="${b.tab === "active" ? "on" : ""}" data-action="bag-tab" data-tab="active">Active</button><button type="button" class="${b.tab === "retired" ? "on" : ""}" data-action="bag-tab" data-tab="retired">Retired</button></div>
+      ${b.tab === "active" ? `<p class="bag-count">${clubs} club${clubs === 1 ? "" : "s"} in the bag${clubs > 14 ? ` <span class="bag-warn">· over the 14-club limit</span>` : ""}</p>` : ""}
+      <div class="card bag-list">
+        ${list.map(x => `<${b.mine ? `button type="button" data-action="kit-edit" data-id="${x.id}"` : "div"} class="kit-row">
+          <span class="kit-pic">${kitIcon(x)}</span>
+          <span class="kit-main"><span class="kit-top">${x.kind === "club" ? `<b>${esc(clubShort(x.club))}</b>${x.distance ? ` <span class="kit-yds">${x.distance}<small>y</small></span>` : ""}` : `<b>${KIT[x.kind]}</b>`}</span>
+            ${x.make || x.model ? `<span class="kit-model">${esc([x.make, x.model].filter(Boolean).join(" "))}</span>` : ""}
+            ${x.loft != null || x.shaft ? `<span class="kit-spec">${[x.loft != null ? `${x.loft}°` : "", x.shaft ? esc(x.shaft) : ""].filter(Boolean).join(" · ")}</span>` : ""}</span>
+          ${b.mine ? `<span class="chev" aria-hidden="true">›</span>` : ""}</${b.mine ? "button" : "div"}>`).join("")
+          || `<p class="small muted" style="padding:6px 2px">${b.tab === "active" ? (b.mine ? "Nothing in the bag yet. Tap ＋ Add to put your clubs in, with how far you hit each one: the scorecard then suggests a club from the yardage." : "Nothing in the bag yet.") : "Nothing retired."}</p>`}
+      </div>`;
+  }
+
+  function kitSheet(item) {
+    const x = item || { kind: null };
+    if (!x.kind) {
+      openSheet(`<h2>Add equipment</h2><div class="kit-types">${Object.entries(KIT).map(([k, l]) => `<button type="button" class="kit-type" data-action="kit-kind" data-kind="${k}">${kitIcon({ kind: k, club: k === "club" ? "7I" : null })}<span>${l}</span></button>`).join("")}</div>
+        <button class="btn ghost block" style="margin-top:12px" data-action="close-sheet">Cancel</button>`);
+      return;
+    }
+    const used = new Set(bagView.data.filter(y => y.kind === "club" && !y.retired && y.id !== x.id).map(y => y.club));
+    openSheet(`<h2>${item.id ? "Edit" : "Add"} ${KIT[x.kind].toLowerCase()}</h2>
+      <form id="kit-form">
+        ${x.kind === "club" ? `<label class="field">Club<select name="club" required><option value="">Choose…</option>${CLUBS.map(([c, n]) => `<option value="${c}" ${x.club === c ? "selected" : ""}>${n}${used.has(c) ? " (in the bag)" : ""}</option>`).join("")}</select></label>
+          <label class="field">How far you hit it (yards)<input name="distance" type="number" inputmode="numeric" min="1" max="400" value="${x.distance || ""}" placeholder="Your normal carry, e.g. 125"></label>` : ""}
+        <div class="row" style="gap:10px"><label class="field" style="flex:1">Make<input name="make" maxlength="60" value="${esc(x.make || "")}" placeholder="e.g. Cobra"></label>
+          <label class="field" style="flex:1.4">Model<input name="model" maxlength="80" value="${esc(x.model || "")}" placeholder="e.g. F-Max"></label></div>
+        ${x.kind === "club" ? `<div class="row" style="gap:10px"><label class="field" style="flex:1">Loft (°)<input name="loft" type="number" step="0.5" inputmode="decimal" min="0" max="80" value="${x.loft != null ? x.loft : ""}"></label>
+          <label class="field" style="flex:2">Shaft<input name="shaft" maxlength="80" value="${esc(x.shaft || "")}" placeholder="e.g. Regular graphite"></label></div>` : ""}
+        <input type="hidden" name="kind" value="${x.kind}">
+        <button class="btn gold block" type="submit">${item.id ? "Save" : "Add to the bag"}</button>
+        ${item.id ? `<button type="button" class="btn ghost block" style="margin-top:8px" data-action="kit-retire" data-id="${x.id}">${x.retired ? "Back in the bag" : "Retire it"}</button>
+          <button type="button" class="btn ghost block danger-text" style="margin-top:8px" data-action="kit-delete" data-id="${x.id}">Delete</button>` : ""}
+      </form>`);
+    $("#kit-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const num = k => f.get(k) === "" || f.get(k) == null ? null : Number(f.get(k));
+      const txt = k => (f.get(k) || "").toString().trim() || null;
+      const row = { player_id: bagView.pid, kind: f.get("kind"), club: txt("club"), distance: num("distance"), make: txt("make"), model: txt("model"), loft: num("loft"), shaft: txt("shaft"), updated_at: new Date().toISOString() };
+      if (row.kind === "club" && !row.club) { toast("Choose the club.", true); return; }
+      const res = item.id ? await client.from("player_equipment").update(row).eq("id", item.id) : await client.from("player_equipment").insert(row);
+      if (res.error) { toast(res.error.message, true); return; }
+      closeSheet(); toast(item.id ? "Saved" : "In the bag");
+      renderBag(bagView.pid);
+    });
+  }
+
+  async function kitChange(id, change) {
+    const res = change === "delete" ? await client.from("player_equipment").delete().eq("id", id)
+      : await client.from("player_equipment").update({ retired: change === "retire", updated_at: new Date().toISOString() }).eq("id", id);
+    if (res.error) { toast(res.error.message, true); return; }
+    closeSheet(); toast(change === "delete" ? "Deleted" : change === "retire" ? "Retired" : "Back in the bag");
+    renderBag(bagView.pid);
+  }
 
   // ---------- society handicaps: the committee's list ----------
   // Everyone on the player list: their society handicap, their England
@@ -4052,22 +4389,9 @@
     view.innerHTML = `
       <h1>Courses</h1>
       <p class="small muted">Any member can add a course or a tee from its scorecard. Put in the par and stroke index for every hole, and the course rating and slope if you have them, so handicaps work out properly.</p>
-      ${courses.map(c => `
-        <div class="card">
-          <h2>${esc(c.name)}</h2>
-          ${c.address ? `<p class="small muted" style="margin-top:-6px">${esc(c.address)}</p>` : ""}
-          <div class="stack">
-            ${tees.filter(t => t.course_id === c.id).map(t => `
-              <a class="row" href="#/course/${t.id}" style="text-decoration:none;color:inherit;padding:8px 0;border-top:1px solid var(--line)">
-                <span style="width:16px;height:16px;border-radius:50%;border:1px solid var(--line);background:${esc(t.colour || "#ccc")}"></span>
-                <strong>${esc(t.name)}</strong>
-                <span class="muted small">${t.par ? "Par " + t.par : ""}${t.course_rating ? " · CR " + t.course_rating : ""}${t.slope ? " · Slope " + t.slope : ""}</span>
-                <span class="spacer"></span>${t.holeCount !== 18 ? `<span class="badge">${t.holeCount}/18</span>` : "›"}
-              </a>`).join("")}
-          </div>
-          <button class="btn ghost block" style="margin-top:10px" data-action="new-tee" data-course="${c.id}">Add a tee</button>
-          ${app.committee ? `<a class="btn ghost block" style="margin-top:8px" href="#/course-map/${c.id}">Map the holes${c.mapped ? ` (${c.mapped}/18 done)` : ""}</a>` : ""}
-        </div>`).join("")}
+      <div class="card ci-list">${courses.map(c => { const ts = tees.filter(t => t.course_id === c.id); const y = ts.find(t => t.name.toLowerCase() === DEFAULT_TEE) || ts[0]; return `
+        <a class="ci-row" href="#/courses/${c.id}"><span class="ci-ico">${ICO_FLAG}</span><span class="ci-label">${esc(c.name)}<small>${esc(c.address || "")}</small></span><span class="ci-right">${y && y.par ? "Par " + y.par : ts.length ? "" : "No scorecard"}</span><span class="ci-chev">›</span></a>`; }).join("")}
+      </div>
       <form id="new-course" class="card">
         <h2>Add a course</h2>
         <label class="field">Name<input name="name" required placeholder="e.g. Hurtmore Golf Club"></label>
@@ -4082,6 +4406,270 @@
       toast("Course added");
       renderCourses();
     });
+  }
+
+  // ---------- course page and course preview ----------
+
+  // Typical club distances, used only when your bag is empty (and said so).
+  const TYPICAL_BAG = [["DR", 220], ["3W", 200], ["5W", 185], ["4H", 175], ["5I", 165], ["6I", 155], ["7I", 145], ["8I", 135], ["9I", 125], ["PW", 110], ["GW", 95], ["SW", 80]]
+    .map(([club, distance]) => ({ club, distance, kind: "club" }));
+  const clubName = code => (CLUB.get(code) || { name: code }).name;
+
+  // The plan for a hole: driver off the tee on longer holes, then the club
+  // that leaves the shortest next shot. If a full shot would leave an
+  // awkward half-wedge, lay up to your shortest full club instead.
+  function planHole(yds, par, bagIn) {
+    const bag = (bagIn || []).filter(x => x.club && x.club !== "PT" && x.distance > 0);
+    if (!bag.length || !(yds > 0)) return null;
+    const dr = bag.find(x => x.club === "DR");
+    const irons = bag.filter(x => x.club !== "DR").sort((a, b) => a.distance - b.distance || kitOrder(b) - kitOrder(a));
+    const fair = irons.length ? irons : [dr];
+    const longest = fair[fair.length - 1], shortest = fair[0];
+    const shots = [];
+    let left = yds;
+    while (left > 15 && shots.length < 6) {
+      const first = !shots.length;
+      const reach = fair.find(x => x.distance >= left - 5);
+      let c, finish = false;
+      if (reach && !(first && par >= 4 && dr && left > reach.distance + 5)) { c = reach; finish = true; }
+      else if (first && par >= 4 && dr && dr.distance >= longest.distance) c = dr;
+      else {
+        c = longest;
+        const after = left - c.distance;
+        if (after > 15 && after < shortest.distance - 10) {
+          const target = left - shortest.distance;
+          c = fair.find(x => x.distance >= target - 5) || longest;
+        }
+      }
+      const carry = finish ? left : Math.min(c.distance, left);
+      left = Math.max(0, left - carry);
+      shots.push({ club: c.club, distance: c.distance, carry, leaves: left, finish, part: finish && c.distance - carry > 15 });
+      if (finish) break;
+    }
+    const onIn = shots.length;
+    return { shots, onIn, regulation: Math.max(1, par - 2), short: left > 15 ? left : 0 };
+  }
+
+  const coursePack = { id: null, data: null };
+  async function loadCoursePack(courseId, fresh) {
+    if (!fresh && coursePack.id === courseId && coursePack.data) return coursePack.data;
+    const [{ data: course }, { data: tees }, { data: geoRows }, avg, notes] = await Promise.all([
+      client.from("courses").select("*").eq("id", courseId).maybeSingle(),
+      client.from("course_tees").select("*").eq("course_id", courseId).order("name"),
+      client.from("course_hole_geo").select("*").eq("course_id", courseId),
+      client.rpc("course_hole_averages", { p_course: courseId }),
+      client.from("course_notes").select("*").eq("course_id", courseId).order("created_at", { ascending: false }),
+    ]);
+    if (!course) return null;
+    const teeIds = (tees || []).map(t => t.id);
+    const { data: holes } = teeIds.length ? await client.from("course_holes").select("*").in("tee_id", teeIds) : { data: [] };
+    const authors = [...new Set((notes.data || []).map(n => n.author_id))];
+    const { data: who } = authors.length ? await client.from("players").select("profile_id, name").in("profile_id", authors).is("guest_event_id", null) : { data: [] };
+    const d = {
+      course, tees: tees || [],
+      holes: new Map(), geo: new Map((geoRows || []).map(g => [g.hole, g])),
+      avg: new Map(((avg && avg.data) || []).map(a => [a.hole, a])), avgOk: !(avg && avg.error),
+      notes: notes.data || [], notesOk: !notes.error,
+      names: new Map((who || []).map(p => [p.profile_id, p.name])),
+    };
+    d.tees.forEach(t => d.holes.set(t.id, (holes || []).filter(h => h.tee_id === t.id).sort((a, b) => a.hole - b.hole)));
+    d.rounds = Math.max(0, ...[...d.avg.values()].map(a => a.rounds || 0));
+    // hardest first, by the society's average over par
+    d.ranked = [...d.avg.values()].filter(a => a.cards >= 3).sort((a, b) => b.over_par - a.over_par).map(a => a.hole);
+    Object.assign(coursePack, { id: courseId, data: d });
+    return d;
+  }
+  function packTee(d) {
+    const saved = store.get("preview-tee-" + d.course.id, null);
+    const withHoles = d.tees.filter(t => (d.holes.get(t.id) || []).length);
+    return withHoles.find(t => t.id === saved) || withHoles.find(t => t.name.toLowerCase() === DEFAULT_TEE) || withHoles[0] || null;
+  }
+  const holeYards = (d, h) => h.yards || (window.HoleMaps && d.geo.get(h.hole) && d.geo.get(h.hole).tee_lat != null && d.geo.get(h.hole).green_lat != null
+    ? window.HoleMaps.yards({ lat: d.geo.get(h.hole).tee_lat, lng: d.geo.get(h.hole).tee_lng }, { lat: d.geo.get(h.hole).green_lat, lng: d.geo.get(h.hole).green_lng }) : null);
+  const ICO_EYE = icon('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
+  const ICO_CARD = icon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/>');
+  const ICO_NOTE = icon('<path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4M8 9h8M8 13h5"/>');
+  const ICO_FLAG = icon('<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>');
+  const ICO_PIN = icon('<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>');
+
+  async function renderCourseInfo(courseId) {
+    if (!app.approved) { view.innerHTML = `<div class="card empty">Members only.</div>`; return; }
+    view.innerHTML = `<div class="loading">Loading the course…</div>`;
+    const d = await loadCoursePack(courseId, true);
+    if (!d) { view.innerHTML = `<a class="back-link" href="#/courses">‹ Courses</a><div class="card status-msg err">Couldn't find that course.</div>`; return; }
+    const tee = packTee(d);
+    const holes = tee ? d.holes.get(tee.id) : [];
+    const par = holes.reduce((s, h) => s + h.par, 0), yds = holes.reduce((s, h) => s + (h.yards || 0), 0);
+    const hardest = d.ranked[0] || (holes.find(h => h.stroke_index === 1) || {}).hole;
+    const notesN = d.notes.length;
+    const mapped = [...d.geo.values()].filter(g => g.tee_lat != null && g.green_lat != null).length;
+    const row = (href, ico, label, right, action) => `<${href ? `a href="${href}"` : `button type="button" data-action="${action}"`} class="ci-row"><span class="ci-ico">${ico}</span><span class="ci-label">${label}</span><span class="ci-right">${right || ""}</span><span class="ci-chev">›</span></${href ? "a" : "button"}>`;
+    view.innerHTML = `
+      <a class="back-link" href="#/courses">‹ Courses</a>
+      <div class="ci-hero">
+        <h1>${esc(d.course.name)}</h1>
+        ${d.course.address ? `<a class="ci-addr" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(d.course.name + ", " + d.course.address)}" target="_blank" rel="noopener">${ICO_PIN}<span>${esc(d.course.address)}</span></a>` : ""}
+        ${tee ? `<p class="ci-line">${holes.length} holes · Par ${par}${yds ? ` · ${yds.toLocaleString("en-GB")} yards` : ""} <span class="ci-tee"><i style="background:${esc(tee.colour || "#e3c33b")}"></i>${esc(tee.name)} tees</span></p>` : `<p class="ci-line">No scorecard yet</p>`}
+      </div>
+      <div class="card ci-stats">
+        <div><b>${hardest || "–"}</b><span>Hardest hole${d.ranked.length ? "" : hardest ? " (SI 1)" : ""}</span></div>
+        <div><b>${d.rounds || 0}</b><span>Society rounds here</span></div>
+        <div><b>${mapped}/18</b><span>Holes mapped</span></div>
+      </div>
+      <div class="card ci-list">
+        ${tee ? row(`#/preview/${courseId}/1`, ICO_EYE, "Course Preview", "Club plan, hole by hole") : ""}
+        ${tee ? row(null, ICO_CARD, "Scorecard", tee.name, "ci-scorecard") : ""}
+        ${row(null, ICO_NOTE, "Playing notes", String(notesN), "ci-notes")}
+        ${app.committee ? row(`#/course-map/${courseId}`, ICO_FLAG, "Map the holes", `${mapped}/18`) : ""}
+      </div>
+      <div class="card">
+        <h2>Tees</h2>
+        <p class="small muted" style="margin-top:-4px">Tap a tee to check or correct its scorecard.</p>
+        <div class="stack">
+          ${d.tees.map(t => { const hs = d.holes.get(t.id) || []; return `
+            <a class="row" href="#/course/${t.id}" style="text-decoration:none;color:inherit;padding:8px 0;border-top:1px solid var(--line)">
+              <span style="width:16px;height:16px;border-radius:50%;border:1px solid var(--line);background:${esc(t.colour || "#ccc")}"></span>
+              <strong>${esc(t.name)}</strong>
+              <span class="muted small">${hs.length ? "Par " + hs.reduce((s, h) => s + h.par, 0) : ""}${t.course_rating ? " · CR " + t.course_rating : ""}${t.slope ? " · Slope " + t.slope : ""}</span>
+              <span class="spacer"></span>${hs.length !== 18 ? `<span class="badge">${hs.length}/18</span>` : "›"}
+            </a>`; }).join("")}
+        </div>
+        <button class="btn ghost block" style="margin-top:10px" data-action="new-tee" data-course="${courseId}">Add a tee</button>
+      </div>`;
+  }
+
+  function courseCardSheet() {
+    const d = coursePack.data; if (!d) return;
+    const tee = packTee(d); const hs = tee ? d.holes.get(tee.id) : [];
+    const line = (list, label) => `<tr class="sc-sum"><td>${label}</td><td>${list.reduce((s, h) => s + h.par, 0)}</td><td>${list.reduce((s, h) => s + (h.yards || 0), 0) || ""}</td><td></td><td></td></tr>`;
+    const rowH = h => { const a = d.avg.get(h.hole); return `<tr><td><a href="#/preview/${d.course.id}/${h.hole}" data-action="close-sheet">${h.hole}</a></td><td>${h.par}</td><td>${h.yards || ""}</td><td>${h.stroke_index}</td><td>${a && a.cards >= 3 ? Number(a.avg_strokes).toFixed(1) : "–"}</td></tr>`; };
+    openSheet(`<h2>Scorecard · ${esc(tee ? tee.name : "")}</h2>
+      <table class="sc-table"><thead><tr><th>Hole</th><th>Par</th><th>Yds</th><th>SI</th><th>Society avg</th></tr></thead>
+      <tbody>${hs.filter(h => h.hole <= 9).map(rowH).join("")}${line(hs.filter(h => h.hole <= 9), "Out")}
+      ${hs.filter(h => h.hole > 9).map(rowH).join("")}${hs.some(h => h.hole > 9) ? line(hs.filter(h => h.hole > 9), "In") : ""}${line(hs, "Total")}</tbody></table>
+      <p class="small muted">Society average is the strokes taken in society rounds here (pick-ups left out).</p>
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Done</button>`);
+  }
+
+  function noteRows(d, list) {
+    if (!list.length) return `<p class="small muted">No notes yet.</p>`;
+    return list.map(n => `<div class="pv-note"><p>${esc(n.body)}</p><span class="small muted">${n.hole ? `Hole ${n.hole} · ` : ""}${esc(d.names.get(n.author_id) || "A member")} · ${fmtDate(String(n.created_at).slice(0, 10), { day: "numeric", month: "short", year: "numeric" })}
+      ${n.author_id === app.user.id || app.committee ? ` · <a href="#" data-action="note-del" data-id="${n.id}">Delete</a>` : ""}</span></div>`).join("");
+  }
+  function noteForm(hole) {
+    return `<form class="pv-note-form" data-hole="${hole || ""}"><textarea name="body" maxlength="300" rows="2" required placeholder="${hole ? "e.g. Ditch across the fairway at 220. Aim left of the oak." : "e.g. Greens are quick in summer. Buggies only on paths."}"></textarea>
+      <button class="btn small" type="submit">Add note</button></form>`;
+  }
+  function notesSheet() {
+    const d = coursePack.data; if (!d) return;
+    if (!d.notesOk) { openSheet(`<h2>Playing notes</h2><p class="status-msg err">Playing notes need a database update before they can work.</p><button class="btn ghost block" data-action="close-sheet">Close</button>`); return; }
+    openSheet(`<h2>Playing notes</h2><p class="small muted" style="margin-top:-4px">Tips for the whole course. Notes for a single hole are added in the Course Preview.</p>
+      ${noteForm(null)}<div class="pv-notes">${noteRows(d, d.notes)}</div>
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Done</button>`);
+  }
+
+  async function addNote(form) {
+    const d = coursePack.data; if (!d) return;
+    const body = form.querySelector("textarea").value.trim();
+    if (!body) return;
+    const hole = form.dataset.hole ? Number(form.dataset.hole) : null;
+    const { error } = await client.from("course_notes").insert({ course_id: d.course.id, hole, body, author_id: app.user.id });
+    if (error) { toast(error.message, true); return; }
+    toast("Note added");
+    await loadCoursePack(d.course.id, true);
+    if (hole) drawPreview(hole); else { notesSheet(); const r = document.querySelector(".ci-list [data-action=ci-notes] .ci-right"); if (r) r.textContent = coursePack.data.notes.length; }
+  }
+  async function deleteNote(id) {
+    const d = coursePack.data; if (!d) return;
+    if (!confirm("Delete this note?")) return;
+    const { error } = await client.from("course_notes").delete().eq("id", id);
+    if (error) { toast(error.message, true); return; }
+    await loadCoursePack(d.course.id, true);
+    if (location.hash.startsWith("#/preview/")) drawPreview(Number(location.hash.split("/")[3]) || 1); else notesSheet();
+  }
+
+  // A simple drawing of the hole, tee at the bottom, used until (or
+  // unless) it's on the satellite map.
+  function schematic(h, yds, plan) {
+    const W = 300, H = 520, teeY = H - 34, greenY = 52;
+    const at = y => teeY - (teeY - greenY) * Math.min(1, y / (yds || 1));
+    const bend = (h.hole % 3 === 0 ? -1 : h.hole % 3 === 1 ? 1 : 0) * 26;
+    const fairway = h.par >= 4 ? `<path d="M${W / 2 - 34} ${teeY - 70} C ${W / 2 - 40 + bend} ${H * 0.55}, ${W / 2 - 30 + bend} ${H * 0.3}, ${W / 2 - 24} ${greenY + 50} L ${W / 2 + 24} ${greenY + 50} C ${W / 2 + 30 + bend} ${H * 0.3}, ${W / 2 + 40 + bend} ${H * 0.55}, ${W / 2 + 34} ${teeY - 70} Z" fill="#5fae5a"/>` : "";
+    let run = 0;
+    const marks = plan ? plan.shots.map(s => { const y = at(run); run += s.carry;
+      return `<circle cx="${W / 2}" cy="${y}" r="4" fill="#10233F" stroke="#fff" stroke-width="2"/><g transform="translate(${W / 2} ${y})"><rect x="-34" y="-24" width="68" height="20" rx="4" fill="#10233F"/><text x="0" y="-9.5" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">${esc(clubShort(s.club))} ${s.carry}</text></g>`; }).join("") : "";
+    return `<svg class="pv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Drawing of hole ${h.hole}">
+      <rect x="${W / 2 - 80}" y="0" width="160" height="${H}" rx="40" fill="#3f8f45"/>${fairway}
+      <ellipse cx="${W / 2}" cy="${greenY}" rx="30" ry="22" fill="#7cc46a" stroke="#4a9a46"/>
+      <rect x="${W / 2 - 12}" y="${teeY - 6}" width="24" height="14" rx="3" fill="#7cc46a" stroke="#4a9a46"/>
+      <line x1="${W / 2}" y1="${teeY}" x2="${W / 2}" y2="${greenY}" stroke="#fff" stroke-width="2" opacity=".85"/>
+      ${marks}<text x="${W / 2 + 2}" y="${greenY + 5}" text-anchor="middle" font-size="18" fill="#fff">⚑</text></svg>`;
+  }
+
+  async function renderPreview(courseId, hole) {
+    if (!app.approved) { view.innerHTML = `<div class="card empty">Members only.</div>`; return; }
+    if (!(coursePack.id === courseId && coursePack.data)) view.innerHTML = `<div class="loading">Loading the course…</div>`;
+    const d = await loadCoursePack(courseId);
+    if (!d) { view.innerHTML = `<div class="card status-msg err">Couldn't find that course.</div>`; return; }
+    if (!app.bag) await loadMyBag();
+    drawPreview(Math.min(18, Math.max(1, hole || 1)));
+  }
+
+  function drawPreview(holeNo) {
+    const d = coursePack.data;
+    const tee = packTee(d);
+    if (!tee) { view.innerHTML = `<a class="back-link" href="#/courses/${d.course.id}">‹ ${esc(d.course.name)}</a><div class="card empty"><p>This course needs a scorecard first.</p></div>`; return; }
+    const holes = d.holes.get(tee.id);
+    const h = holes.find(x => x.hole === holeNo) || holes[0];
+    const yds = holeYards(d, h);
+    const mine = (app.bag || []).length > 0;
+    const plan = planHole(yds, h.par, mine ? app.bag : TYPICAL_BAG);
+    const a = d.avg.get(h.hole), rank = d.ranked.indexOf(h.hole);
+    const g = d.geo.get(h.hole);
+    const mapped = g && g.green_lat != null;
+    const holeNotes = d.notes.filter(n => n.hole === h.hole);
+    const nth = n => n + (["th", "st", "nd", "rd"][((n % 100) - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+    const verdict = !plan ? "" : plan.onIn <= plan.regulation ? `<span class="pv-ok">On in ${plan.onIn}</span> · in regulation for a par ${h.par}`
+      : `<span class="pv-warn">On in ${plan.onIn}</span> · ${plan.onIn - plan.regulation === 1 ? "one shot" : plan.onIn - plan.regulation + " shots"} more than regulation — your shot comes back on the green`;
+    const teesWithCards = d.tees.filter(t => (d.holes.get(t.id) || []).length);
+    view.innerHTML = `
+      <div class="row pv-top">
+        <a class="back-link" href="#/courses/${d.course.id}" style="margin:0">‹ ${esc(d.course.name)}</a><span class="spacer"></span>
+        ${teesWithCards.length > 1 ? `<select class="pv-tee" data-pv-tee aria-label="Tee">${teesWithCards.map(t => `<option value="${t.id}" ${t.id === tee.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>` : `<span class="small muted">${esc(tee.name)} tees</span>`}
+      </div>
+      <div class="pv-title"><span class="pv-hn">${h.hole}</span><b>Par ${h.par}, ${yds || "–"} Y, SI ${h.stroke_index}</b>${rank >= 0 && rank < 3 ? `<span class="pv-hard">${rank === 0 ? "Society's hardest" : nth(rank + 1) + " hardest"}</span>` : ""}</div>
+      <div id="pv-map" class="pv-hole">${schematic(h, yds, plan)}</div>
+      ${!mapped ? `<p class="small muted pv-unmapped">Drawn to scale from the card: this hole isn't on the satellite map yet${app.committee ? ` — <a href="#/course-map/${d.course.id}">map it</a>` : ""}.</p>` : ""}
+      <div class="card pv-plan">
+        <h2>Your club plan</h2>
+        ${!mine ? `<p class="small pv-typical">Using <b>typical club distances</b>. <a href="#/me/bag">Add your clubs</a> for a plan built on yours.</p>` : ""}
+        ${plan ? `<ol class="pv-shots">${plan.shots.map((s, i) => `<li><span class="pv-shot-n">${i === 0 ? "Tee" : nth(i + 1)}</span><span class="pv-club"><b>${esc(clubName(s.club))}</b>${s.part ? ` <span class="muted small">(part shot)</span>` : ""}</span><span class="pv-yds">${s.finish ? `<b>${s.carry}</b> to the green` : `<b>${s.carry}</b> · leaves ${s.leaves}`}</span></li>`).join("")}
+          ${plan.short ? `<li><span class="pv-shot-n">Then</span><span class="pv-club">Chip from ${plan.short}</span><span class="pv-yds"></span></li>` : ""}</ol>
+          <p class="pv-verdict">${verdict}</p>` : `<p class="small muted">No yardage for this hole yet, so there's no plan.</p>`}
+      </div>
+      <div class="card">
+        <h2>The society on this hole</h2>
+        ${a && a.cards >= 3 ? `<div class="pv-stats"><div><b>${Number(a.avg_strokes).toFixed(1)}</b><span>average score</span></div><div><b>${toPar(Math.round(a.over_par * 10) / 10)}</b><span>to par</span></div><div><b>${rank >= 0 ? nth(rank + 1) : "–"}</b><span>hardest of ${d.ranked.length}</span></div></div>
+          <p class="small muted" style="margin:8px 0 0">From ${a.cards} cards over ${a.rounds} society round${a.rounds === 1 ? "" : "s"} here.</p>`
+        : `<p class="small muted">${d.avgOk ? "Not enough society rounds here yet to show an average." : "Society averages need a database update before they can show."}</p>`}
+      </div>
+      <div class="card">
+        <h2>Playing notes · hole ${h.hole}</h2>
+        ${d.notesOk ? noteForm(h.hole) + `<div class="pv-notes">${noteRows(d, holeNotes)}</div>` : `<p class="small muted">Playing notes need a database update before they can work.</p>`}
+      </div>
+      <nav class="pv-holes" aria-label="Holes">${holes.map(x => `<button data-pv-hole="${x.hole}" class="${x.hole === h.hole ? "current" : ""}" aria-label="Hole ${x.hole}">${x.hole}</button>`).join("")}</nav>`;
+    document.body.classList.add("has-pvholes");
+    const cur = view.querySelector(".pv-holes .current");
+    if (cur) { const nav = cur.parentElement; nav.scrollLeft = cur.offsetLeft - nav.clientWidth / 2 + cur.offsetWidth / 2; }
+    history.replaceState(null, "", `#/preview/${d.course.id}/${h.hole}`);
+    view.querySelectorAll("[data-pv-hole]").forEach(b => b.addEventListener("click", () => { drawPreview(Number(b.dataset.pvHole)); window.scrollTo(0, 0); }));
+    const sel = view.querySelector("[data-pv-tee]");
+    if (sel) sel.addEventListener("change", () => { store.set("preview-tee-" + d.course.id, sel.value); drawPreview(h.hole); });
+    if (mapped && window.HoleMaps) {
+      const real = g.tee_lat != null ? window.HoleMaps.yards({ lat: g.tee_lat, lng: g.tee_lng }, { lat: g.green_lat, lng: g.green_lng }) : yds;
+      const shots = plan ? plan.shots.map(s => ({ carry: Math.round(s.carry * real / (yds || 1)), label: `${esc(clubShort(s.club))} <i>${s.carry}</i>` })) : [];
+      window.HoleMaps.previewHole({ el: $("#pv-map"), g, shots }).catch(() => { /* keep the drawing */ });
+    }
   }
 
   // ---------- mapping the holes (committee) ----------
@@ -4102,7 +4690,7 @@
     const done = h => { const g = geo.get(h); return g && g.tee_lat != null && g.green_lat != null; };
 
     view.innerHTML = `
-      <p class="small"><a href="#/courses">← Courses</a></p>
+      <a class="back-link" href="#/courses/${courseId}">‹ ${esc(course.name)}</a>
       <h1>${esc(course.name)}</h1>
       <p class="small muted">Tap the map to drop the tee, then the middle of the green. Drag a pin to move it. Every round here uses these.</p>
       <div class="hole-strip" id="pe-holes">${Array.from({ length: 18 }, (_, i) => `<button data-pe-hole="${i + 1}" class="${i === 0 ? "current" : done(i + 1) ? "done" : ""}">${i + 1}</button>`).join("")}</div>
@@ -4217,7 +4805,7 @@
         <td><input type="number" inputmode="numeric" name="yds-${i + 1}" min="50" max="750" value="${h.yards || ""}"></td></tr>`;
     }).join("");
     view.innerHTML = `
-      <p class="small"><a href="#/courses">← Courses</a></p>
+      <a class="back-link" href="#/courses/${tee.course_id}">‹ ${esc(tee.courses ? tee.courses.name : "Course")}</a>
       <form id="tee-form" class="card">
         <h1>${esc(tee.courses ? tee.courses.name : "")}</h1>
         <div class="row" style="gap:10px">
@@ -4291,6 +4879,24 @@
       case "close-sheet": closeSheet(); break;
       case "guest-signout": await client.auth.signOut(); location.hash = "#/"; break;
       case "practice-new": practiceSheet(); break;
+      case "fab": fabSheet(); break;
+      case "ci-scorecard": courseCardSheet(); break;
+      case "ci-notes": notesSheet(); break;
+      case "stat-trend": statTrend(el.dataset.key); break;
+      case "note-del": e.preventDefault(); deleteNote(el.dataset.id); break;
+      case "main-tab": if (location.hash === el.dataset.href || (el.dataset.href === "#/" && !location.hash)) route(); else location.hash = el.dataset.href; break;
+      case "fab-bag": closeSheet(); app.openKitAdd = true; if (location.hash === "#/me/bag") renderBag(null); else location.hash = "#/me/bag"; break;
+      case "fab-register": closeSheet(); location.href = "../fixtures.html"; break;
+      case "fab-course": closeSheet(); location.hash = "#/courses"; setTimeout(() => { const f = document.querySelector("#new-course input[name=name]"); if (f) { f.scrollIntoView({ block: "center" }); f.focus(); } }, 900); break;
+      case "fab-checkin": { const e2 = await fabRound(false); closeSheet(); if (!e2) { toast("No society round set up yet to check in for.", true); break; } location.hash = "#/round/" + e2.id; break; }
+      case "fab-post": { const e2 = await fabRound(true); closeSheet(); if (!e2) { toast("There's no live round to post to right now.", true); break; }
+        const pr = store.get("round-" + e2.id, {}); pr.tab = "feed"; store.set("round-" + e2.id, pr); location.hash = "#/round/" + e2.id; break; }
+      case "bag-tab": bagView.tab = el.dataset.tab; drawBag(); break;
+      case "kit-add": kitSheet(null); break;
+      case "kit-kind": kitSheet({ kind: el.dataset.kind }); break;
+      case "kit-edit": kitSheet(bagView.data.find(x => x.id === el.dataset.id)); break;
+      case "kit-retire": { const it = bagView.data.find(x => x.id === el.dataset.id); kitChange(el.dataset.id, it && it.retired ? "unretire" : "retire"); break; }
+      case "kit-delete": if (confirm("Delete this from the bag? Retire keeps it listed instead.")) kitChange(el.dataset.id, "delete"); break;
       case "private-new": privateSheet(); break;
       case "private-create": createPrivate(); break;
       case "pg-add-guest": addGuestRow(); break;
@@ -4531,6 +5137,12 @@
     }
   });
 
+  document.addEventListener("submit", e => {
+    const f = e.target.closest && e.target.closest(".pv-note-form");
+    if (!f) return;
+    e.preventDefault(); addNote(f);
+  });
+
   document.addEventListener("change", async e => {
     if (e.target && e.target.dataset && e.target.dataset.hc) return;
     const t = e.target;
@@ -4615,9 +5227,12 @@
     const parts = hash.slice(2).split("/");
     if (parts[0] !== "present") { document.body.classList.remove("presenting"); clearInterval(present.timer); }
     if (parts[0] !== "print") document.body.classList.remove("printing-pack");
+    if (parts[0] !== "preview") { document.body.classList.remove("has-pvholes"); if (window.HoleMaps && window.HoleMaps.closePreview) window.HoleMaps.closePreview(); }
     if (!((parts[0] === "round" || parts[0] === "present") && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
     if (parts[0] !== "round" && parts[0] !== "ryder") hideTabbar();
     if (parts[0] !== "ryder" && parts[0] !== "rc" && rc.channel) { client.removeChannel(rc.channel); rc.channel = null; rc.data = null; }
+    const hb = $("#home-btn");
+    if (hb) hb.hidden = !app.user || !!app.guest || !(parts[0] && parts[0] !== "join");
     if (parts[0] === "join" && parts[1]) return renderJoin(parts[1]);
     if (!app.user) return renderSignIn();
     if (app.guest) {
@@ -4626,8 +5241,12 @@
       return renderRound(parts[1], parts[2] === "start");
     }
     if (!app.approved) return renderNotApproved();
+    const mainKey = parts[0] === "" ? "play" : ["season", "records", "me"].includes(parts[0]) ? parts[0]
+      : ["stats", "statistics", "bag", "courses", "course", "handicaps"].includes(parts[0]) ? "" : null;
+    if (mainKey != null) mainTabbar(mainKey);
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
-    if (parts[0] === "courses") return renderCourses();
+    if (parts[0] === "courses") return parts[1] ? renderCourseInfo(parts[1]) : renderCourses();
+    if (parts[0] === "preview" && parts[1]) return renderPreview(parts[1], Number(parts[2]) || 1);
     if (parts[0] === "season") return renderSeason();
     if (parts[0] === "records") return renderRecords();
     if (parts[0] === "handicaps") return renderHandicaps();
@@ -4635,6 +5254,10 @@
     if (parts[0] === "rc" && parts[1]) return renderRcMatch(parts[1]);
     if (parts[0] === "print" && parts[1]) return renderPrint(parts[1]);
     if (parts[0] === "present" && parts[1]) return renderPresent(parts[1], parts[2] === "tv");
+    if (parts[0] === "me" && parts[1] === "bag") return renderBag(null);
+    if (parts[0] === "bag" && parts[1]) return renderBag(parts[1]);
+    if (parts[0] === "me" && parts[1] === "statistics") return renderStatistics(null);
+    if (parts[0] === "statistics" && parts[1]) return renderStatistics(parts[1]);
     if (parts[0] === "me") return renderStats(null);
     if (parts[0] === "stats" && parts[1]) return renderStats(parts[1]);
     if (parts[0] === "course" && parts[1]) return renderTeeEditor(parts[1]);

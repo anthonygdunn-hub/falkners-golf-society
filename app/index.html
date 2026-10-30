@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="app.css?v=15">
+  <link rel="stylesheet" href="app.css?v=17">
 </head>
 <body>
   <header class="topbar">
@@ -25,6 +25,9 @@
     </a>
     <div class="topbar-right">
       <span id="sync-pill" class="sync-pill" hidden></span>
+      <a id="home-btn" class="icon-btn home-btn" href="#/" aria-label="Home" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h5v-6h3v6h5V9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
       <button id="menu-btn" class="icon-btn" aria-label="Menu" hidden>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
@@ -57,6 +60,7 @@
     </div>
   </div>
 
+  <button id="fab" class="fab" type="button" data-action="fab" aria-label="Quick actions" hidden><svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
   <nav id="tabbar" class="tabbar" hidden aria-label="Round"></nav>
 
   <div id="map-view" class="map-view" hidden></div>
@@ -69,8 +73,8 @@
   <script src="../js/site-data.js"></script>
   <script src="../js/image-resize.js"></script>
   <script src="../js/weather.js"></script>
-  <script src="scoring.js?v=15"></script>
-  <script src="maps.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="scoring.js?v=17"></script>
+  <script src="maps.js?v=17"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

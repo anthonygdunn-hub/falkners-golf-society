@@ -2,14 +2,14 @@
 // The shell (pages, styles, scripts) comes from the network when it can
 // and from the cache when it can't. Data calls to Supabase are never
 // cached — scores queue on the phone instead (see app.js).
-const CACHE = "falkners-app-v15";
+const CACHE = "falkners-app-v17";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.css?v=15",
-  "./app.js?v=15",
-  "./scoring.js?v=15",
-  "./maps.js?v=15",
+  "./app.css?v=17",
+  "./app.js?v=17",
+  "./scoring.js?v=17",
+  "./maps.js?v=17",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "../js/config.js",
