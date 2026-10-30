@@ -1379,7 +1379,7 @@
   function fabSheet() {
     const item = (action, title, sub, ico) => `<button type="button" class="fab-item" data-action="${action}"><span class="fab-ico">${ico}</span><span><b>${title}</b><small>${sub}</small></span></button>`;
     openSheet(`<h2>Quick actions</h2><div class="fab-list">
-      ${item("private-new", "New private game", "You and up to 3 others: members or friends", MAIN_ICONS.play)}
+      ${item("private-new", "New private game", "Up to 16 players: members or mates", MAIN_ICONS.play)}
       ${item("fab-checkin", "Check in for today's round", "Open today's society round", icon('<path d="M5 12l5 5L20 7"/>'))}
       ${app.committee ? item("practice-new", "Practice round", "Committee: try the app out, nothing counts", icon('<path d="M4 20h16M7 16l4-12 3 8 2-4 3 8"/>')) : ""}
       ${item("fab-bag", "Add to my bag", "A club, glove, shoes or ball", icon('<path d="M14 3 11 15"/><path d="M11 15 5 19c-1 1 0 2 1 2h6c1 0 2-1 1-2z"/>'))}
