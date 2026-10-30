@@ -166,6 +166,7 @@
   async function loadUser() {
     const { data } = await client.auth.getSession();
     app.user = data.session ? data.session.user : null;
+    app.guest = null;
     if (!app.user) { app.approved = false; app.committee = false; return; }
     const [appr, comm] = await Promise.all([
       client.rpc("is_approved_member"),
@@ -173,9 +174,15 @@
     ]);
     app.approved = !!appr.data;
     app.committee = !!comm.data;
+    // A friend invited to a member's private game: one game, nothing else.
+    if (!app.approved && app.user.is_anonymous) {
+      const { data: g } = await client.rpc("my_guest_game");
+      app.guest = g && g[0] ? { eventId: g[0].event_id, playerId: g[0].player_id, until: g[0].expires_at } : { ended: true };
+      document.body.classList.add("guest-mode");
+    } else document.body.classList.remove("guest-mode");
     if (app.approved) loadAvatars().then(() => { if (!app.round) return; refreshRound(); });
     $("#menu-btn").hidden = false;
-    $("#menu-courses").hidden = !app.committee;
+    $("#menu-courses").hidden = !app.approved;
     if ($("#menu-handicaps")) $("#menu-handicaps").hidden = !app.committee;
   }
 
@@ -209,6 +216,61 @@
     });
   }
 
+  // ---------- a friend joining a member's private game ----------
+  // The link in their email or message: #/join/<token>. They enter the
+  // email the invite went to (if it went by email) and the 6-digit code,
+  // and get a guest login for that one game until the end of its day.
+  async function renderJoin(token) {
+    $("#menu-btn").hidden = true;
+    hideTabbar();
+    view.innerHTML = `<div class="loading">Opening your invite…</div>`;
+    if (app.user && app.approved) {
+      view.innerHTML = `<div class="card"><h1>You're a member</h1><p>This invite is for a friend who isn't in the society. You're signed in already, so open the game from your home screen.</p><a class="btn block" href="#/">Go to my games</a></div>`;
+      return;
+    }
+    const { data, error } = await client.rpc("guest_invite_info", { p_token: token });
+    const inv = data && data[0];
+    if (error || !inv) { view.innerHTML = `<div class="card"><h1>Invite not found</h1><p>That link doesn't match an invite. Ask whoever invited you to send a new one.</p></div>`; return; }
+    if (inv.expired) { view.innerHTML = `<div class="card"><h1>This invite has closed</h1><p>It's either past the day of the game, or the code was entered wrongly too many times. Ask ${esc(inv.organiser)} for a new one.</p></div>`; return; }
+    view.innerHTML = `
+      <div class="join-hero">
+        <img src="icons/icon-192.png" alt="" width="64" height="64">
+        <div class="join-kicker">The Falkners Arms Golf Society</div>
+        <h1>Hi ${esc(String(inv.guest_name).trim().split(/\s+/)[0])}</h1>
+        <p>${esc(inv.organiser)} has added you to <b>${esc(inv.game_name)}</b>${inv.venue ? ` at ${esc(inv.venue)}` : ""} on ${fmtDate(inv.event_date, { weekday: "long", day: "numeric", month: "long" })}.</p>
+      </div>
+      <form id="join-form" class="card">
+        ${inv.needs_email ? `<label class="field">Your email<input type="email" name="email" autocomplete="email" required placeholder="The address the invite went to"></label>` : ""}
+        <label class="field">Your code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="6 digits" class="code-input"></label>
+        <button class="btn gold block" type="submit">Open my scorecard</button>
+        <div id="join-status" class="status-msg" hidden></div>
+        <p class="small muted" style="margin:12px 0 0">No account needed. This works for this game only, until the end of the day. Your ${inv.needs_email ? "email address is" : "details are"} deleted after the game.</p>
+      </form>`;
+    $("#join-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const st = $("#join-status");
+      const say = (m, bad) => { st.hidden = false; st.className = "status-msg" + (bad ? " err" : ""); st.textContent = m; };
+      say("Checking…");
+      if (!app.user) {
+        const { error: se } = await client.auth.signInAnonymously();
+        if (se) { say(/anonymous/i.test(se.message) ? "Guest logins aren't switched on yet — tell the member who invited you." : se.message, true); return; }
+      }
+      const { data: ev, error: re } = await client.rpc("redeem_guest_invite", { p_token: token, p_code: String(f.get("code") || "").trim(), p_email: String(f.get("email") || "") });
+      if (re) { say(re.message, true); return; }
+      if (!ev) { say(inv.needs_email ? "That code or email doesn't match the invite. Check them and try again." : "That code doesn't match. Check it and try again.", true); return; }
+      await loadUser();
+      location.hash = "#/round/" + ev;
+    });
+  }
+
+  function renderGuestEnded() {
+    hideTabbar();
+    view.innerHTML = `<div class="card"><h1>Thanks for playing</h1><p>Your guest access has finished. The scores stay with the member who invited you.</p>
+      <p class="small">Fancy joining the society? <a href="../join.html">Find out more</a>.</p>
+      <button class="btn ghost block" data-action="guest-signout">Close</button></div>`;
+  }
+
   function renderNotApproved() {
     view.innerHTML = `
       <div class="card">
@@ -228,12 +290,14 @@
       client.from("event_scoring").select("event_id, status"),
       client.from("profiles").select("display_name").eq("id", me).maybeSingle(),
       client.from("players").select("id").eq("profile_id", me),
-      // Practice rounds are hidden from the website; until the database has
-      // them this just comes back empty.
-      client.from("events").select("id, name, venue, event_date, tee_time, is_practice").eq("is_practice", true).order("event_date", { ascending: false }).limit(6),
+      // Practice rounds and private games aren't on the website; the app
+      // fetches the ones you can see.
+      client.rpc("my_games"),
     ]);
     if (error) { view.innerHTML = `<div class="card status-msg err">Couldn't load rounds: ${esc(error.message)}</div>`; return; }
-    const practice = practiceRes && !practiceRes.error ? (practiceRes.data || []).filter(e => e.is_practice) : [];
+    const games = practiceRes && !practiceRes.error ? (practiceRes.data || []) : [];
+    const practice = games.filter(e => e.is_practice);
+    const privateGames = games.filter(e => e.is_private);
     app.practiceOn = !!(practiceRes && !practiceRes.error);
     const myPlayers = (mine || []).map(p => p.id);
     // Rounds you're down to play, by your account or your name on the player list.
@@ -267,6 +331,10 @@
       <div class="card" id="season-card"><div class="loading" style="padding:12px">Loading the Order of Merit…</div></div>
       ${live.length > 1 ? `<div class="section-label">Live now</div>${live.slice(1).map(e => roundItem(e, status, playing)).join("")}` : ""}
       ${(live.length ? upcoming : upcoming.slice(1)).length ? `<div class="section-label">Coming up</div>${(live.length ? upcoming : upcoming.slice(1)).map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${app.practiceOn ? `<div class="section-label">Private games</div>
+        ${privateGames.map(e => roundItem(e, status, playing)).join("")}
+        <button class="btn ghost block practice-new" data-action="private-new">＋ New private game</button>
+        <p class="small muted practice-note">Up to 4 players: members and friends. Never counts for the Order of Merit or your handicap; the results go on your profile.</p>` : ""}
       ${practice.length || (app.committee && app.practiceOn) ? `<div class="section-label">Practice rounds</div>
         ${practice.map(e => roundItem(e, status, playing)).join("")}
         ${app.committee && app.practiceOn ? `<button class="btn ghost block practice-new" data-action="practice-new">＋ New practice round</button>
@@ -294,7 +362,7 @@
       <a class="card round-item" href="${e.is_trip ? "#/ryder/" : "#/round/"}${e.id}">
         <div class="round-date"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-GB", { month: "short" })}</span></div>
         <div class="round-meta">
-          <strong>${esc(e.name)}${e.is_practice ? ' <span class="badge practice">Practice</span>' : ""}</strong>
+          <strong>${esc(e.name)}${e.is_practice ? ' <span class="badge practice">Practice</span>' : e.is_private ? ' <span class="badge private">Private</span>' : ""}</strong>
           <span class="muted small">${esc(e.venue || "Venue TBC")}${e.tee_time ? " · " + esc(e.tee_time.slice(0, 5)) : ""}${playing.has(e.id) ? (e.event_date < londonToday() ? ' · <span class="playing">You played</span>' : ' · <span class="playing">You\'re playing</span>') : ""}</span>
         </div>
         ${badgeFor(status.get(e.id))}
@@ -467,6 +535,14 @@
       client.from("players").select("official_index, hcp_cut, hcp_cut_note").eq("id", pid).maybeSingle(),
     ]);
     const hcHistory = hr.error ? null : (hr.data || []).slice().sort((a, b) => hcDate(a).localeCompare(hcDate(b)));
+    // Private games: the ones this viewer is allowed to see.
+    const [gr, mg] = await Promise.all([
+      client.from("game_results").select("event_id, points, gross, position, field").eq("player_id", pid),
+      client.rpc("my_games"),
+    ]);
+    const gameById = new Map(((mg && mg.data) || []).filter(e => e.is_private).map(e => [e.id, e]));
+    const privateRows = ((gr && gr.data) || []).filter(x => gameById.has(x.event_id))
+      .sort((a, b) => gameById.get(b.event_id).event_date.localeCompare(gameById.get(a.event_id).event_date));
     const hcExtra = hx.error ? {} : (hx.data || {});
     const evById = new Map((evs.data || []).map(e => [e.id, e]));
     const all = res.data || [];
@@ -540,6 +616,9 @@
       </div>
       ${chart ? `<div class="card"><h2>Points by round</h2>${chart}</div>` : ""}
       ${hcHistory && hcHistory.length ? hcHistoryCard(hcHistory, p) : ""}
+      ${privateRows.length ? `<div class="card"><h2>Private games</h2><p class="small muted" style="margin-top:-4px">Friendly rounds — they don't count for the Order of Merit or handicaps.</p>
+        ${privateRows.map(x => { const e = gameById.get(x.event_id); return `<a class="row stat-round" href="#/round/${e.id}"><div><b>${esc(e.name)}</b><div class="thru">${esc(e.venue || "")} · ${fmtDate(e.event_date)}</div></div><span class="spacer"></span>
+          <span class="small muted">${x.position ? `${ordinal(x.position)} of ${x.field}` : ""}${x.gross ? ` · ${x.gross} gross` : ""}</span><span class="big" style="margin-left:12px">${x.points == null ? "–" : x.points}</span></a>`; }).join("")}</div>` : ""}
       ${holes ? `<div class="card"><h2>Scoring</h2><p class="small muted" style="margin-top:-4px">From ${holes} holes scored in the app.</p>
         ${bar("Eagle or better", tally.eagle, "e")}${bar("Birdie", tally.birdie, "b")}${bar("Par", tally.par, "p")}${bar("Bogey", tally.bogey, "o")}${bar("Double", tally.double, "d")}${bar("Worse", tally.worse, "w")}${bar("Pick-up", tally.pu, "u")}
         <div class="last-card" style="margin-top:12px">
@@ -733,7 +812,9 @@
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
-    if (!ev.data) throw new Error("That round doesn't exist.");
+    // Practice rounds and private games aren't in the public events list.
+    if (!ev.data) { const g = await client.rpc("game_event", { target: eventId }); if (g.data && g.data[0]) ev.data = g.data[0]; }
+    if (!ev.data) throw new Error("That round doesn't exist, or it's a private game you're not in.");
 
     let tee = null, holes = [], course = null;
     if (setup.data && setup.data.tee_id) {
@@ -1049,6 +1130,7 @@
     const live = r.setup && r.setup.status === "live";
     const preview = r.setup && r.setup.status === "setup" && !r.canManage;
     r.tab = prefs.tab || ((live || preview) && r.me ? "score" : r.setup ? "board" : (r.canManage ? "setup" : "board"));
+    if (app.guest && !["score", "board", "pairs"].includes(r.tab)) r.tab = "score";
     r.hole = prefs.hole || 1;
     r.groupKey = prefs.groupKey || (r.me && r.me.group ? "g" + r.me.group : null);
     r.board = prefs.board || null;
@@ -1085,7 +1167,7 @@
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
     const tabs = [["score", "Score"], ["board", "Leaderboard"]];
     if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
-    if (!r.feedOff && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
+    if (!r.feedOff && !app.guest && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
     if (r.canManage) tabs.push(["setup", "Setup"]);
     if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
     if (r.results && r.tab === "results") {
@@ -1101,9 +1183,11 @@
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
-        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : ""}${badge}</div>
+        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : r.event.is_private ? '<span class="badge private">Private</span>' : ""}${badge}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
         ${r.event.is_practice ? `<div class="practice-banner">Practice round — nothing here counts. It doesn't reach the website, the Order of Merit, records or handicaps.</div>` : ""}
+        ${r.event.is_private && !app.guest ? `<div class="practice-banner private-banner">Private game${r.event.private_visible ? " · all members can see it" : " · only the players can see it"}. It never counts for the Order of Merit or handicaps; your result goes on your profile.</div>` : ""}
+        ${app.guest ? `<div class="practice-banner private-banner">You're a guest in this game until the end of the day. Tap a box to put a score in.</div>` : ""}
         ${r.tab === "score" || r.tab === "setup" ? `<div id="wx-slot">${r.wx ? weatherChip(r.wx) : ""}</div>` : ""}
       </div>
       <div id="round-body" class="${r.anim ? "anim-" + r.anim : ""}"></div>`;
@@ -2385,6 +2469,174 @@
     renderHandicaps();
   }
 
+  // ---------- private games ----------
+  // A member's own round with up to 3 others: members and friends. Hidden
+  // from the website; never in results, the Order of Merit or handicaps.
+  // Friends get a link and a one-off code, by email from the app or sent
+  // by the member from their own phone.
+
+  const PRIVATE_MAX = 4;
+
+  async function privateSheet() {
+    openSheet(`<div class="loading">Loading…</div>`);
+    const [t, pl] = await Promise.all([
+      client.from("course_tees").select("id, name, course_id, courses(name)"),
+      client.from("players").select("id, name, profile_id, handicap, active, guest_event_id").order("name"),
+    ]);
+    const tees = (t.data || []).sort((a, b) => ((a.courses && a.courses.name) || "").localeCompare((b.courses && b.courses.name) || "") || a.name.localeCompare(b.name));
+    const me = (pl.data || []).find(x => x.profile_id === app.user.id);
+    if (!me) { openSheet(`<h2>New private game</h2><p>You need to be on the player list first. Ask the committee to link your account to your name.</p><button class="btn ghost block" data-action="close-sheet">OK</button>`); return; }
+    const members = (pl.data || []).filter(x => x.active !== false && !x.guest_event_id && x.id !== me.id);
+    openSheet(`<h2>New private game</h2>
+      <p class="small muted" style="margin-top:-4px">You plus up to 3 others. Nothing here reaches the Order of Merit or anyone's handicap.</p>
+      <label class="field">Name<input id="pg-name" value="${esc(String(me.name).trim().split(/\s+/)[0])}'s game" maxlength="60"></label>
+      <label class="field">Date<input id="pg-date" type="date" value="${londonToday()}"></label>
+      <label class="field">Course and tee<select id="pg-tee">${tees.map(x => `<option value="${x.id}">${esc(x.courses ? x.courses.name : "")} · ${esc(x.name)}</option>`).join("")}</select></label>
+      <p class="small" style="margin:-6px 0 12px">Course not listed? <a href="#/courses" data-action="close-sheet">Add it from the scorecard</a>.</p>
+      <div class="field">Who can see it
+        <div class="seg2" id="pg-vis"><button type="button" class="on" data-vis="0">Just the players</button><button type="button" data-vis="1">All members</button></div></div>
+      <div class="field" style="margin-top:12px">Members playing <span class="muted small" id="pg-count"></span>
+        <input id="pg-find" placeholder="Find a member" autocomplete="off" style="margin-top:6px">
+        <div class="pr-list" id="pg-list">${members.map(x => `<label class="pr-pl" data-name="${esc(x.name.toLowerCase())}"><input type="checkbox" value="${x.id}"><span>${esc(x.name)}</span><span class="spacer"></span><span class="muted small">${x.handicap == null ? "" : x.handicap}</span></label>`).join("")}</div></div>
+      <div class="field" style="margin-top:12px">Friends who aren't members
+        <div id="pg-guests"></div>
+        <button type="button" class="btn ghost block" style="min-height:40px;margin-top:6px" data-action="pg-add-guest">＋ Add a friend</button>
+        <p class="small muted" style="margin:6px 0 0">Their email gets them a link and a code from the app. A mobile number: you send the link from your phone once the game's made.</p></div>
+      <button class="btn gold block" style="margin-top:14px" data-action="private-create">Create the game</button>
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Cancel</button>`);
+    const sheet = $("#sheet");
+    const count = () => {
+      const n = 1 + sheet.querySelectorAll("#pg-list input:checked").length + sheet.querySelectorAll(".pg-guest").length;
+      $("#pg-count").textContent = `· ${n} of ${PRIVATE_MAX} players`;
+      sheet.querySelectorAll("#pg-list input:not(:checked)").forEach(i => { i.disabled = n >= PRIVATE_MAX; });
+      const add = sheet.querySelector("[data-action=pg-add-guest]"); if (add) add.disabled = n >= PRIVATE_MAX;
+    };
+    app.pgCount = count;
+    sheet.addEventListener("change", e => { if (e.target.closest("#pg-list")) count(); });
+    $("#pg-find").addEventListener("input", e => { const q = e.target.value.trim().toLowerCase(); sheet.querySelectorAll("#pg-list .pr-pl").forEach(l => { l.hidden = q && !l.dataset.name.includes(q); }); });
+    $("#pg-vis").addEventListener("click", e => { const b = e.target.closest("[data-vis]"); if (!b) return; $("#pg-vis").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); });
+    count();
+  }
+
+  function addGuestRow() {
+    const box = $("#pg-guests");
+    const row = document.createElement("div");
+    row.className = "pg-guest";
+    row.innerHTML = `<div class="row" style="gap:8px"><input class="pg-g-name" placeholder="Name" maxlength="60" style="flex:1;min-width:0"><input class="pg-g-hcp" type="number" step="0.1" inputmode="decimal" placeholder="Handicap" style="width:96px"><button type="button" class="mv-link" data-action="pg-del-guest" aria-label="Remove">✕</button></div>
+      <input class="pg-g-contact" placeholder="Their email or mobile" autocomplete="off" style="margin-top:6px">`;
+    box.appendChild(row);
+    row.querySelector(".pg-g-name").focus();
+    if (app.pgCount) app.pgCount();
+  }
+
+  const isEmail = v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+  const isMobile = v => /^\+?[0-9 ()-]{9,}$/.test(v);
+
+  async function createPrivate() {
+    const sheet = $("#sheet");
+    const players = [...sheet.querySelectorAll("#pg-list input:checked")].map(x => x.value);
+    const guests = [...sheet.querySelectorAll(".pg-guest")].map(g => ({
+      name: g.querySelector(".pg-g-name").value.trim(),
+      handicap: g.querySelector(".pg-g-hcp").value === "" ? null : Number(g.querySelector(".pg-g-hcp").value),
+      contact: g.querySelector(".pg-g-contact").value.trim(),
+    })).filter(g => g.name);
+    const bad = guests.find(g => g.handicap == null || isNaN(g.handicap));
+    if (bad) { toast(`Put in a handicap for ${bad.name} (54 if they haven't got one).`, true); return; }
+    const badContact = guests.find(g => g.contact && !isEmail(g.contact) && !isMobile(g.contact));
+    if (badContact) { toast(`${badContact.name}'s email or mobile doesn't look right.`, true); return; }
+    const btn = sheet.querySelector("[data-action=private-create]"); btn.disabled = true; btn.textContent = "Creating…";
+    const { data: ev, error } = await client.rpc("create_private_game", {
+      p_name: $("#pg-name").value.trim(), p_date: $("#pg-date").value || londonToday(), p_tee: $("#pg-tee").value,
+      p_visible: $("#pg-vis .on").dataset.vis === "1", p_players: players, p_guests: guests.map(g => ({ name: g.name, handicap: g.handicap })),
+    });
+    if (error || !ev) { toast((error && error.message) || "Couldn't create the game.", true); btn.disabled = false; btn.textContent = "Create the game"; return; }
+    // Invite the friends who left an email or mobile.
+    const { data: gp } = await client.from("players").select("id, name").eq("guest_event_id", ev);
+    let emailed = 0, toShare = 0;
+    for (const g of guests) {
+      if (!g.contact) continue;
+      const p = (gp || []).find(x => x.name === g.name.slice(0, 60));
+      if (!p) continue;
+      const inv = await makeInvite(p.id, g.contact);
+      if (inv && isEmail(g.contact)) { if (await emailInvite(inv.invite_id)) emailed++; } else if (inv) toShare++;
+    }
+    closeSheet();
+    toast(`Game created${emailed ? ` · ${emailed} invite${emailed > 1 ? "s" : ""} emailed` : ""}${toShare ? ` · share ${toShare} invite${toShare > 1 ? "s" : ""} from Setup` : ""}`);
+    store.set("round-" + ev, { tab: "setup" });
+    location.hash = "#/round/" + ev;
+  }
+
+  async function makeInvite(playerId, contact) {
+    const { data, error } = await client.rpc("create_guest_invite", { p_player: playerId, p_email: isEmail(contact) ? contact : null, p_mobile: isEmail(contact) ? null : contact });
+    if (error) { toast(error.message, true); return null; }
+    return data && data[0];
+  }
+
+  async function emailInvite(inviteId) {
+    try {
+      const { data, error } = await client.functions.invoke("guest-invite", { body: { invite_id: inviteId } });
+      if (error || !data || !data.sent) { toast((data && data.error) || "The email didn't send — use Share instead.", true); return false; }
+      return true;
+    } catch (e) { toast("The email didn't send — use Share instead.", true); return false; }
+  }
+
+  const inviteLink = token => `${location.origin}${location.pathname.replace(/[^/]*$/, "")}#/join/${token}`;
+
+  async function shareInvite(r, inv) {
+    const g = r.players.find(p => p.id === inv.player_id);
+    const text = `${g ? String(g.name).trim().split(/\s+/)[0] : "Hi"}, you're in ${r.event.name}${r.event.venue ? " at " + r.event.venue : ""} on ${fmtDate(r.event.event_date, { weekday: "long", day: "numeric", month: "long" })}. Keep your score on your phone: open ${inviteLink(inv.token)} and enter code ${inv.code}. It works for this game only.`;
+    if (navigator.share) { try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === "AbortError") return; } }
+    const num = (inv.mobile || "").replace(/[^0-9+]/g, "").replace(/^0/, "44").replace(/^\+/, "");
+    openSheet(`<h2>Send the invite</h2><p class="small muted">Copy this, or open WhatsApp.</p><textarea class="share-text" rows="6" readonly>${esc(text)}</textarea>
+      <a class="btn gold block" style="margin-top:10px" href="https://wa.me/${num ? esc(num) : ""}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">Open WhatsApp</a>
+      ${inv.mobile ? `<a class="btn ghost block" style="margin-top:8px" href="sms:${esc(inv.mobile.replace(/[^0-9+]/g, ""))}?&body=${encodeURIComponent(text)}">Send as a text</a>` : ""}
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Done</button>`);
+  }
+
+  async function loadInvites(r) {
+    const { data, error } = await client.from("guest_invites").select("id, player_id, token, code, email, mobile, used_at, expires_at, attempts").eq("event_id", r.id);
+    r.invites = error ? [] : (data || []);
+    if (app.round && app.round.id === r.id && r.tab === "setup") renderRoundBody();
+  }
+
+  function guestsCard(r) {
+    if (!r.canManage) return "";
+    const guests = r.players.filter(p => p.guest);
+    if (!guests.length) return "";
+    if (!r.invites) { loadInvites(r); return `<div class="card"><h2>Friends</h2><p class="small muted">Loading invites…</p></div>`; }
+    return `<div class="card" id="guests-card"><h2>Friends</h2>
+      <p class="small muted" style="margin-top:0">Each friend gets a link and a one-off code that works for this game only, until the end of the day. They can score on their own phone; their email or mobile is deleted after the game.</p>
+      ${guests.map(g => { const inv = r.invites.filter(i => i.player_id === g.id).sort((a, b) => String(b.expires_at).localeCompare(String(a.expires_at)))[0];
+        return `<div class="guest-row">
+          <div><b>${esc(g.name)}</b> <span class="muted small">· plays off ${g.ph == null ? "?" : g.ph}</span>
+            <div class="thru">${inv ? (inv.used_at ? "✓ Joined on their phone" : `Code <b>${esc(inv.code)}</b>${inv.email ? ` · emailed to ${esc(inv.email)}` : inv.mobile ? ` · for ${esc(inv.mobile)}` : ""}`) : "Not invited — you can score for them"}</div></div>
+          <div class="guest-acts">${inv && !inv.used_at ? `${inv.email ? `<button class="btn ghost" data-action="guest-email" data-invite="${inv.id}">Email again</button>` : ""}<button class="btn ghost" data-action="guest-share" data-invite="${inv.id}">Share</button>` : ""}
+            ${!inv || inv.used_at ? "" : ""}<button class="mv-link" data-action="guest-new-invite" data-player="${g.id}">${inv ? "New code" : "Invite"}</button></div>
+        </div>`; }).join("")}
+    </div>`;
+  }
+
+  async function newInvite(r, playerId) {
+    const contact = (prompt("Their email or mobile number:") || "").trim();
+    if (!contact) return;
+    if (!isEmail(contact) && !isMobile(contact)) { toast("That doesn't look like an email or a mobile number.", true); return; }
+    const inv = await makeInvite(playerId, contact);
+    if (!inv) return;
+    if (isEmail(contact)) { if (await emailInvite(inv.invite_id)) toast("Invite emailed"); }
+    await loadInvites(r);
+    if (!isEmail(contact)) { const full = r.invites.find(i => i.id === inv.invite_id); if (full) shareInvite(r, full); }
+  }
+
+  // Finishing a private game keeps everyone's result for their profile.
+  async function finishGame(r) {
+    const rows = S.stablefordBoard(r.holes, r.players).filter(x => x.sum.thru > 0);
+    if (rows.length) {
+      const res = await client.from("game_results").upsert(rows.map(x => ({ event_id: r.id, player_id: x.player.id, points: x.sum.points, gross: x.sum.gross, position: x.pos, field: rows.length })), { onConflict: "event_id,player_id" });
+      if (res.error) { toast(res.error.message, true); return; }
+    }
+    await setStatus(r, "final");
+  }
+
   // ---------- practice rounds ----------
   // A round to try the app out, scored from anywhere. Hidden from the
   // website; never copied to results; no handicap changes; cuts untouched.
@@ -2419,29 +2671,20 @@
     const tee = $("#pr-tee").value, date = $("#pr-date").value || londonToday();
     if (!tee) { toast("Choose a course first.", true); return; }
     if (!ids.length) { toast("Tick at least one player.", true); return; }
-    const teeName = $("#pr-tee").selectedOptions[0].textContent.split(" · ")[0];
     const btn = document.querySelector("[data-action=practice-create]"); btn.disabled = true; btn.textContent = "Creating…";
-    const ev = await client.from("events").insert({ name: $("#pr-name").value.trim() || "Practice round", venue: teeName, event_date: date,
-      hidden: true, is_practice: true, order_of_merit: false }).select().single();
-    if (ev.error || !ev.data) { toast((ev.error && ev.error.message) || "Couldn't create it.", true); btn.disabled = false; btn.textContent = "Create practice round"; return; }
-    const id = ev.data.id;
-    const steps = [
-      client.from("event_scoring").upsert({ event_id: id, tee_id: tee, handicap_method: "whs", allowance: DEFAULT_ALLOWANCE, formats: ["stableford"], skins_mode: "off", status: "setup", updated_at: new Date().toISOString() }, { onConflict: "event_id" }),
-      client.from("attendance").insert(ids.map(pid => ({ event_id: id, player_id: pid, status: "playing", payment_status: "confirmed" }))),
-      client.from("groupings").insert(ids.map((pid, i) => ({ event_id: id, player_id: pid, group_type: "fours", group_number: Math.floor(i / 4) + 1, position: i % 4 }))),
-    ];
-    for (const st of steps) { const res = await st; if (res.error) { toast(res.error.message, true); break; } }
+    const { data: id, error } = await client.rpc("create_practice_round", { p_name: $("#pr-name").value.trim() || "Practice round", p_date: date, p_tee: tee, p_players: ids });
+    if (error || !id) { toast((error && error.message) || "Couldn't create it.", true); btn.disabled = false; btn.textContent = "Create practice round"; return; }
     closeSheet();
     toast("Practice round ready — publish it in Setup to start scoring");
     location.hash = "#/round/" + id;
   }
 
   async function deletePractice(r) {
-    if (!r || !r.event.is_practice) return;
+    if (!r || !(r.event.is_practice || r.event.is_private)) return;
     if (!confirm(`Delete ${r.event.name} and every score in it?`)) return;
-    const { error } = await client.from("events").delete().eq("id", r.id).eq("is_practice", true);
+    const { error } = await client.rpc("delete_game", { target: r.id });
     if (error) { toast(error.message, true); return; }
-    toast("Practice round deleted");
+    toast(r.event.is_private ? "Private game deleted" : "Practice round deleted");
     location.hash = "#/";
   }
 
@@ -3511,13 +3754,14 @@
 
 
     const missingPh = r.players.filter(p => p.ph == null).length;
-    const practice = !!r.event.is_practice;
+    const practice = !!(r.event.is_practice || r.event.is_private);
+    const kind = r.event.is_private ? "game" : "practice round";
     const statusBtns = practice
-      ? (s.status === "setup" || !r.setup ? `<button class="btn gold block" data-action="go-live">Publish practice round — open scoring</button>`
-        : s.status === "live" ? `<button class="btn block" data-action="set-status" data-status="final">Finish practice round</button>
-           <button class="btn ghost block" data-action="set-status" data-status="setup" style="margin-top:8px">Unpublish — pause scoring</button>`
+      ? (s.status === "setup" || !r.setup ? `<button class="btn gold block" data-action="go-live">Start the ${kind} — open scoring</button>`
+        : s.status === "live" ? `<button class="btn block" data-action="${r.event.is_private ? "finish-game" : "set-status"}" data-status="final">Finish the ${kind}</button>
+           <button class="btn ghost block" data-action="set-status" data-status="setup" style="margin-top:8px">Pause scoring</button>`
         : `<button class="btn ghost block" data-action="set-status" data-status="live">Reopen scoring</button>`)
-        + `<button class="btn ghost block danger-text" data-action="practice-delete" style="margin-top:8px">Delete this practice round</button>`
+        + `<button class="btn ghost block danger-text" data-action="practice-delete" style="margin-top:8px">Delete this ${kind}</button>`
       : s.status === "setup" || !r.setup
       ? `<button class="btn gold block" data-action="go-live">Publish round — open scoring</button>`
       : s.status === "live"
@@ -3580,7 +3824,8 @@
         <a class="btn ghost block" href="#/print/${r.id}">🖨️ Open the print pack</a></div>` : ""}
       ${checkinsSetupCard(r)}
       ${r.contestsOff ? "" : contestsSetupCard(r)}
-      ${adminsCard(r)}
+      ${practice ? "" : adminsCard(r)}
+      ${r.event.is_private ? guestsCard(r) : ""}
       ${practice ? "" : hcReviewCard(r)}
       ${r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : ""}
 
@@ -3737,7 +3982,7 @@
       if (error) { toast(error.message, true); return; }
     }
     // Winners' and runners-up's temporary cuts come off this round only.
-    if (!r.event.is_practice) {
+    if (!r.event.is_practice && !r.event.is_private) {
       const cut = await client.rpc("take_handicap_cuts", { p_event: r.id });
       if (!cut.error && cut.data) toast(`${cut.data} handicap cut${cut.data > 1 ? "s" : ""} taken for this round`);
     }
@@ -3799,13 +4044,14 @@
   // ---------- courses (committee) ----------
 
   async function renderCourses() {
-    if (!app.committee) { view.innerHTML = `<div class="card empty">Courses are managed by the committee.</div>`; return; }
+    if (!app.approved) { view.innerHTML = `<div class="card empty">Members only.</div>`; return; }
     view.innerHTML = `<div class="loading">Loading courses…</div>`;
     const { courses, tees } = await loadCourses();
     const { data: geoRows } = await client.from("course_hole_geo").select("course_id, tee_lat, green_lat");
     courses.forEach(c => { c.mapped = (geoRows || []).filter(g => g.course_id === c.id && g.tee_lat != null && g.green_lat != null).length; });
     view.innerHTML = `
       <h1>Courses</h1>
+      <p class="small muted">Any member can add a course or a tee from its scorecard. Put in the par and stroke index for every hole, and the course rating and slope if you have them, so handicaps work out properly.</p>
       ${courses.map(c => `
         <div class="card">
           <h2>${esc(c.name)}</h2>
@@ -3820,7 +4066,7 @@
               </a>`).join("")}
           </div>
           <button class="btn ghost block" style="margin-top:10px" data-action="new-tee" data-course="${c.id}">Add a tee</button>
-          <a class="btn ghost block" style="margin-top:8px" href="#/course-map/${c.id}">Map the holes${c.mapped ? ` (${c.mapped}/18 done)` : ""}</a>
+          ${app.committee ? `<a class="btn ghost block" style="margin-top:8px" href="#/course-map/${c.id}">Map the holes${c.mapped ? ` (${c.mapped}/18 done)` : ""}</a>` : ""}
         </div>`).join("")}
       <form id="new-course" class="card">
         <h2>Add a course</h2>
@@ -3955,7 +4201,7 @@
   }
 
   async function renderTeeEditor(teeId) {
-    if (!app.committee) { view.innerHTML = `<div class="card empty">Courses are managed by the committee.</div>`; return; }
+    if (!app.approved) { view.innerHTML = `<div class="card empty">Members only.</div>`; return; }
     view.innerHTML = `<div class="loading">Loading…</div>`;
     const [{ data: tee, error }, { data: holes }] = await Promise.all([
       client.from("course_tees").select("*, courses(name)").eq("id", teeId).maybeSingle(),
@@ -4043,7 +4289,16 @@
     const a = el.dataset.action;
     switch (a) {
       case "close-sheet": closeSheet(); break;
+      case "guest-signout": await client.auth.signOut(); location.hash = "#/"; break;
       case "practice-new": practiceSheet(); break;
+      case "private-new": privateSheet(); break;
+      case "private-create": createPrivate(); break;
+      case "pg-add-guest": addGuestRow(); break;
+      case "pg-del-guest": el.closest(".pg-guest").remove(); if (app.pgCount) app.pgCount(); break;
+      case "finish-game": finishGame(r); break;
+      case "guest-email": if (await emailInvite(el.dataset.invite)) toast("Invite emailed"); break;
+      case "guest-share": { const inv = (r.invites || []).find(i => i.id === el.dataset.invite); if (inv) shareInvite(r, inv); break; }
+      case "guest-new-invite": newInvite(r, el.dataset.player); break;
       case "division": if (r) { r.div = Number(el.dataset.div); renderRoundBody(); } break;
       case "hc-provisional": setProvisional(); break;
       case "practice-create": createPractice(); break;
@@ -4363,7 +4618,13 @@
     if (!((parts[0] === "round" || parts[0] === "present") && app.round && app.round.id === parts[1])) { unsubscribe(); app.round = null; }
     if (parts[0] !== "round" && parts[0] !== "ryder") hideTabbar();
     if (parts[0] !== "ryder" && parts[0] !== "rc" && rc.channel) { client.removeChannel(rc.channel); rc.channel = null; rc.data = null; }
+    if (parts[0] === "join" && parts[1]) return renderJoin(parts[1]);
     if (!app.user) return renderSignIn();
+    if (app.guest) {
+      if (app.guest.ended || new Date(app.guest.until) < new Date()) return renderGuestEnded();
+      if (!(parts[0] === "round" && parts[1] === app.guest.eventId)) { location.replace("#/round/" + app.guest.eventId); return; }
+      return renderRound(parts[1], parts[2] === "start");
+    }
     if (!app.approved) return renderNotApproved();
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return renderCourses();

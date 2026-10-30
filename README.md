@@ -151,6 +151,7 @@ it again.
 32. `sql/reminders.sql` — hourly reminders (entries closing, unpaid, the day before). Redeploy `push-notify` first
 33. `sql/society-handicaps.sql` — society handicaps (England Golf index, temporary cuts), practice rounds, divisions, Ryder Cup captains
 34. `sql/handicap-history-2026.sql` — this year's rounds as handicap history, worked out from Stableford points
+35. `sql/private-games.sql` — members' private games with friends (guest logins need Authentication → Anonymous sign-ins switched on, and the `guest-invite` Edge Function for emailed invites); members can add courses; fixes practice rounds for non-trip-admin committee
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

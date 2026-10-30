@@ -143,10 +143,14 @@ function wireLogout() {
 }
 
 async function refreshData() {
-  const [{ data: players }, { data: events }] = await Promise.all([
+  const [{ data: allPlayers }, { data: allEvents }] = await Promise.all([
     client.from("players").select("*").order("name", { ascending: true }),
     client.from("events").select("*").order("event_date", { ascending: false })
   ]);
+  // Friends added to a member's private game, and practice or private
+  // games themselves, are the app's business, not the fixture list's.
+  const players = (allPlayers || []).filter(p => !p.guest_event_id);
+  const events = (allEvents || []).filter(e => !e.is_practice && !e.is_private);
   currentPlayers = players || [];
   currentEvents = events || []; eventList = currentEvents; eventList = currentEvents;
 

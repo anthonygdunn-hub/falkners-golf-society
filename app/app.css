@@ -932,3 +932,29 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
 .hc-table td:first-child { overflow-wrap: anywhere; }
 .div-tabs button { white-space: nowrap; }
 .div-n { font-size: .75em; opacity: .7; margin-left: 2px; }
+
+/* guests and private games */
+body.guest-mode #menu > a, body.guest-mode #menu-push, body.guest-mode #menu-text, body.guest-mode #menu-install { display: none; }
+body.guest-mode .back-link { visibility: hidden; }
+.join-hero { text-align: center; padding: 18px 10px 8px; }
+.join-hero img { border-radius: 50%; box-shadow: 0 0 0 3px var(--gold-light, #d9be7c); }
+.join-kicker { margin-top: 10px; font: 600 .7rem var(--font-body); letter-spacing: .2em; text-transform: uppercase; color: var(--gold, #b8923c); }
+.join-hero h1 { margin: 6px 0 8px; }
+.code-input { font-size: 1.6rem !important; letter-spacing: .4em; text-align: center; font-variant-numeric: tabular-nums; }
+.badge.private { background: #ece7fb; color: #4b3a8a; vertical-align: 2px; margin-left: 4px; }
+.seg2 { display: flex; gap: 6px; margin-top: 6px; }
+.seg2 button { flex: 1; min-height: 40px; border-radius: 10px; border: 1.5px solid var(--line, #d5dbe5); background: #fff; font-weight: 600; color: var(--ink-soft); }
+.seg2 button.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+.pg-guest { border: 1px solid var(--line, #e1e6ee); border-radius: 12px; padding: 10px; margin-top: 8px; }
+.pg-guest input { width: 100%; }
+.guest-row { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line, #eef1f6); }
+.guest-row > div:first-child { flex: 1; min-width: 0; }
+.guest-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.guest-acts .btn { min-height: 34px; padding: 0 12px; }
+.share-text { width: 100%; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line, #d5dbe5); }
+.private-banner { background: #ece7fb; color: #3a2d6e; }
+#pg-find, .pg-guest input, #hc-find {
+  min-height: 44px; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; font: inherit; color: var(--ink);
+}
+#pg-find { display: block; width: 100%; margin: 6px 0 8px; }
+.pg-guest .pg-g-hcp { flex: 0 0 104px; }
