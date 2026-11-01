@@ -527,7 +527,11 @@
     const evById = new Map([...(evs.data || []), ...((mg && mg.data) || []).filter(e => !e.is_practice)].map(e => [e.id, e]));
     const scores = (hs.data || []).filter(h => evById.has(h.event_id));
     const evIds = [...new Set(scores.map(h => h.event_id))];
-    const { data: setups } = evIds.length ? await client.from("event_scoring").select("event_id, tee_id").in("event_id", evIds) : { data: [] };
+    let { data: setups, error: se } = evIds.length ? await client.from("event_scoring").select("event_id, tee_id, team_format").in("event_id", evIds) : { data: [] };
+    if (se) ({ data: setups } = await client.from("event_scoring").select("event_id, tee_id").in("event_id", evIds));
+    // A team card (scramble, alternate shot, greensomes) isn't one
+    // person's golf, so it stays out of their statistics.
+    setups = (setups || []).filter(x => !x.team_format);
     const teeIds = [...new Set((setups || []).map(x => x.tee_id).filter(Boolean))];
     const { data: ch } = teeIds.length ? await client.from("course_holes").select("tee_id, hole, par").in("tee_id", teeIds) : { data: [] };
     const teeOfEv = new Map((setups || []).map(x => [x.event_id, x.tee_id]));
@@ -946,6 +950,14 @@
       client.from("event_prizes").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("round_admins", { p_event: eventId }),
     ]);
+    // Team formats, matches and custom contests (private games). Tolerant,
+    // like the extras above: a round without them opens as before.
+    const [teams, matches, gcs, gclaims] = await Promise.all([
+      client.from("game_teams").select("player_id, team_number, position").eq("event_id", eventId),
+      client.from("game_matches").select("*").eq("event_id", eventId).order("number"),
+      client.from("game_contests").select("*").eq("event_id", eventId).order("position"),
+      client.from("game_contest_claims").select("*").eq("event_id", eventId).order("created_at"),
+    ]);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
@@ -988,6 +1000,10 @@
       prizes: prizes.error ? null : prizes.data,
       admins: admins.error ? null : admins.data || [],
       canManage: !!manage.data,
+      teams: teams.error ? [] : teams.data || [],
+      matches: matches.error ? [] : matches.data || [],
+      gcontests: gcs.error ? [] : gcs.data || [],
+      gclaims: gclaims.error ? [] : gclaims.data || [],
     };
     if (!r.feedOff && r.posts.length) {
       const ids = r.posts.map(p => p.id);
@@ -1109,16 +1125,60 @@
       });
       const ch = method === "whs" && tee && index != null
         ? S.courseHandicap(index, tee.slope, tee.course_rating, par) : null;
+      // The full handicap the format allowances work from: the course
+      // handicap (or index) at 100%, unrounded; a typed-in playing
+      // handicap stands in for it. Off scratch, nobody gets shots.
+      const scratch = setup.allowance != null && Number(setup.allowance) === 0;
+      const full = scratch ? 0 : h.playing_handicap != null ? Number(h.playing_handicap)
+        : index == null ? null : method === "whs" && tee ? S.courseHandicapRaw(index, tee.slope, tee.course_rating, par) : index;
       return {
-        id: f.player_id, profileId: f.profile_id, name: f.name, index, ph, ch,
+        id: f.player_id, profileId: f.profile_id, name: f.name, index, ph, ch, full,
         overridden: h.playing_handicap != null,
         guest: f.is_guest, group: f.tee_group, pairs: (f.pair_groups || []).map(Number),
         scores: r.scores[f.player_id] || {},
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
     r.unlinked = r.field.filter(f => !f.player_id);
+    r.people = r.players;
+    r.teamGame = !!setup.team_format;
+    if (r.teamGame) r.players = teamRows(r);
     r.pairs = pairsOf(r.players);
-    r.me = r.players.find(p => p.profileId && app.user && p.profileId === app.user.id) || null;
+    r.me = r.players.find(p => app.user && (p.members || [p]).some(m => m.profileId === app.user.id)) || null;
+  }
+
+  // ---------- team formats ----------
+  // A one-ball team plays as one row everywhere a player would: one card,
+  // kept under the team's first player (its captain), with one team
+  // handicap. The people behind it stay in r.people.
+  const TEAM_LABELS = { scramble: "Scramble", foursomes: "Alternate shot", greensomes: "Greensomes" };
+  function teamRows(r) {
+    const setup = r.setup || {};
+    const byNum = new Map();
+    r.teams.slice().sort((a, b) => a.team_number - b.team_number || a.position - b.position).forEach(t => {
+      const p = r.people.find(x => x.id === t.player_id);
+      if (!p) return;
+      if (!byNum.has(t.team_number)) byNum.set(t.team_number, []);
+      byNum.get(t.team_number).push(p);
+    });
+    return [...byNum.entries()].map(([n, ms]) => {
+      const cap = ms[0];
+      const surnames = ms.map(m => String(m.name).trim().split(/\s+/).slice(-1)[0]);
+      return {
+        id: cap.id, profileId: cap.profileId, team: n, members: ms,
+        name: ms.length <= 2 ? surnames.join(" & ") : `Team ${n}`,
+        full: ms.map(m => m.full),
+        ph: S.teamHandicap(setup.team_format, ms.map(m => m.full), setup.allowances),
+        index: null, ch: null, overridden: false, guest: ms.every(m => m.guest),
+        group: cap.group, pairs: [], scores: r.scores[cap.id] || {},
+      };
+    }).sort((a, b) => a.team - b.team);
+  }
+  const memberNames = p => (p.members || []).map(m => shortName(m.name)).join(", ");
+  // The handicap a player plays better ball off, and match play.
+  const pctOf = (full, pct) => full == null ? null : Math.round(full * Number(pct) / 100);
+  function bbPlayers(r, players) {
+    const pct = S.allowanceFor("betterball", r.setup.allowances);
+    return players.map(p => ({ ...p, ph: pctOf(p.full, pct) }));
   }
 
   // ---------- realtime ----------
@@ -1163,6 +1223,13 @@
         const rr = app.round;
         if (payload.eventType === "DELETE") rr.claims = rr.claims.filter(c => c.id !== (payload.old || {}).id);
         else if (!rr.claims.some(c => c.id === payload.new.id)) rr.claims.push(payload.new);
+        refreshRound(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "game_contest_claims", filter: `event_id=eq.${r.id}` }, payload => {
+        if (!app.round || app.round.id !== r.id) return;
+        const rr = app.round;
+        if (payload.eventType === "DELETE") rr.gclaims = rr.gclaims.filter(c => c.id !== (payload.old || {}).id);
+        else if (!rr.gclaims.some(c => c.id === payload.new.id)) rr.gclaims.push(payload.new);
         refreshRound(true);
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "round_posts", filter: `event_id=eq.${r.id}` }, payload => {
@@ -1304,7 +1371,7 @@
     const st = r.setup ? r.setup.status : null;
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
     const tabs = [["score", "Score"], ["board", "Leaderboard"]];
-    if (r.pairs && r.pairs.length) tabs.push(["pairs", "Pairs"]);
+    if (r.pairs && r.pairs.length) tabs.push(["pairs", isBetterBall(r) ? "Better ball" : "Pairs"]);
     if (!r.feedOff && !app.guest && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
     if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
     if (r.results && r.tab === "results") {
@@ -1347,7 +1414,7 @@
       if (store.get("gps-on", false) && r.geo && r.geo.size && window.HoleMaps) window.HoleMaps.startGps();
     }
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
-    else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || pairsTable(r);
+    else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || (isBetterBall(r) ? betterBallTable(r) : pairsTable(r));
     else if (r.tab === "feed" && !r.feedOff) body.innerHTML = feedView(r);
     else body.innerHTML = boardView(r);
   }
@@ -1527,7 +1594,8 @@
         </button>`).join("")}
       <div class="gb-links">
         <button class="btn ghost" data-action="tab" data-tab="board">Full leaderboard ›</button>
-        ${r.pairs && r.pairs.length ? `<button class="btn ghost" data-action="tab" data-tab="pairs">Pairs ›</button>` : ""}
+        ${r.pairs && r.pairs.length ? `<button class="btn ghost" data-action="tab" data-tab="pairs">${isBetterBall(r) ? "Better ball" : "Pairs"} ›</button>` : ""}
+        ${(r.matches || []).length ? `<button class="btn ghost" data-action="board-go" data-board="matchplay">Matches ›</button>` : ""}
       </div>
     </div>`;
   }
@@ -1544,7 +1612,7 @@
     </div>`;
     const sums = players.map(p => S.summarise(r.holes, p.scores, p.ph));
     const row = h => `<div class="sg-row${gaps.has(h.hole) ? " gap" : ""}" style="${cols}">
-      <span class="sg-hole">${h.hole}${contestsOnHole(r, h.hole).map(c => `<i class="sg-tag" title="${esc(c.label)}">${c.id.startsWith("ld") ? "LD" : c.id.startsWith("np2") ? "N2" : "NP"}</i>`).join("")}</span>
+      <span class="sg-hole">${h.hole}${contestsOnHole(r, h.hole).map(c => `<i class="sg-tag" title="${esc(c.label)}">${c.custom ? "★" : c.id.startsWith("ld") ? "LD" : c.id.startsWith("np2") ? "N2" : "NP"}</i>`).join("")}</span>
       <span class="sg-yds">${h.yards || ""}</span>
       <span class="sg-si">${h.stroke_index}</span>
       <span class="sg-par">${h.par}</span>
@@ -1664,6 +1732,8 @@
 
   // "Anthony Dunn" -> "Anthony D." so names fit beside the figures.
   function shortName(name) {
+    // Team names ("Team 2", "Cole & Reid") stay as they are.
+    if (/^Team \d+$/.test(String(name)) || String(name).includes(" & ")) return String(name);
     const w = String(name || "").trim().split(/\s+/);
     return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0] || "";
   }
@@ -2818,7 +2888,7 @@
   // ---------- new private game: step by step ----------
 
   const WIZ_MAX = 16;
-  const WIZ_STEPS = ["start", "details", "course", "format", "handicaps", "contests", "players", "tees", "review"];
+  const WIZ_STEPS = ["start", "details", "course", "format", "handicaps", "contests", "money", "players", "tees", "review"];
   let wiz = null;
 
   function wizFresh(me) {
@@ -2827,7 +2897,25 @@
       courseId: null, teeId: null, main: "stableford", pairs: false, skins: false, skinsMode: "net", both: true,
       useHcp: true, method: "whs", allowance: 95, contestsOn: false, contests: [],
       players: [], guests: [], groupSize: 4, interval: 8, visible: false,
+      kind: "individual", teamFormat: "scramble", teamSize: 4, pairMode: "combined", matchplay: false,
+      allowances: {}, custom: [], moneyOn: false, stakes: {},
     };
+  }
+  let wizN = 0;
+  const wizUid = () => ++wizN;
+  const wizTeam = () => wiz.kind === "team";
+  const wizBB = () => !wizTeam() && wiz.pairs && wiz.pairMode === "betterball";
+  const wizTeamSize = () => wiz.teamFormat === "scramble" ? wiz.teamSize : 2;
+  // The comp id for a stake-hole slot: ntp2_front_hole -> np2-front.
+  const slotComp = slot => slot.replace(/_hole$/, "").replace(/^ntp/, "np").replace("_", "-");
+  // Which allowances apply to the game being set up.
+  function wizAllowKeys() {
+    const w = wiz;
+    if (wizTeam()) return [w.teamFormat === "scramble" ? "scramble" + w.teamSize : w.teamFormat];
+    const keys = [];
+    if (wizBB()) keys.push("betterball");
+    if (w.matchplay) keys.push(wizBB() ? "fourball_match" : "singles_match");
+    return keys;
   }
 
   async function renderNewGame() {
@@ -2897,26 +2985,44 @@
       ${w.courseId ? `<p class="wz-label">Tees</p>${tees.map(t => `<button type="button" class="wz-card wz-pick ${t.id === w.teeId ? "on" : ""}" data-wz-set="teeId" data-v="${t.id}"><span class="wz-dot" style="background:${esc(t.colour || "#ccc")}"></span><span class="wz-grow"><b>${esc(t.name)}</b><small>Par ${t.par}${t.course_rating ? ` · ${t.course_rating}/${t.slope || "–"}` : ""} · ${wiz.data.holesByTee.get(t.id).reduce((a, h) => a + (h.yards || 0), 0) || "–"} yds</small></span><span class="wz-radio"></span></button>`).join("")}` : ""}
       <div class="wz-note">${icon('<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>')}<span>Not on the list? <a href="#/courses">Add the course from its scorecard</a>, then come back.</span></div>`;
     }
-    if (s === "format") return `<h2 class="wz-h">What's the game?</h2><p class="wz-sub">The main leaderboard, the same for everyone.</p>
+    if (s === "format") {
+      const tcard = (v, t, sub) => `<button type="button" class="wz-card wz-pick ${w.teamFormat === v ? "on" : ""}" data-wz-set="teamFormat" data-v="${v}"><span class="wz-grow"><b>${t}</b><small>${sub}</small></span><span class="wz-radio"></span></button>`;
+      return `<h2 class="wz-h">What's the game?</h2><p class="wz-sub">Everyone for themselves, or in teams playing one ball.</p>
+      ${seg("kind", [["individual", "Individual"], ["team", "Teams"]])}
+      ${!wizTeam() ? `<p class="wz-label">The main board</p>
       ${seg("main", [["stableford", "Stableford"], ["medal", "Strokeplay"]])}
       <p class="wz-label">On the side</p>
       ${toggle("both", w.main === "stableford" ? "Strokeplay board too" : "Stableford board too", "A second leaderboard from the same scores")}
-      ${toggle("pairs", "Pairs", "Partners in the same group, both Stableford scores count")}
+      ${toggle("pairs", "Pairs", "Partners in the same group")}
+      ${w.pairs ? seg("pairMode", [["betterball", "Better ball"], ["combined", "Both scores count"]]) + `<p class="small muted" style="margin:-4px 0 10px">${w.pairMode === "betterball" ? "The better of the two scores on each hole counts." : "Both players' Stableford points added together."}</p>` : ""}
       ${toggle("skins", "Skins", "Win a hole outright to take the skin; ties carry over")}
       ${w.skins ? seg("skinsMode", [["net", "Net skins"], ["gross", "Gross skins"]]) : ""}
-      <div class="wz-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>')}<span>Better ball, scramble, alternate shot, greensomes and match play are coming in the next update.</span></div>`;
+      ${toggle("matchplay", "Match play", wizBB() ? "Pair against pair, better ball, holes up and down" : "Player against player, holes up and down")}`
+      : `<p class="wz-label">The format</p>
+      ${tcard("scramble", "Scramble", "Everyone tees off, pick the best shot, all play from there. Teams of 2 to 4")}
+      ${w.teamFormat === "scramble" ? `<p class="wz-label">Players in a team</p>${seg("teamSize", [[2, "2"], [3, "3"], [4, "4"]])}` : ""}
+      ${tcard("foursomes", "Alternate shot", "Pairs, one ball, taking turns. One tees off the odd holes, the other the evens")}
+      ${tcard("greensomes", "Greensomes", "Pairs: both tee off, pick the better drive, then alternate shot")}
+      <p class="wz-label">Team score</p>
+      ${seg("main", [["stableford", "Stableford"], ["medal", "Strokeplay"]])}
+      ${toggle("matchplay", "Match play", "Team against team, holes up and down")}
+      <div class="wz-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>')}<span>One card per team, put in by anyone in it. Team cards don't count towards anyone's statistics.</span></div>`}`;
+    }
     if (s === "handicaps") return `<h2 class="wz-h">Handicaps</h2><p class="wz-sub">Off handicap, or everyone off the back pegs of scratch?</p>
       ${seg("useHcp", [["true", "Off handicap"], ["false", "Off scratch"]])}
       ${w.useHcp ? `<p class="wz-label">Course or index?</p>
       <button type="button" class="wz-card wz-pick ${w.method === "whs" ? "on" : ""}" data-wz-set="method" data-v="whs"><span class="wz-grow"><b>Course handicap <em class="wz-tag">Society standard</em></b><small>Index worked through this tee's slope and rating, as the society does</small></span><span class="wz-radio"></span></button>
       <button type="button" class="wz-card wz-pick ${w.method === "profile" ? "on" : ""}" data-wz-set="method" data-v="profile"><span class="wz-grow"><b>Straight off the index</b><small>No slope or rating applied</small></span><span class="wz-radio"></span></button>
-      <p class="wz-label">Allowance</p>${seg("allowance", [[100, "100%"], [95, "95%"], [90, "90%"], [85, "85%"], [75, "75%"]])}
-      <p class="small muted">95% is the WHS allowance for individual Stableford and strokeplay.</p>` : `<div class="wz-note"><span>Everyone plays off scratch: gross scores only.</span></div>`}`;
+      ${wizTeam() ? "" : `<p class="wz-label">Allowance</p>${seg("allowance", [[100, "100%"], [95, "95%"], [90, "90%"], [85, "85%"], [75, "75%"]])}
+      <p class="small muted">95% is the WHS allowance for individual Stableford and strokeplay.</p>`}
+      ${wizAllowKeys().length ? `<p class="wz-label">${wizTeam() ? "Team handicap" : "Pairs and matches"}</p>
+        ${wizAllowKeys().map(k => { const v = S.allowanceFor(k, w.allowances); return `<label class="field">${ALLOW_LABELS[k]} (%)<input data-wz-allow="${k}" value="${esc(Array.isArray(v) ? v.join(", ") : String(v))}" inputmode="decimal"></label>`; }).join("")}
+        <p class="small muted" style="margin-top:-4px">England Golf's recommended allowances. Change them if your game plays it differently.</p>` : ""}` : `<div class="wz-note"><span>Everyone plays off scratch: gross scores only.</span></div>`}`;
     if (s === "contests") {
       const holes = wizHoles();
       const par3 = holes.filter(h => h.par === 3);
       const card = (a, ico, t, sub) => `<button type="button" class="wz-card wz-pick" data-action="${a}"><span class="wz-ico">${icon(ico)}</span><span class="wz-grow"><b>${t}</b><small>${sub}</small></span><span class="ci-chev">›</span></button>`;
-      return `<h2 class="wz-h">The stake holes</h2><p class="wz-sub">Nearest the pin and longest drive, like the society days. Whoever's in front gets named on the card.</p>
+      return `<h2 class="wz-h">Contests</h2><p class="wz-sub">Nearest the pin and longest drive like the society days, your own hole prizes, and games over the whole round.</p>
       ${seg("contestsOn", [["true", "Yes"], ["false", "No"]])}
       ${w.contestsOn ? `${w.contests.length ? `<p class="wz-label">Added</p>${w.contests.map((c, i) => `<div class="wz-card"><span class="wz-ico">${icon(c.kind === "ld" ? '<circle cx="12" cy="9" r="5"/><path d="M12 14v7"/>' : '<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>')}</span><span class="wz-grow"><b>${c.kind === "ld" ? "Longest drive" : "Nearest the pin"}</b><small>Hole ${c.hole} · par ${(holes.find(h => h.hole === c.hole) || {}).par || "?"}</small></span><button type="button" class="mv-link" data-action="wz-del-contest" data-i="${i}" aria-label="Remove">✕</button></div>`).join("")}` : ""}
         <p class="wz-label">Add a stake</p>
@@ -2924,7 +3030,27 @@
         ${card("wz-c-ld", '<circle cx="12" cy="9" r="5"/><path d="M12 14v7"/>', "Longest drive", "Pick a long par 4 or a par 5")}
         ${card("wz-c-classic", '<path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/>', "One of each", "A nearest the pin and a longest drive")}
         ${par3.length ? card("wz-c-par3", '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>', "Every par 3", `Nearest the pin on each one (${par3.length} hole${par3.length === 1 ? "" : "s"})`) : ""}
-        <p class="small muted">Up to one longest drive and two nearest the pins on each nine. Other side contests come in the next update.</p>` : ""}`;
+        <p class="small muted">Up to one longest drive and two nearest the pins on each nine.</p>
+        <p class="wz-label">Your own</p>
+        ${w.custom.filter(c => c.kind === "hole").map(c => `<div class="wz-card"><span class="wz-ico">${icon('<path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/>')}</span><span class="wz-grow"><b>${esc(c.name)}</b><small>Hole ${c.hole} · whoever's in front at the end</small></span><button type="button" class="mv-link" data-action="wz-del-own" data-i="${w.custom.indexOf(c)}" aria-label="Remove">✕</button></div>`).join("")}
+        ${card("wz-c-own", '<path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/>', "A hole prize of your own", "Name it, e.g. Nearest in two, then pick the hole")}
+        <p class="wz-label">Over the whole round</p>
+        <div class="wz-chips">${Object.entries(SIDE_GAMES).map(([k, d]) => `<label class="check-chip"><input type="checkbox" data-wz-side="${k}" ${w.custom.some(c => c.kind === k) ? "checked" : ""}> ${d.label}</label>`).join("")}</div>
+        ${w.custom.some(c => c.kind === "putts") ? `<p class="small muted">Fewest putts only counts cards with putts on every hole.</p>` : ""}` : ""}`;
+    }
+    if (s === "money") {
+      const field = (k, l, sub) => `<label class="wz-money"><span><b>${l}</b>${sub ? `<small>${sub}</small>` : ""}</span><span class="wz-pound">£<input type="number" min="0" max="100" step="0.5" inputmode="decimal" data-wz-stake="${k}" value="${w.stakes[k] ?? ""}" placeholder="0"></span></label>`;
+      const fmtName = wizTeam() ? `${TEAM_LABELS[w.teamFormat]} ${w.main === "medal" ? "strokeplay" : "Stableford"}` : w.main === "medal" ? "Strokeplay" : "Stableford";
+      return `<h2 class="wz-h">Anything on it?</h2><p class="wz-sub">A pot for each game: everyone puts in, the winner takes it. The app works out who pays who at the end.</p>
+      ${seg("moneyOn", [["false", "Just for fun"], ["true", "Play for money"]])}
+      ${w.moneyOn ? `<p class="wz-label">Each player puts in</p>
+        ${field("main", fmtName, "Winner takes the pot; a tie shares it")}
+        ${!wizTeam() && w.skins ? field("skins", "Skins", "Shared by skins won") : ""}
+        ${wizBB() ? field("betterball", "Better ball", "The winning pair shares it") : ""}
+        ${w.matchplay ? field("match", "Each match", "Each loser pays the winner; a half is nothing") : ""}
+        ${w.contestsOn ? w.contests.map(c => field("c:" + c.slot, `${c.kind === "ld" ? "Longest drive" : "Nearest the pin"}, hole ${c.hole}`)).join("") : ""}
+        ${w.contestsOn ? w.custom.map(c => field("o:" + c.uid, c.kind === "hole" ? `${esc(c.name)}, hole ${c.hole}` : esc(c.name))).join("") : ""}
+        <p class="small muted">Nothing is paid through the app. Leave any at £0 to play it for nothing.</p>` : ""}`;
     }
     if (s === "players") {
       const n = wizCount();
@@ -2942,8 +3068,12 @@
     if (s === "tees") {
       const n = wizCount(), groups = Math.ceil(n / w.groupSize);
       const order = [w.me.name, ...w.players.map(id => (w.data.members.find(m => m.id === id) || {}).name), ...w.guests.filter(g => g.name.trim()).map(g => g.name.trim())];
-      return `<h2 class="wz-h">Groups & tee times</h2><p class="wz-sub">How you'll go out. You can shuffle the groups later.</p>
-      <p class="wz-label">In each group</p>${seg("groupSize", [[2, "2"], [3, "3"], [4, "4"]])}
+      const ts = wizTeamSize();
+      const sizes = wizTeam() ? (ts === 2 ? [[2, "2"], [4, "4"]] : [[ts, String(ts)]]) : [[2, "2"], [3, "3"], [4, "4"]];
+      const teams = wizTeam() ? Array.from({ length: Math.ceil(n / ts) }, (_, t) => order.slice(t * ts, (t + 1) * ts)) : [];
+      return `<h2 class="wz-h">Groups & tee times</h2><p class="wz-sub">How you'll go out${wizTeam() ? ", and the teams, in the order you picked the players" : ""}. You can change them later in Manage.</p>
+      ${teams.length ? `<p class="wz-label">Teams</p>${teams.map((t, i) => `<div class="wz-group"><b>Team ${i + 1}</b><span>${t.map(esc).join(", ")}</span></div>`).join("")}` : ""}
+      <p class="wz-label">In each group</p>${seg("groupSize", sizes)}
       ${w.pairs && w.groupSize === 3 ? `<p class="small" style="color:#9a3412">Pairs need groups of 2 or 4, or someone's left without a partner.</p>` : ""}
       ${groups > 1 ? `<p class="wz-label">Gap between groups</p>${seg("interval", [[8, "8 min"], [10, "10 min"], [12, "12 min"]])}` : ""}
       <div class="wz-summary">${groups} tee time${groups === 1 ? "" : "s"} · ${n} player${n === 1 ? "" : "s"}${w.time ? ` · ${w.time} onward${groups > 1 ? `, ${w.interval} min apart` : ""}` : ""}</div>
@@ -2951,7 +3081,10 @@
     }
     if (s === "review") {
       const t = wizTee(), c = w.data.courses.find(x => x.id === w.courseId);
-      const fmt = [w.main === "stableford" ? "Stableford" : "Strokeplay", w.both ? (w.main === "stableford" ? "strokeplay" : "Stableford") : null, w.pairs ? "pairs" : null, w.skins ? `${w.skinsMode} skins` : null].filter(Boolean).join(" · ");
+      const fmt = wizTeam()
+        ? [`${TEAM_LABELS[w.teamFormat]}${w.teamFormat === "scramble" ? ` (teams of ${w.teamSize})` : ""}`, w.main === "stableford" ? "Stableford" : "strokeplay", w.matchplay ? "match play" : null].filter(Boolean).join(" · ")
+        : [w.main === "stableford" ? "Stableford" : "Strokeplay", w.both ? (w.main === "stableford" ? "strokeplay" : "Stableford") : null, w.pairs ? (w.pairMode === "betterball" ? "better ball" : "pairs") : null, w.skins ? `${w.skinsMode} skins` : null, w.matchplay ? "match play" : null].filter(Boolean).join(" · ");
+      const pot = Object.values(w.stakes).filter(v => Number(v) > 0).length;
       const opt = (mode, title, sub, tag, primary) => `<button type="button" class="wz-card wz-create ${primary ? "on" : ""}" data-action="wz-create" data-mode="${mode}"><span class="wz-grow"><b>${title}${tag ? ` <em class="wz-tag">${tag}</em>` : ""}</b><small>${sub}</small></span><span class="ci-chev">›</span></button>`;
       return `<h2 class="wz-h">All set?</h2><p class="wz-sub">Check it over. Everything can be changed later with the settings button.</p>
       <div class="wz-review">
@@ -2959,8 +3092,9 @@
         <div><span>When</span><b>${fmtDate(w.date)}${w.time ? ` · ${w.time}` : ""}</b></div>
         <div><span>Course</span><b>${esc(c ? c.name : "")} · ${esc(t ? t.name : "")}</b></div>
         <div><span>Format</span><b>${esc(fmt)}</b></div>
-        <div><span>Handicaps</span><b>${w.useHcp ? `${w.allowance}% · ${w.method === "whs" ? "course adjusted" : "as they are"}` : "Off scratch"}</b></div>
-        <div><span>Contests</span><b>${w.contestsOn && w.contests.length ? w.contests.map(x => `${x.kind === "ld" ? "LD" : "NTP"} ${x.hole}`).join(", ") : "None"}</b></div>
+        <div><span>Handicaps</span><b>${w.useHcp ? `${wizTeam() ? wizAllowKeys().map(k => { const v = S.allowanceFor(k, w.allowances); return Array.isArray(v) ? v.join("/") + "%" : v + "%"; }).join(", ") : w.allowance + "%"} · ${w.method === "whs" ? "course adjusted" : "as they are"}` : "Off scratch"}</b></div>
+        <div><span>Contests</span><b>${w.contestsOn && (w.contests.length || w.custom.length) ? w.contests.map(x => `${x.kind === "ld" ? "LD" : "NTP"} ${x.hole}`).concat(w.custom.map(c => c.kind === "hole" ? `${esc(c.name)} ${c.hole}` : esc(c.name))).join(", ") : "None"}</b></div>
+        <div><span>Money</span><b>${w.moneyOn && pot ? `${pot} pot${pot === 1 ? "" : "s"}` : "Just for fun"}</b></div>
         <div><span>Players</span><b>${wizCount()} in ${Math.ceil(wizCount() / w.groupSize)} group${Math.ceil(wizCount() / w.groupSize) === 1 ? "" : "s"}</b></div>
       </div>
       <p class="wz-label">Who can see it</p>${seg("visible", [["false", "Just the players"], ["true", "All members"]])}
@@ -2977,7 +3111,13 @@
     if (s === "details" && !w.name.trim()) return "Give the game a name.";
     if (s === "details" && (!w.date || w.date < londonToday())) return "Choose today or a date ahead.";
     if (s === "course" && !w.teeId) return "Choose the course and tees.";
-    if (s === "contests" && w.contestsOn && !w.contests.length) return "Add a contest, or choose No.";
+    if (s === "contests" && w.contestsOn && !w.contests.length && !w.custom.length) return "Add a contest, or choose No.";
+    if (s === "handicaps" && w.useHcp) {
+      for (const k of wizAllowKeys()) {
+        const v = S.allowanceFor(k, w.allowances);
+        if ((Array.isArray(v) ? v : [v]).some(x => !(Number(x) >= 0 && Number(x) <= 100))) return `Check the ${ALLOW_LABELS[k].toLowerCase()} allowance: 0 to 100.`;
+      }
+    }
     if (s === "players") {
       const named = w.guests.filter(g => g.name.trim());
       const bad = named.find(g => g.handicap === "" || g.handicap == null || isNaN(Number(g.handicap)));
@@ -2985,7 +3125,14 @@
       const badC = named.find(g => g.contact && !isEmail(g.contact.trim()) && !isMobile(g.contact.trim()));
       if (badC) return `${badC.name.trim()}'s email or mobile doesn't look right.`;
     }
-    if (s === "tees" && w.pairs && w.groupSize === 3) return "Pairs need groups of 2 or 4.";
+    if (s === "tees" && !wizTeam() && w.pairs && w.groupSize === 3) return "Pairs need groups of 2 or 4.";
+    if (s === "players" && wizTeam()) {
+      const n = wizCount(), ts = wizTeamSize();
+      if (ts === 2 && n % 2) return `${TEAM_LABELS[w.teamFormat]} is played in pairs: add or take off one player.`;
+      if (n < (w.matchplay ? ts + 2 : ts)) return w.matchplay ? "Match play needs at least two teams." : `A team is ${ts} players.`;
+      if (n % ts === 1) return `With ${n} players someone's in a team on their own. Add or take off a player.`;
+    }
+    if (s === "players" && !wizTeam() && w.matchplay && wizCount() < (wizBB() ? 4 : 2)) return wizBB() ? "Pairs match play needs at least four players." : "Match play needs at least two players.";
     return null;
   }
 
@@ -3006,9 +3153,11 @@
 
   function wizSet(key, v) {
     const w = wiz;
-    if (["useHcp", "contestsOn", "visible"].includes(key)) v = v === "true";
-    if (["allowance", "groupSize", "interval"].includes(key)) v = Number(v);
+    if (["useHcp", "contestsOn", "visible", "moneyOn"].includes(key)) v = v === "true";
+    if (["allowance", "groupSize", "interval", "teamSize"].includes(key)) v = Number(v);
     w[key] = v;
+    // Groups hold whole teams.
+    if (["kind", "teamFormat", "teamSize"].includes(key) && wizTeam()) { const ts = wizTeamSize(); w.groupSize = ts === 2 ? 4 : ts; w.skins = false; }
     if (key === "teeId") w.contests = [];
     if (key === "pairs" && v && w.groupSize === 3) w.groupSize = 4;
     drawWiz();
@@ -3023,6 +3172,15 @@
       <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Cancel</button>`);
   }
 
+  function ownPicker() {
+    openSheet(`<h2>A hole prize of your own</h2>
+      <label class="field">What's it called?<input id="wz-own-name" maxlength="40" placeholder="e.g. Nearest in two"></label>
+      <p class="small muted" style="margin-top:-4px">Then pick the hole. Players put whoever's in front on it as they go.</p>
+      <div class="wz-holes">${wizHoles().map(h => `<button type="button" data-action="wz-own-hole" data-hole="${h.hole}"><b>${h.hole}</b><small>Par ${h.par}</small></button>`).join("")}</div>
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Cancel</button>`);
+    setTimeout(() => { const i = $("#wz-own-name"); if (i) i.focus(); }, 50);
+  }
+
   async function wizAgain(id) {
     const w = wiz;
     const [{ data: ev }, { data: sc }, { data: att }, { data: gp }, { data: pr }] = await Promise.all([
@@ -3032,6 +3190,7 @@
       client.from("players").select("id, name, handicap").eq("guest_event_id", id),
       client.from("groupings").select("player_id").eq("event_id", id).eq("group_type", "pairs").limit(1),
     ]);
+    const { data: own } = await client.from("game_contests").select("kind, name, hole, stake").eq("event_id", id).order("position");
     const e = ev && ev[0];
     if (!e || !sc) { toast("Couldn't load that game.", true); return; }
     const t = w.data.tees.find(x => x.id === sc.tee_id);
@@ -3045,7 +3204,12 @@
       players: (att || []).map(a => a.player_id).filter(pid => pid && pid !== w.me.id && !guestIds.has(pid) && w.data.members.some(m => m.id === pid)),
       guests: (gp || []).map(g => ({ name: g.name, handicap: g.handicap, contact: "" })),
       contests: [], contestsOn: false,
+      kind: sc.team_format ? "team" : "individual", teamFormat: sc.team_format || "scramble", teamSize: sc.team_size || 4,
+      pairMode: (sc.formats || []).includes("betterball") ? "betterball" : "combined",
+      matchplay: (sc.formats || []).includes("matchplay"), allowances: { ...(sc.allowances || {}) },
+      custom: (own || []).map(c => ({ kind: c.kind, name: c.name, hole: c.hole || undefined, uid: wizUid() })), stakes: {}, moneyOn: false,
     });
+    if (w.custom.length) w.contestsOn = true;
     [["ld_front_hole", "ld"], ["ld_back_hole", "ld"], ["ntp_front_hole", "ntp"], ["ntp_back_hole", "ntp"], ["ntp2_front_hole", "ntp"], ["ntp2_back_hole", "ntp"]]
       .forEach(([k, kind]) => { if (e[k]) { w.contests.push({ kind, hole: e[k], slot: k }); w.contestsOn = true; } });
     w.contests.sort((a, b) => a.hole - b.hole);
@@ -3056,14 +3220,29 @@
   async function wizCreate(mode, btn) {
     const w = wiz;
     const guests = w.guests.filter(g => g.name.trim()).map(g => ({ name: g.name.trim(), handicap: g.handicap === "" || g.handicap == null ? 54 : Number(g.handicap), contact: (g.contact || "").trim() }));
-    const formats = [w.main, w.both ? (w.main === "stableford" ? "medal" : "stableford") : null, w.skins ? "skins" : null].filter(Boolean);
+    const team = wizTeam();
+    const formats = team ? [w.main, w.matchplay ? "matchplay" : null].filter(Boolean)
+      : [w.main, w.both ? (w.main === "stableford" ? "medal" : "stableford") : null, w.skins ? "skins" : null, wizBB() ? "betterball" : null, w.matchplay ? "matchplay" : null].filter(Boolean);
     const contests = {}; if (w.contestsOn) w.contests.forEach(c => { contests[c.slot] = c.hole; });
+    // Stakes: the pots that still apply, keyed as the round reads them.
+    const stakes = {};
+    if (w.moneyOn) Object.entries(w.stakes).forEach(([k, v]) => {
+      if (!(Number(v) > 0) || k.startsWith("o:")) return;
+      if (k.startsWith("c:")) { if (w.contestsOn && w.contests.some(c => c.slot === k.slice(2))) stakes[slotComp(k.slice(2))] = Number(v); return; }
+      if (k === "skins" && (team || !w.skins)) return;
+      if (k === "betterball" && !wizBB()) return;
+      if (k === "match" && !w.matchplay) return;
+      stakes[k] = Number(v);
+    });
+    const custom = w.contestsOn ? w.custom.map(c => ({ kind: c.kind, name: c.name, hole: c.hole, stake: w.moneyOn ? Number(w.stakes["o:" + c.uid]) || 0 : 0 })) : [];
+    const allowances = {}; wizAllowKeys().forEach(k => { if (w.allowances[k] != null) allowances[k] = w.allowances[k]; });
     btn.disabled = true;
-    const { data: ev, error } = await client.rpc("create_private_game_v2", { p: {
+    const { data: ev, error } = await client.rpc("create_private_game_v3", { p: {
       name: w.name.trim(), date: w.date, tee_time: w.time || null, tee: w.teeId, visible: w.visible,
       players: w.players, guests: guests.map(g => ({ name: g.name, handicap: g.handicap })),
-      group_size: w.groupSize, pairs: w.pairs, formats, skins_mode: w.skinsMode,
+      group_size: w.groupSize, pairs: !team && w.pairs, formats, skins_mode: w.skinsMode,
       handicap_method: w.method, allowance: w.useHcp ? w.allowance : 0, contests,
+      team_format: team ? w.teamFormat : null, team_size: wizTeamSize(), allowances, stakes, custom,
       tee_interval: Math.ceil(wizCount() / w.groupSize) > 1 ? w.interval : null, status: mode === "live" ? "live" : "setup",
     } });
     if (error || !ev) { toast((error && error.message) || "Couldn't create the game.", true); btn.disabled = false; return; }
@@ -3093,6 +3272,20 @@
       return true;
     }
     if (t.dataset.wzCheck) { wiz[t.dataset.wzCheck] = t.checked; if (t.dataset.wzCheck === "pairs" && t.checked && wiz.groupSize === 3) wiz.groupSize = 4; drawWiz(); return true; }
+    if (t.dataset.wzAllow) {
+      const k = t.dataset.wzAllow, parts = t.value.split(/[,\s/]+/).filter(Boolean).map(Number);
+      const def = S.ALLOWANCES[k];
+      if (!parts.length) delete wiz.allowances[k];
+      else wiz.allowances[k] = Array.isArray(def) ? def.map((d, i) => parts[i] != null ? parts[i] : d) : parts[0];
+      if (JSON.stringify(wiz.allowances[k]) === JSON.stringify(def)) delete wiz.allowances[k];
+      return true;
+    }
+    if (t.dataset.wzStake) { const v = t.value === "" ? null : Number(t.value); if (v > 0 && v <= 100) wiz.stakes[t.dataset.wzStake] = v; else delete wiz.stakes[t.dataset.wzStake]; return true; }
+    if (t.dataset.wzSide) {
+      const k = t.dataset.wzSide;
+      wiz.custom = t.checked ? [...wiz.custom.filter(c => c.kind !== k), { kind: k, name: SIDE_GAMES[k].label, uid: wizUid() }] : wiz.custom.filter(c => c.kind !== k);
+      drawWiz(); return true;
+    }
     if (t.dataset.wzMember) {
       const id = t.dataset.wzMember;
       wiz.players = t.checked ? [...wiz.players, id] : wiz.players.filter(x => x !== id);
@@ -3119,6 +3312,16 @@
       case "wz-c-par3": { let n = 0; wizHoles().filter(h => h.par === 3).forEach(h => { if (addContest("ntp", h.hole)) n++; }); drawWiz(); if (n) toast(`Nearest the pin added on ${n} par 3${n === 1 ? "" : "s"}`); break; }
       case "wz-hole": { const ok = addContest(el.dataset.kind, Number(el.dataset.hole)); if (ok && el.dataset.next) { holePicker(el.dataset.next); const h = $("#sheet-body h2"); if (h) h.textContent = "One of each: longest drive"; break; } closeSheet(); drawWiz(); break; }
       case "wz-del-contest": w.contests.splice(Number(el.dataset.i), 1); drawWiz(); break;
+      case "wz-c-own": ownPicker(); break;
+      case "wz-own-hole": {
+        const name = ($("#wz-own-name") || {}).value || "";
+        if (!name.trim()) { toast("Give the prize a name first.", true); break; }
+        if (w.custom.length >= 12) { toast("Up to 12 of your own contests.", true); break; }
+        w.custom.push({ kind: "hole", name: name.trim().slice(0, 40), hole: Number(el.dataset.hole), uid: wizUid() });
+        w.custom.sort((a, b) => (a.hole || 99) - (b.hole || 99));
+        closeSheet(); drawWiz(); break;
+      }
+      case "wz-del-own": w.custom.splice(Number(el.dataset.i), 1); drawWiz(); break;
       case "wz-add-guest": w.guests.push({ name: "", handicap: "", contact: "" }); drawWiz(); { const ins = document.querySelectorAll('[data-f="name"]'); if (ins.length) ins[ins.length - 1].focus(); } break;
       case "wz-del-guest": w.guests.splice(Number(el.dataset.i), 1); drawWiz(); break;
       case "wz-create": wizCreate(el.dataset.mode, el); break;
@@ -3286,7 +3489,9 @@
   async function finishGame(r) {
     const rows = S.stablefordBoard(r.holes, r.players).filter(x => x.sum.thru > 0);
     if (rows.length) {
-      const res = await client.from("game_results").upsert(rows.map(x => ({ event_id: r.id, player_id: x.player.id, points: x.sum.points, gross: x.sum.gross, position: x.pos, field: rows.length })), { onConflict: "event_id,player_id" });
+      // A team's result goes on each of its players' profiles.
+      const out = rows.flatMap(x => (x.player.members || [x.player]).map(m => ({ event_id: r.id, player_id: m.id, points: x.sum.points, gross: x.sum.gross, position: x.pos, field: rows.length })));
+      const res = await client.from("game_results").upsert(out, { onConflict: "event_id,player_id" });
       if (res.error) { toast(res.error.message, true); return; }
     }
     await setStatus(r, "final");
@@ -3741,17 +3946,23 @@
   // just like the names written on the stake. The committee checks the
   // stake at the end and confirms the winner.
 
-  const COMP_ICON = { ld: "🏌️", np: "📍", np2: "🎯" };
-  const compKind = c => c.id.startsWith("ld") ? "ld" : c.id.startsWith("np2") ? "np2" : "np";
+  const COMP_ICON = { ld: "🏌️", np: "📍", np2: "🎯", gc: "⭐" };
+  const compKind = c => c.id.startsWith("gc-") ? "gc" : c.id.startsWith("ld") ? "ld" : c.id.startsWith("np2") ? "np2" : "np";
   function contestsOn(r) {
-    if (r.contestsOff || !window.ROUND_COMPETITIONS) return [];
-    return window.ROUND_COMPETITIONS.map(c => ({ ...c, holeNo: window.competitionHole(r.event, c) })).filter(c => c.holeNo);
+    const std = r.contestsOff || !window.ROUND_COMPETITIONS ? []
+      : window.ROUND_COMPETITIONS.map(c => ({ ...c, holeNo: window.competitionHole(r.event, c) })).filter(c => c.holeNo);
+    // A private game's own named hole prizes: on the stake the same way,
+    // and whoever's in front at the end wins (no committee check).
+    const own = (r.gcontests || []).filter(c => c.kind === "hole").map(c => ({ id: "gc-" + c.id, label: c.name, holeNo: c.hole,
+      nine: c.hole <= 9 ? "front nine" : "back nine", winner: null, custom: true, stake: Number(c.stake) || 0 }));
+    return std.concat(own).sort((a, b) => a.holeNo - b.holeNo);
   }
   const contestsOnHole = (r, hole) => contestsOn(r).filter(c => c.holeNo === hole);
   function stakeOf(r, compId) {
-    return r.claims.filter(c => c.comp === compId).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const list = compId.startsWith("gc-") ? (r.gclaims || []).filter(c => c.contest_id === compId.slice(3)) : r.claims.filter(c => c.comp === compId);
+    return list.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   }
-  const playerName = (r, id) => { const p = r.players.find(x => x.id === id); return p ? p.name : "A player"; };
+  const playerName = (r, id) => { const p = r.players.find(x => x.id === id) || (r.people || []).find(x => x.id === id); return p ? p.name : "A player"; };
   const leaderOf = (r, compId) => { const st = stakeOf(r, compId); return st.length ? st[st.length - 1] : null; };
   const confirmedOf = (r, c) => r.prizes && r.prizes[c.winner] ? r.prizes[c.winner] : null;
 
@@ -3796,14 +4007,18 @@
         <div class="stake-claims">${players.filter(p => !lead || p.id !== lead.player_id).map(p =>
           `<button class="btn gold" data-action="stake-claim" data-comp="${c.id}" data-player="${p.id}">${esc(shortName(p.name))} is in front</button>`).join("")}</div>` : ""}
       <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">${fromHole && st.length ? "Nobody beat it" : "Done"}</button>
-      ${r.canManage && lead && !conf ? `<button class="btn block" style="margin-top:8px" data-action="confirm-contest" data-comp="${c.id}">Confirm ${esc(playerName(r, lead.player_id))} as winner</button>` : ""}
-      <p class="small muted" style="margin-top:10px">The real stake on the hole still counts — the committee checks it against this before announcing the winner.</p>`);
+      ${r.canManage && lead && !conf && !c.custom ? `<button class="btn block" style="margin-top:8px" data-action="confirm-contest" data-comp="${c.id}">Confirm ${esc(playerName(r, lead.player_id))} as winner</button>` : ""}
+      <p class="small muted" style="margin-top:10px">${c.custom ? "Whoever's in front when the last group's been through wins." : "The real stake on the hole still counts — the committee checks it against this before announcing the winner."}</p>`);
   }
 
   async function claimStake(r, compId, playerId) {
-    const { data, error } = await client.from("contest_claims").insert({ event_id: r.id, comp: compId, player_id: playerId, claimed_by: app.user.id }).select().single();
+    const own = compId.startsWith("gc-");
+    const { data, error } = own
+      ? await client.from("game_contest_claims").insert({ event_id: r.id, contest_id: compId.slice(3), player_id: playerId, claimed_by: app.user.id }).select().single()
+      : await client.from("contest_claims").insert({ event_id: r.id, comp: compId, player_id: playerId, claimed_by: app.user.id }).select().single();
     if (error) { toast(error.message, true); return; }
-    if (!r.claims.some(c => c.id === data.id)) r.claims.push(data);
+    const list = own ? r.gclaims : r.claims;
+    if (!list.some(c => c.id === data.id)) list.push(data);
     buzz(15);
     toast(`${playerName(r, playerId)} is on the stake`);
     stakeSheet(r, compId);
@@ -4094,17 +4309,22 @@
   function boardView(r) {
     const nr = notReady(r);
     if (nr) return nr;
-    const formats = (r.setup.formats || ["stableford"]).filter(f => FORMAT_LABELS[f]);
+    const formats = (r.setup.formats || ["stableford"]).filter(f => FORMAT_LABELS[f] && !(r.teamGame && f === "skins"));
     if (!formats.length) formats.push("stableford");
-    if (contestsOn(r).length) formats.push("contests");
+    if ((r.matches || []).length) formats.push("matchplay");
+    if (contestsOn(r).length || (r.gcontests || []).some(c => c.kind !== "hole")) formats.push("contests");
+    if (hasStakes(r)) formats.push("money");
     if (!r.board || !formats.includes(r.board)) r.board = formats[0] || "stableford";
+    const label = f => f === "contests" ? "Contests" : f === "money" ? "Settle up" : f === "matchplay" ? "Match play" : FORMAT_LABELS[f];
     const sub = formats.length > 1 ? `<div class="subtabs">${formats.map(f =>
-      `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${FORMAT_LABELS[f] || "Side contests"}</button>`).join("")}</div>` : "";
+      `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${label(f)}</button>`).join("")}</div>` : "";
     let body = "";
     if (!r.players.length) body = `<div class="card empty">Nobody's on this round yet.</div>`;
     else if (r.board === "medal") body = medalTable(r);
     else if (r.board === "skins") body = skinsTable(r);
-    else if (r.board === "contests") body = contestsBoard(r);
+    else if (r.board === "matchplay") body = matchTable(r);
+    else if (r.board === "contests") body = contestsBoard(r) + sideGamesCard(r);
+    else if (r.board === "money") body = settleView(r);
     else body = stablefordTable(r);
     return sub + body;
   }
@@ -4239,7 +4459,7 @@
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${x.sum.thru ? posCell(x.pos, x.tied) : ""}${move(x.player.id)}</td>
           <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
-          <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
+          <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
@@ -4265,7 +4485,7 @@
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${posCell(x.pos)}${move(x.player.id)}</td>
           <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
-          <td><strong>${esc(x.player.name)}</strong><div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
+          <td><strong>${esc(x.player.name)}</strong>${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num">${x.nr ? "NR" : x.sum.thru ? (gross ? x.sum.gross : x.sum.net) : "–"}</td>
           <td class="num"><span class="big ${parClass(x.score)}">${x.nr ? "NR" : x.sum.thru ? toPar(x.score) : "–"}</span></td>
@@ -4338,6 +4558,153 @@
       <div class="card sc-wrap"><table class="sc">${half(9, 18, "In")}</table></div>`);
   }
 
+  // ---------- better ball, match play, side games and the money ----------
+
+  const isBetterBall = r => !!(r.setup && (r.setup.formats || []).includes("betterball"));
+  const mainMode = r => (r.setup && (r.setup.formats || [])[0] === "medal") ? "medal" : "stableford";
+
+  function betterBallTable(r) {
+    const medal = mainMode(r) === "medal";
+    const pairs = (r.pairs || []).map(x => ({ number: x.number, players: bbPlayers(r, x.players) }));
+    const rows = S.betterBallBoard(r.holes, pairs, mainMode(r));
+    const mine = r.me ? new Set(r.me.pairs || []) : new Set();
+    const move = movement(r, "bb", rows, x => "p" + x.pair.number);
+    const score = x => medal ? (x.nr ? "NR" : x.started ? toPar(x.toPar) : "–") : x.points;
+    const top = rows.filter(x => x.started && x.pos === 1 && !x.nr);
+    const hero = top.length ? leaderCard(top.length > 1 ? "Joint leading pairs" : "Leading pair",
+      top.map(x => x.pair.players.map(p => esc(p.name)).join(" &amp; ")).join("<br>"), score(top[0]), medal ? "" : "pts",
+      top.length > 1 ? "" : (top[0].complete ? "Both finished" : `Thru ${top[0].thru}`)) : "";
+    const pct = S.allowanceFor("betterball", r.setup.allowances);
+    return `${liveLine(r)}${hero}
+      <div class="card board-card"><table class="board">
+      <thead><tr><th></th><th>Pair</th><th class="num">Thru</th><th class="num">${medal ? "To par" : "Pts"}</th></tr></thead>
+      <tbody>${rows.map(x => `
+        <tr data-pair="${x.pair.number}" class="${mine.has(x.pair.number) ? "me" : ""}">
+          <td class="pos">${x.started && !x.nr ? posCell(x.pos, x.tied) : ""}${move("p" + x.pair.number)}</td>
+          <td><strong>${x.pair.players.map(p => esc(p.name)).join(" & ")}</strong>
+            <div class="thru">Pair ${x.pair.number} · PH ${x.pair.players.map(p => p.ph == null ? "?" : p.ph).join(" & ")}${x.pair.players.length < 2 ? " · needs a partner" : ""}</div></td>
+          <td class="num thru">${x.complete ? "F" : x.thru ? "Thru " + x.thru : "–"}</td>
+          <td class="num"><span class="big ${medal ? parClass(x.toPar) : ""}">${score(x)}</span></td></tr>`).join("")}</tbody></table>
+      <p class="small muted" style="margin:10px 0 0">Better ball: the better ${medal ? "net score" : "Stableford score"} of the two counts on each hole, off ${pct}% of course handicap. Ties on finished cards go to countback.</p></div>`;
+  }
+
+  // Every match, worked out from the cards. Individual games: singles off
+  // the difference (100%), or pairs v pairs better ball (90%, off the
+  // lowest). Team games: team against team, off the team handicaps.
+  function matchesOf(r) {
+    const byId = new Map(r.players.map(p => [p.id, p]));
+    const al = r.setup.allowances;
+    return (r.matches || []).map(m => {
+      const four = m.side1.length > 1 || m.side2.length > 1;
+      const pct = r.teamGame ? 100 : S.allowanceFor(four ? "fourball_match" : "singles_match", al);
+      const side = ids => ids.map(id => byId.get(id)).filter(Boolean).map(p => r.teamGame ? p : { ...p, ph: pctOf(p.full, pct) });
+      const s1 = side(m.side1), s2 = side(m.side2);
+      if (!s1.length || !s2.length) return { m, s1, s2, res: null, pct };
+      return { m, s1, s2, res: S.teamMatch(r.holes, "fourball", s1, s2), pct, four };
+    });
+  }
+
+  function matchTable(r) {
+    const list = matchesOf(r);
+    const names = ps => ps.map(p => esc(p.name)).join(" &amp; ");
+    const mine = x => r.me && x.s1.concat(x.s2).some(p => p.id === r.me.id);
+    return `${liveLine(r)}<div class="card">
+      ${list.map(x => {
+        const res = x.res;
+        const lead = res && res.leader;
+        const shots = res && res.shots ? [res.shots.s1, res.shots.s2] : [[], []];
+        const side = (ps, n) => `<div class="mp-side ${lead === n ? "lead" : ""}"><b>${names(ps)}</b><span class="thru">${ps.map((p, i) => shots[n - 1][i] ? `${esc(shortName(p.name))} gets ${shots[n - 1][i]}` : "").filter(Boolean).join(" · ") || "Scratch"}</span></div>`;
+        return `<div class="mp-row ${mine(x) ? "me" : ""}">
+          <div class="mp-num">Match ${x.m.number}</div>
+          ${side(x.s1, 1)}
+          <div class="mp-status ${res && res.finished ? "done" : ""}">${res ? esc(res.status) : "–"}${res && !res.finished && res.played ? `<small>thru ${res.played}</small>` : ""}</div>
+          ${side(x.s2, 2)}
+        </div>`;
+      }).join("") || `<p class="muted small">No matches set.</p>`}
+      <p class="small muted" style="margin:10px 0 0">${r.teamGame ? "Team against team, off the difference in team handicaps."
+        : `Singles off the difference at ${S.allowanceFor("singles_match", r.setup.allowances)}% of course handicap; pairs matches better ball at ${S.allowanceFor("fourball_match", r.setup.allowances)}%, shots off the lowest.`} A hole counts once both sides have scored it.</p>
+    </div>`;
+  }
+
+  const SIDE_GAMES = {
+    twos: { label: "Most 2s", unit: v => `${v} two${v === 1 ? "" : "s"}` },
+    birdies: { label: "Most birdies", unit: v => `${v} birdie${v === 1 ? "" : "s"}` },
+    putts: { label: "Fewest putts", unit: v => `${v} putts` },
+    front9: { label: "Best front 9", unit: v => `${v} pts` },
+    back9: { label: "Best back 9", unit: v => `${v} pts` },
+  };
+  function sideGamesCard(r) {
+    const gs = (r.gcontests || []).filter(c => c.kind !== "hole");
+    if (!gs.length) return "";
+    return `<div class="card"><h2>Side games</h2>${gs.map(c => {
+      const g = S.sideGame(c.kind, r.holes, r.players, r.stats);
+      const def = SIDE_GAMES[c.kind];
+      const who = (g.settled ? g.winners : g.leaders).map(x => esc(x.player.name)).join(" &amp; ");
+      return `<div class="ct-board"><div class="row"><span class="ct-ico">⭐</span><div><b>${esc(c.name)}</b><div class="thru">${c.name === def.label ? "Whole round" : def.label}${Number(c.stake) ? ` · ${money(Number(c.stake) * 100)} each` : ""}</div></div><span class="spacer"></span>
+          ${g.settled && g.winners.length ? `<span class="badge final">Winner</span>` : ""}</div>
+        <div class="ct-names">${who ? `<b>${who}</b> · ${def.unit(g.best)}${g.settled ? "" : " so far"}` : `<span class="muted">${c.kind === "putts" ? "Nobody's put putts in on every hole yet" : "Nobody yet"}</span>`}</div>
+      </div>`; }).join("")}
+      ${gs.some(c => c.kind === "putts") ? `<p class="small muted" style="margin:6px 0 0">Fewest putts counts cards with putts on every hole. Put them in on the score keypad.</p>` : ""}</div>`;
+  }
+
+  const money = pence => "£" + (pence % 100 ? (pence / 100).toFixed(2) : String(pence / 100));
+  function hasStakes(r) {
+    const st = (r.setup && r.setup.stakes) || {};
+    return Object.values(st).some(v => Number(v) > 0) || (r.gcontests || []).some(c => Number(c.stake) > 0);
+  }
+
+  // The people behind a row: a team's players, or the player.
+  const peopleOf = (r, id) => { const p = r.players.find(x => x.id === id); return p && p.members ? p.members.map(m => m.id) : [id]; };
+  const shareAll = (r, ids) => ids.flatMap(id => { const ps = peopleOf(r, id); return ps.map(pid => ({ id: pid, share: 1 / ps.length })); });
+
+  function settleData(r) {
+    const st = r.setup.stakes || {};
+    const everyone = (r.people || r.players).map(p => p.id);
+    const done = r.setup.status === "final" || (r.players.length > 0 && r.players.every(p => S.summarise(r.holes, p.scores, p.ph).complete));
+    const pots = [];
+    if (Number(st.main) > 0) {
+      const medal = mainMode(r) === "medal";
+      const rows = medal ? S.medalBoard(r.holes, r.players, false).filter(x => x.pos === 1) : S.stablefordBoard(r.holes, r.players).filter(x => x.pos === 1 && x.sum.thru);
+      pots.push({ label: medal ? "Strokeplay" : "Stableford", stake: st.main, entrants: everyone, winners: shareAll(r, rows.map(x => x.player.id)) });
+    }
+    if (Number(st.skins) > 0 && !r.teamGame && (r.setup.formats || []).includes("skins")) {
+      const sk = S.skins(r.holes, r.players, r.setup.skins_mode || "net");
+      pots.push({ label: "Skins", stake: st.skins, entrants: everyone, winners: sk.board.filter(b => b.skins > 0).map(b => ({ id: b.player.id, share: b.skins })) });
+    }
+    if (Number(st.betterball) > 0 && isBetterBall(r)) {
+      const rows = S.betterBallBoard(r.holes, (r.pairs || []).map(x => ({ number: x.number, players: bbPlayers(r, x.players) })), mainMode(r)).filter(x => x.pos === 1 && x.started && !x.nr);
+      pots.push({ label: "Better ball", stake: st.betterball, entrants: everyone, winners: rows.flatMap(x => x.pair.players.map(p => ({ id: p.id, share: 1 / x.pair.players.length }))) });
+    }
+    contestsOn(r).forEach(c => {
+      const stake = c.custom ? c.stake : Number(st[c.id]) || 0;
+      const lead = leaderOf(r, c.id);
+      if (stake > 0) pots.push({ label: `${c.label} (hole ${c.holeNo})`, stake, entrants: everyone, winners: lead ? shareAll(r, [lead.player_id]) : [] });
+    });
+    (r.gcontests || []).filter(c => c.kind !== "hole" && Number(c.stake) > 0).forEach(c => {
+      const g = S.sideGame(c.kind, r.holes, r.players, r.stats);
+      pots.push({ label: c.name, stake: c.stake, entrants: everyone, winners: shareAll(r, (done ? g.winners : g.leaders).map(x => x.player.id)) });
+    });
+    const matches = Number(st.match) > 0 ? matchesOf(r).filter(x => x.res && x.res.leader).map(x => {
+      const w = x.res.leader === 1 ? x.s1 : x.s2, l = x.res.leader === 1 ? x.s2 : x.s1;
+      return { label: `Match ${x.m.number}`, stake: st.match, won: w.flatMap(p => peopleOf(r, p.id)), lost: l.flatMap(p => peopleOf(r, p.id)), finished: x.res.finished };
+    }).filter(m => m.finished || !done) : [];
+    return { done, ...S.settleUp(pots, matches), pots };
+  }
+
+  function settleView(r) {
+    const d = settleData(r);
+    const nm = id => esc(((r.people || r.players).find(p => p.id === id) || {}).name || "A player");
+    const rows = [...d.net.entries()].filter(([, v]) => v).sort((a, b) => b[1] - a[1]);
+    return `${d.done ? "" : `<div class="card status-msg">As it stands: this changes until the last card's in.</div>`}
+      <div class="card"><h2>${d.done ? "Who pays who" : "Who'd pay who"}</h2>
+        ${d.pays.length ? d.pays.map(p => `<div class="su-pay"><span>${nm(p.from)}</span><span class="su-arrow">→</span><span>${nm(p.to)}</span><b>${money(p.pence)}</b></div>`).join("")
+          : `<p class="muted small" style="margin:0">Nothing to settle yet.</p>`}
+      </div>
+      ${rows.length ? `<div class="card"><h2>Up and down</h2>${rows.map(([id, v]) => `<div class="su-net"><span>${nm(id)}</span><b class="${v > 0 ? "under-par" : "over-par"}">${v > 0 ? "+" : "−"}${money(Math.abs(v))}</b></div>`).join("")}</div>` : ""}
+      ${d.lines.length ? `<div class="card"><h2>The pots</h2>${d.lines.map(l => `<div class="su-net"><span>${esc(l.label)}<small>${l.winners.map(w => `${nm(w.id)} ${money(w.v)}`).join(" · ")}</small></span><b>${money(l.total)}</b></div>`).join("")}</div>` : ""}
+      <p class="small muted">Nothing is paid through the app. Each pot is the stake from every player; ties share it, skins are shared by skins won, and a match is the stake from each loser. A pot nobody's won yet isn't counted.</p>`;
+  }
+
   // ---------- setup (committee) ----------
 
   let setupCache = null; // courses + tees for the dropdown
@@ -4391,9 +4758,11 @@
     const fmts = new Set(s.formats || []);
 
     const editing = !!r.editHcp && app.committee;
-    const hcpRows = r.players.map(p => {
+    const teamOf = id => { const t = r.teamGame && r.players.find(x => (x.members || []).some(m => m.id === id)); return t ? t : null; };
+    const hcpRows = (r.people || r.players).map(p => {
       const h = r.hcps.get(p.id) || {};
-      const who = `<td>${esc(p.name)}${p.guest ? ' <span class="muted small">guest</span>' : ""}<div class="thru">${p.group ? "Group " + p.group : "No group"}${(p.pairs || []).length ? " · Pair " + p.pairs.join(" & ") : ""}</div></td>`;
+      const tm = teamOf(p.id);
+      const who = `<td>${esc(p.name)}${p.guest ? ' <span class="muted small">guest</span>' : ""}<div class="thru">${p.group ? "Group " + p.group : "No group"}${tm ? ` · Team ${tm.team} (plays off ${tm.ph == null ? "?" : tm.ph})` : ""}${(p.pairs || []).length ? " · Pair " + p.pairs.join(" & ") : ""}</div></td>`;
       if (!editing) {
         return `<tr>${who}
           <td>${p.index == null ? "?" : p.index}</td>
@@ -4408,7 +4777,7 @@
     }).join("");
 
 
-    const missingPh = r.players.filter(p => p.ph == null).length;
+    const missingPh = (r.people || r.players).filter(p => p.ph == null).length;
     const practice = !!(r.event.is_practice || r.event.is_private);
     const kind = r.event.is_private ? "game" : "practice round";
     const statusBtns = practice
@@ -4435,10 +4804,10 @@
       </div>`,
       checkin: () => checkinsSetupCard(r) || `<div class="card empty small">Check-in opens once the ${what} is set up.</div>`,
       cards: () => (r.setup && r.setup.status !== "setup" ? disputesCard(r) + cardsCard(r) : "") || `<div class="card empty small">Scorecards show here once scoring is open.</div>`,
-      tees: () => `${teeSheetCard(r)}<div class="card">
-        <h2>Pairs</h2>
+      tees: () => `${teeSheetCard(r)}${r.teamGame ? teamsCard(r) : `<div class="card">
+        <h2>${isBetterBall(r) ? "Better ball pairs" : "Pairs"}</h2>
         ${pairsSetupSummary(r)}
-      </div>${r.setup && r.tee ? `<div class="card"><h2>Print pack</h2><p class="small muted" style="margin-top:0">The start sheet, a paper card for every group with the shots marked, and a sheet for each stake. A backup if phones or signal fail.</p>
+      </div>`}${(r.matches || []).length ? matchesCard(r) : ""}${r.setup && r.tee ? `<div class="card"><h2>Print pack</h2><p class="small muted" style="margin-top:0">The start sheet, a paper card for every group with the shots marked, and a sheet for each stake. A backup if phones or signal fail.</p>
         <a class="btn ghost block" href="#/print/${r.id}">🖨️ Open the print pack</a></div>` : ""}`,
       contests: () => contestsSetupCard(r),
       players: () => `${r.event.is_private ? guestsCard(r) : ""}<div class="card">
@@ -4477,11 +4846,13 @@
         <label class="field">Allowance %
           <input type="number" name="allowance" min="0" max="100" step="1" value="${s.allowance}">
         </label>
-        <div class="field" style="margin-bottom:12px">Individual formats
+        ${r.teamGame ? `<p class="small" style="margin:0 0 6px"><b>${esc(TEAM_LABELS[s.team_format])}</b>${s.team_format === "scramble" ? `, teams of ${s.team_size}` : ", pairs"}. One card per team.</p>` : ""}
+        <div class="field" style="margin-bottom:12px">${r.teamGame ? "Team score" : "Individual formats"}
           <div class="checks" style="margin-top:6px">
-            ${Object.entries(FORMAT_LABELS).map(([k, l]) => `<label class="check-chip"><input type="checkbox" name="formats" value="${k}" ${fmts.has(k) ? "checked" : ""}> ${l}</label>`).join("")}
+            ${Object.entries(FORMAT_LABELS).filter(([k]) => !(r.teamGame && k === "skins")).map(([k, l]) => `<label class="check-chip"><input type="checkbox" name="formats" value="${k}" ${fmts.has(k) ? "checked" : ""}> ${l}</label>`).join("")}
           </div>
         </div>
+        ${r.event.is_private ? extrasFields(r, s) : ""}
         <label class="field">Minutes between tee groups
           <input type="number" name="tee_interval" min="0" max="30" step="1" inputmode="numeric" value="${s.tee_interval != null ? s.tee_interval : ""}" placeholder="e.g. 8 — leave blank if not known">
         </label>
@@ -4528,7 +4899,7 @@
   // Tee groups and their times, from the tee sheet.
   function teeSheetCard(r) {
     const groups = new Map();
-    r.players.forEach(p => { const g = p.group || 0; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p); });
+    (r.people || r.players).forEach(p => { const g = p.group || 0; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p); });
     const nums = [...groups.keys()].sort((a, b) => (a || 99) - (b || 99));
     return `<div class="card"><h2>Tee sheet</h2>${nums.length ? nums.map(g => `<div class="wz-group"><b>${g ? `Group ${g}${teeTimeFor(r, g) ? " · " + teeTimeFor(r, g) : ""}` : "No group yet"}</b><span>${groups.get(g).map(p => esc(p.name)).join(", ")}</span></div>`).join("")
       : `<p class="small muted">Nobody in the field yet.</p>`}</div>`;
@@ -4586,6 +4957,105 @@
       ${notes.length ? `<p class="small muted" style="margin:8px 0 0">${notes.join("<br>")}</p>` : ""}`;
   }
 
+  // ---------- teams, matches, allowances and stakes in Manage ----------
+
+  // What can be changed for a private game after it's made: the
+  // allowances behind the team and match handicaps, and the money.
+  function allowanceKeys(r, s) {
+    const f = s.formats || [];
+    const keys = [];
+    if (s.team_format === "scramble") keys.push("scramble" + (s.team_size || 2));
+    else if (s.team_format) keys.push(s.team_format);
+    else {
+      if (f.includes("betterball")) keys.push("betterball");
+      if (f.includes("matchplay")) keys.push((r.matches || []).some(m => m.side1.length > 1) ? "fourball_match" : "singles_match");
+    }
+    return keys;
+  }
+  const ALLOW_LABELS = { betterball: "Better ball", singles_match: "Singles match play", fourball_match: "Pairs match play", foursomes: "Alternate shot, of combined", greensomes: "Greensomes: lower, higher",
+    scramble2: "Scramble: lowest, next", scramble3: "Scramble: lowest to highest", scramble4: "Scramble: lowest to highest" };
+  function extrasFields(r, s) {
+    const keys = allowanceKeys(r, s);
+    const st = s.stakes || {};
+    const val = k => { const v = S.allowanceFor(k, s.allowances); return Array.isArray(v) ? v.join(", ") : v; };
+    const stake = (k, l) => `<label class="field">${l}<input type="number" min="0" max="100" step="0.5" inputmode="decimal" data-stake="${k}" value="${Number(st[k]) > 0 ? st[k] : ""}" placeholder="£ each, blank for none"></label>`;
+    return `<div data-extras>
+      ${keys.length ? `<p class="wz-label">Handicap allowances (%)</p>${keys.map(k => `<label class="field">${ALLOW_LABELS[k]}<input data-allow="${k}" value="${esc(String(val(k)))}" inputmode="decimal"></label>`).join("")}
+        <p class="small muted" style="margin-top:-4px">England Golf's recommendations unless you've changed them.</p>` : ""}
+      <p class="wz-label">Money</p>
+      ${stake("main", (s.formats || [])[0] === "medal" ? "Strokeplay pot" : "Stableford pot")}
+      ${!r.teamGame && (s.formats || []).includes("skins") ? stake("skins", "Skins pot") : ""}
+      ${(s.formats || []).includes("betterball") ? stake("betterball", "Better ball pot") : ""}
+      ${(s.formats || []).includes("matchplay") ? stake("match", "Each match, loser pays") : ""}
+      ${contestsOn(r).filter(c => !c.custom).map(c => stake(c.id, `${c.label}, hole ${c.holeNo}`)).join("")}
+    </div>`;
+  }
+  function readExtras(form, s) {
+    const allowances = { ...(s.allowances || {}) };
+    form.querySelectorAll("[data-allow]").forEach(i => {
+      const k = i.dataset.allow, parts = String(i.value).split(/[,\s/]+/).filter(Boolean).map(Number);
+      if (!parts.length || parts.some(x => !(x >= 0 && x <= 100))) return;
+      const def = S.ALLOWANCES[k];
+      const v = Array.isArray(def) ? parts.slice(0, def.length) : parts[0];
+      if (JSON.stringify(v) === JSON.stringify(def)) delete allowances[k]; else allowances[k] = v;
+    });
+    const stakes = { ...(s.stakes || {}) };
+    form.querySelectorAll("[data-stake]").forEach(i => { const v = Number(i.value); if (i.value !== "" && v > 0 && v <= 100) stakes[i.dataset.stake] = Math.round(v * 100) / 100; else delete stakes[i.dataset.stake]; });
+    return { allowances, stakes };
+  }
+
+  function teamsCard(r) {
+    const s = r.setup;
+    const scored = r.players.some(p => Object.keys(p.scores || {}).length);
+    const n = r.players.length;
+    return `<div class="card"><h2>Teams</h2>
+      <p class="small muted" style="margin-top:0">${esc(TEAM_LABELS[s.team_format])}: one card per team, kept by whoever's first in it. Team handicaps from ${allowanceKeys(r, s).map(k => { const v = S.allowanceFor(k, s.allowances); return Array.isArray(v) ? v.join("/") + "%" : v + "%"; }).join(", ")} of course handicaps.</p>
+      ${r.players.map(t => `<div class="wz-group"><b>Team ${t.team} · plays off ${t.ph == null ? "?" : t.ph}</b><span>${t.members.map(m => esc(m.name)).join(", ")}</span></div>`).join("")}
+      ${scored ? `<p class="small muted" style="margin:8px 0 0">Teams are fixed once scores are in.</p>` : `
+        <form id="teams-form" style="margin-top:10px">${(r.people || []).map(p => { const t = r.players.find(x => x.members.some(m => m.id === p.id)); return `<label class="field row" style="gap:8px;align-items:center;margin-bottom:6px"><span style="flex:1">${esc(p.name)}</span>
+          <select data-team-of="${p.id}" style="width:auto">${Array.from({ length: Math.max(n, Math.ceil((r.people || []).length / 2)) }, (_, i) => `<option value="${i + 1}" ${t && t.team === i + 1 ? "selected" : ""}>Team ${i + 1}</option>`).join("")}</select></label>`; }).join("")}
+          <button class="btn ghost block" type="button" data-action="save-teams">Save teams</button></form>`}
+    </div>`;
+  }
+  async function saveTeams(r) {
+    const picks = [...document.querySelectorAll("[data-team-of]")].map(x => ({ id: x.dataset.teamOf, team: Number(x.value) }));
+    const counts = new Map(); picks.forEach(p => counts.set(p.team, (counts.get(p.team) || 0) + 1));
+    if ([...counts.values()].some(c => c > (r.setup.team_format === "scramble" ? 4 : 2))) { toast(r.setup.team_format === "scramble" ? "A scramble team is 4 at most." : "Alternate shot and greensomes are pairs.", true); return; }
+    if (r.setup.team_format !== "scramble" && [...counts.values()].some(c => c !== 2)) { toast("Every team needs exactly two players.", true); return; }
+    const pos = new Map();
+    const rows = picks.sort((a, b) => a.team - b.team).map(p => { const i = pos.get(p.team) || 0; pos.set(p.team, i + 1); return { event_id: r.id, player_id: p.id, team_number: p.team, position: i }; });
+    // renumber so teams run 1, 2, 3 with no gaps
+    const order = [...new Set(rows.map(x => x.team_number))];
+    rows.forEach(x => { x.team_number = order.indexOf(x.team_number) + 1; });
+    const del = await client.from("game_teams").delete().eq("event_id", r.id);
+    if (del.error) { toast(del.error.message, true); return; }
+    const ins = await client.from("game_teams").insert(rows);
+    if (ins.error) { toast(ins.error.message, true); return; }
+    toast((r.matches || []).length ? "Teams saved · check the matches below" : "Teams saved");
+    reloadRound();
+  }
+
+  function matchesCard(r) {
+    const opts = sel => r.players.map(p => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    return `<div class="card"><h2>Matches</h2>
+      <p class="small muted" style="margin-top:0">${r.teamGame ? "Team against team." : (r.matches || []).some(m => m.side1.length > 1) ? "Pair against pair, better ball." : "Player against player."} Change who plays who here.</p>
+      <form id="matches-form">${r.matches.map(m => `<div class="mp-edit"><b>Match ${m.number}</b>
+        <div class="mp-edit-sides">${[m.side1, m.side2].map((sd, k) => `<div>${sd.map((id, i) => `<select data-match="${m.id}" data-side="${k + 1}" data-i="${i}">${opts(id)}</select>`).join("")}</div>`).join(`<span class="muted small">v</span>`)}</div></div>`).join("")}
+      <button class="btn ghost block" type="button" data-action="save-matches">Save matches</button></form>
+    </div>`;
+  }
+  async function saveMatches(r) {
+    for (const m of r.matches) {
+      const pick = k => [...document.querySelectorAll(`[data-match="${m.id}"][data-side="${k}"]`)].map(x => x.value);
+      const side1 = pick(1), side2 = pick(2);
+      if (new Set(side1.concat(side2)).size !== side1.length + side2.length) { toast(`Match ${m.number} has someone on both sides.`, true); return; }
+      const { error } = await client.from("game_matches").update({ side1, side2 }).eq("id", m.id);
+      if (error) { toast(error.message, true); return; }
+    }
+    toast("Matches saved");
+    reloadRound();
+  }
+
   // Saves the setup form. Returns true when it saved.
   async function saveSetup(r, form) {
       const f = new FormData(form);
@@ -4595,12 +5065,13 @@
         tee_id: f.get("tee_id") || null,
         handicap_method: f.get("handicap_method"),
         allowance: f.get("allowance") === "" ? DEFAULT_ALLOWANCE : Number(f.get("allowance")),
-        formats: f.getAll("formats"),
+        formats: f.getAll("formats").concat(((r.setup && r.setup.formats) || []).filter(x => ["betterball", "matchplay"].includes(x))),
         skins_mode: f.get("skins_mode"),
         updated_at: new Date().toISOString(),
       };
+      if (r.event.is_private && form.querySelector("[data-extras]")) Object.assign(row, readExtras(form, r.setup || {}));
       if (f.has("tee_interval") && !r.noTeeInterval) row.tee_interval = f.get("tee_interval") === "" ? null : Math.max(0, Math.min(30, Number(f.get("tee_interval"))));
-      if (!row.formats.length) row.formats = ["stableford"];
+      if (!row.formats.some(x => x === "stableford" || x === "medal")) row.formats.unshift("stableford");
       if (!r.setup) row.status = "setup";
       if (!row.tee_id) { st.hidden = false; st.className = "status-msg err"; st.textContent = "Choose a course and tee first."; return false; }
       const tee = setupCache.tees.find(t => t.id === row.tee_id);
@@ -5422,6 +5893,7 @@
         break;
       case "tab": r.tab = el.dataset.tab; savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
       case "board": r.board = el.dataset.board; savePrefs(); renderRoundBody(); break;
+      case "board-go": r.tab = "board"; r.board = el.dataset.board; savePrefs(); renderRoundBody(); break;
       case "gross": r.gross = el.dataset.gross === "1"; renderRoundBody(); break;
       case "group": r.groupKey = el.dataset.key; savePrefs(); renderRoundBody(); break;
       case "custom-group": customGroupSheet(r); break;
@@ -5487,10 +5959,14 @@
       case "remove-admin": if (confirm("Remove this round admin?")) removeAdmin(r, el.dataset.profile); break;
       case "stake": stakeSheet(r, el.dataset.comp); break;
       case "stake-claim": claimStake(r, el.dataset.comp, el.dataset.player); break;
+      case "save-teams": saveTeams(r); break;
+      case "save-matches": saveMatches(r); break;
       case "unstake": {
-        const { error } = await client.from("contest_claims").delete().eq("id", el.dataset.id);
+        const own = String(el.dataset.comp).startsWith("gc-");
+        const { error } = await client.from(own ? "game_contest_claims" : "contest_claims").delete().eq("id", el.dataset.id);
         if (error) { toast(error.message, true); break; }
-        r.claims = r.claims.filter(c => c.id !== el.dataset.id);
+        if (own) r.gclaims = r.gclaims.filter(c => c.id !== el.dataset.id);
+        else r.claims = r.claims.filter(c => c.id !== el.dataset.id);
         stakeSheet(r, el.dataset.comp); renderRoundBody();
         break;
       }
@@ -5585,8 +6061,8 @@
     }
   });
 
-  document.addEventListener("input", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn === "name" || e.target.dataset.wzGuest != null || e.target.dataset.wzFind != null)) wizInput(e.target); });
-  document.addEventListener("change", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn || e.target.dataset.wzCheck || e.target.dataset.wzMember)) wizInput(e.target); });
+  document.addEventListener("input", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn === "name" || e.target.dataset.wzGuest != null || e.target.dataset.wzFind != null || e.target.dataset.wzAllow || e.target.dataset.wzStake)) wizInput(e.target); });
+  document.addEventListener("change", e => { if (e.target && e.target.dataset && (e.target.dataset.wzIn || e.target.dataset.wzCheck || e.target.dataset.wzMember || e.target.dataset.wzSide)) wizInput(e.target); });
 
   document.addEventListener("submit", e => {
     const f = e.target.closest && e.target.closest(".pv-note-form");

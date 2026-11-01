@@ -157,6 +157,7 @@ it again.
 38. `sql/private-game-setup.sql` — the step-by-step private game setup: up to 16 players in tee groups, format, handicaps, stake holes, draft or tee off now
 39. `sql/course-details.sql` — course website, phone, logo and photos, and filling a new course in from OpenStreetMap
 40. `sql/course-data-2026-11.sql` — scorecards and hole maps for the October 2026 courses (already applied)
+41. `sql/game-formats.sql` — private games: scramble, alternate shot, greensomes, better ball, match play, own contests and money (pots and settle-up)
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

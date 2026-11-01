@@ -391,7 +391,172 @@
     return errors;
   }
 
+  // ---------- team formats and match play ----------
+  // England Golf's recommended allowances (WHS Appendix C). The
+  // organiser can change any of them for their game.
+  const ALLOWANCES = {
+    betterball: 85,        // four-ball better ball, Stableford or stroke play
+    singles_match: 100,    // singles match play, off the difference
+    fourball_match: 90,    // four-ball match play, off the lowest
+    foursomes: 50,         // of the pair's combined handicap
+    greensomes: [60, 40],  // lower handicap, higher handicap
+    scramble2: [35, 15],
+    scramble3: [30, 20, 10],
+    scramble4: [25, 20, 15, 10],
+  };
+  function allowanceFor(key, overrides) {
+    const o = overrides && overrides[key];
+    return o != null ? o : ALLOWANCES[key];
+  }
+
+  // One handicap for a team playing one ball, from each player's full
+  // course handicap (unrounded). Rounded once, at the end.
+  //   scramble:   lowest handicap x the first %, next x the second, ...
+  //   foursomes:  % of the combined handicaps
+  //   greensomes: lower x 60% + higher x 40%
+  function teamHandicap(format, full, overrides) {
+    const hs = full.filter(x => x != null).map(Number).sort((a, b) => a - b);
+    if (!hs.length) return null;
+    if (format === "foursomes") return round(hs.reduce((t, x) => t + x, 0) * allowanceFor("foursomes", overrides) / 100);
+    const pcts = format === "greensomes" ? allowanceFor("greensomes", overrides)
+      : allowanceFor("scramble" + Math.min(4, Math.max(2, hs.length)), overrides);
+    return round(hs.reduce((t, x, i) => t + x * (Number(pcts[i] != null ? pcts[i] : 0)) / 100, 0));
+  }
+
+  // Better ball: each hole, the better of the pair's two scores counts.
+  // Stableford: the most points. Medal: the lowest net; the hole is lost
+  // (NR) only if both pick up. players carry the better-ball handicap.
+  // A hole counts once both partners have scored it.
+  function betterBallBoard(holes, pairs, mode) {
+    const medal = mode === "medal";
+    const rows = pairs.map(pair => {
+      const sums = pair.players.map(p => summarise(holes, p.scores, p.ph));
+      let points = 0, net = 0, parPlayed = 0, thru = 0, nr = false;
+      const perHole = {};
+      for (const h of holes) {
+        const xs = sums.map(s => s.holes[h.hole]);
+        if (!xs.length || xs.some(x => !x.played)) continue;
+        thru++; parPlayed += h.par;
+        const pts = Math.max(...xs.map(x => x.points));
+        const nets = xs.filter(x => !x.picked_up).map(x => x.net);
+        points += pts;
+        if (nets.length) net += Math.min(...nets); else nr = true;
+        perHole[h.hole] = { points: pts, net: nets.length ? Math.min(...nets) : null };
+      }
+      const complete = pair.players.length === 2 && thru === holes.length;
+      // countback on the better-ball points over the last 9, 6, 3, 1
+      const cb = [9, 6, 3, 1].map(n => holes.slice(-n).reduce((t, h) => t + (perHole[h.hole] ? (medal ? (perHole[h.hole].net ?? 99) : perHole[h.hole].points) : 0), 0));
+      return { pair, sums, points, net: nr ? null : net, toPar: nr ? null : net - parPlayed, thru, complete, cb, perHole, nr, started: thru > 0 };
+    });
+    rows.sort((a, b) => {
+      if (medal) {
+        const av = a.started && !a.nr, bv = b.started && !b.nr;
+        if (av !== bv) return av ? -1 : 1;
+        if (av && a.toPar !== b.toPar) return a.toPar - b.toPar;
+        if (a.complete && b.complete) { const c = compareArrays(a.cb, b.cb, false); if (c) return c; }
+      } else {
+        if (b.points !== a.points) return b.points - a.points;
+        if (a.complete && b.complete) { const c = compareArrays(a.cb, b.cb, true); if (c) return c; }
+      }
+      return (b.thru - a.thru) || (a.pair.number - b.pair.number);
+    });
+    return addPositions(rows, (x, y) => medal
+      ? x.started && !x.nr && y.started && !y.nr && x.toPar === y.toPar && !(x.complete && y.complete && compareArrays(x.cb, y.cb, false) !== 0)
+      : x.points === y.points && !(x.complete && y.complete && compareArrays(x.cb, y.cb, true) !== 0));
+  }
+
+  // ---------- side games over the whole round ----------
+  //   twos:    holes in 2 strokes (gross)
+  //   birdies: gross birdie or better (an eagle counts once)
+  //   putts:   fewest putts; only players with putts on every hole played
+  //   front9 / back9: Stableford points on that nine
+  // stats: Map of "playerId:hole" -> { putts }. Returns every player's
+  // value, the leaders (ties share), and whether it's settled (every
+  // card finished).
+  function sideGame(kind, holes, players, stats) {
+    const nine = kind === "front9" ? holes.slice(0, 9) : kind === "back9" ? holes.slice(9, 18) : holes;
+    const rows = players.map(p => {
+      const sum = summarise(holes, p.scores, p.ph);
+      let value = 0, counted = 0, ok = true;
+      for (const h of nine) {
+        const x = sum.holes[h.hole];
+        if (!x || !x.played) continue;
+        counted++;
+        if (kind === "twos") value += !x.picked_up && x.strokes === 2 ? 1 : 0;
+        else if (kind === "birdies") value += !x.picked_up && x.strokes < h.par ? 1 : 0;
+        else if (kind === "putts") { const st = stats && stats.get(p.id + ":" + h.hole); if (!st || st.putts == null) ok = false; else value += Number(st.putts); }
+        else value += x.points;
+      }
+      const done = kind === "front9" || kind === "back9" ? nine.every(h => sum.holes[h.hole] && sum.holes[h.hole].played) : sum.complete;
+      return { player: p, value, counted, eligible: kind === "putts" ? ok && counted > 0 : true, done };
+    });
+    const low = kind === "putts";
+    const live = rows.filter(x => x.eligible && x.counted > 0);
+    live.sort((a, b) => (low ? a.value - b.value : b.value - a.value) || a.player.name.localeCompare(b.player.name));
+    const rest = rows.filter(x => !(x.eligible && x.counted > 0));
+    // Counts of 2s and birdies need at least one to win anything.
+    const best = live.length && (low || live[0].value > 0) ? live[0].value : null;
+    const leaders = best == null ? [] : live.filter(x => x.value === best);
+    const settled = rows.length > 0 && rows.every(x => x.done);
+    // fewest putts: a card without every putt can't win once it's in
+    const winners = settled ? leaders.filter(x => kind !== "putts" || x.done) : [];
+    return { rows: live.concat(rest), leaders, winners, settled, best };
+  }
+
+  // ---------- settling up ----------
+  // pots: [{ label, stake, entrants: [id], winners: [{ id, share }] }]
+  //   each entrant puts in the stake; the pot is shared by the winners
+  //   (share is a weight: 1 each for a tie, skins won for skins). A pot
+  //   with no winners is left out: nobody pays.
+  // matches: [{ label, stake, won: [id], lost: [id] }]: each losing
+  //   player pays the stake, shared between the winners. A half is nothing.
+  // Returns each person's net (+ up, - down) and the fewest payments
+  // that settle it, biggest first. Amounts are in pence to avoid rounding.
+  function settleUp(pots, matches) {
+    const net = new Map();
+    const add = (id, p) => net.set(id, (net.get(id) || 0) + p);
+    const lines = [];
+    (pots || []).forEach(pot => {
+      const stake = Math.round(Number(pot.stake || 0) * 100);
+      const ws = (pot.winners || []).filter(w => w.share > 0);
+      if (!stake || !ws.length || !pot.entrants.length) return;
+      const total = stake * pot.entrants.length;
+      const weight = ws.reduce((t, w) => t + w.share, 0);
+      pot.entrants.forEach(id => add(id, -stake));
+      // share the pot in whole pence; any odd pence go to the first winners
+      let given = 0;
+      const shares = ws.map(w => { const v = Math.floor(total * w.share / weight); given += v; return { id: w.id, v }; });
+      for (let i = 0; given < total; i = (i + 1) % shares.length) { shares[i].v++; given++; }
+      shares.forEach(s => add(s.id, s.v));
+      lines.push({ label: pot.label, total, winners: shares });
+    });
+    (matches || []).forEach(m => {
+      const stake = Math.round(Number(m.stake || 0) * 100);
+      if (!stake || !m.won || !m.won.length || !m.lost.length) return;
+      const total = stake * m.lost.length;
+      m.lost.forEach(id => add(id, -stake));
+      let given = 0;
+      const shares = m.won.map(id => { const v = Math.floor(total / m.won.length); given += v; return { id, v }; });
+      for (let i = 0; given < total; i = (i + 1) % shares.length) { shares[i].v++; given++; }
+      shares.forEach(s => add(s.id, s.v));
+      lines.push({ label: m.label, total, winners: shares });
+    });
+    const owe = [...net.entries()].filter(([, v]) => v < 0).map(([id, v]) => ({ id, v: -v })).sort((a, b) => b.v - a.v);
+    const get = [...net.entries()].filter(([, v]) => v > 0).map(([id, v]) => ({ id, v })).sort((a, b) => b.v - a.v);
+    const pays = [];
+    let i = 0, j = 0;
+    while (i < owe.length && j < get.length) {
+      const x = Math.min(owe[i].v, get[j].v);
+      pays.push({ from: owe[i].id, to: get[j].id, pence: x });
+      owe[i].v -= x; get[j].v -= x;
+      if (!owe[i].v) i++;
+      if (!get[j].v) j++;
+    }
+    return { net, pays, lines };
+  }
+
   const api = {
+    ALLOWANCES, allowanceFor, teamHandicap, betterBallBoard, sideGame, settleUp,
     courseHandicap, courseHandicapRaw, playingHandicap, shotsOnHole, stablefordPoints, summarise,
     stablefordBoard, medalBoard, skins, pairsBoard, matchPlay, teamMatch, sideHandicaps, adjustedGross, differential, whsIndex, pointsGross, societyIndex, HC_STEP, validateCourseHoles,
   };
