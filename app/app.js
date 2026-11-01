@@ -4748,10 +4748,13 @@
     $("#new-course").addEventListener("submit", async e => {
       e.preventDefault();
       const f = new FormData(e.target);
-      const { error } = await client.from("courses").insert({ name: f.get("name").trim(), address: f.get("address").trim() || null });
-      if (error) { toast(error.message, true); return; }
-      toast("Course added");
-      renderCourses();
+      const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Adding…";
+      const { data: added, error } = await client.from("courses").insert({ name: f.get("name").trim(), address: f.get("address").trim() || null }).select().single();
+      if (error) { toast(error.message, true); btn.disabled = false; btn.textContent = "Add course"; return; }
+      btn.textContent = "Looking it up on the map…";
+      const got = await autoFillCourse(added);
+      toast(got ? `Course added · ${got}` : "Course added · add its scorecard next");
+      location.hash = "#/courses/" + added.id;
     });
   }
 
@@ -4839,6 +4842,85 @@
   const ICO_FLAG = icon('<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>');
   const ICO_PIN = icon('<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>');
 
+  // Fill a course in from OpenStreetMap: location, website, phone, the
+  // holes and (where tagged) par and stroke index. Only fills gaps.
+  async function autoFillCourse(course) {
+    if (!window.HoleMaps || !window.HoleMaps.lookupCourse) return "";
+    try {
+      const found = await window.HoleMaps.lookupCourse(course.name, course.address);
+      if (!found) return "";
+      const { data, error } = await client.rpc("auto_fill_course", { p_course: course.id, p: found });
+      if (error) return "";
+      const bits = [];
+      if (data && data.mapped) bits.push(`${data.mapped} holes mapped`);
+      if (data && data.card) bits.push("par and stroke index filled in");
+      if (found.website || found.phone) bits.push("contact details found");
+      return bits.join(" · ");
+    } catch (e) { return ""; }
+  }
+
+  // The course from above: a few satellite tiles around it.
+  function satHero(lat, lng) {
+    if (lat == null || !window.HoleMaps || !window.HoleMaps.tileXY) return "";
+    const z = 16, { x, y } = window.HoleMaps.tileXY(lat, lng, z);
+    let html = "";
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+      html += `<img alt="" loading="lazy" src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y + dy}/${x + dx}">`;
+    return `<div class="ci-sat" aria-hidden="true">${html}</div>`;
+  }
+  const webLink = u => !u ? null : /^https?:\/\//i.test(u) ? u : "https://" + u;
+  const prettyWeb = u => String(u || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+
+  function courseDetailsSheet() {
+    const c = coursePack.data && coursePack.data.course; if (!c) return;
+    openSheet(`<h2>Course details</h2>
+      <form id="cd-form">
+        <label class="field">Website<input name="website" value="${esc(c.website || "")}" placeholder="e.g. www.clubname.co.uk" inputmode="url"></label>
+        <label class="field">Phone<input name="phone" value="${esc(c.phone || "")}" placeholder="e.g. 01483 123456" inputmode="tel"></label>
+        <button class="btn block" type="submit">Save</button>
+      </form>
+      ${app.committee ? `<h3 style="margin-top:16px">Logo and photos</h3>
+        <p class="small muted" style="margin-top:0">Only pictures the club is happy for us to use, or the society's own. Until there's a photo, the page shows the course from above.</p>
+        <div class="cd-pics">${c.logo_url ? `<figure><img src="${esc(c.logo_url)}" alt="Club logo"><button type="button" class="mv-link" data-action="cd-del-logo">Remove</button></figure>` : ""}
+          ${(c.photos || []).map((u, i) => `<figure><img src="${esc(u)}" alt=""><button type="button" class="mv-link" data-action="cd-del-photo" data-i="${i}">Remove</button></figure>`).join("")}</div>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <label class="btn ghost" style="flex:1">${c.logo_url ? "Change" : "Add"} logo<input type="file" id="cd-logo" accept="image/*" hidden></label>
+          <label class="btn ghost" style="flex:1">Add photos<input type="file" id="cd-photos" accept="image/*" multiple hidden></label>
+        </div>` : ""}
+      <button type="button" class="btn ghost block" style="margin-top:12px" data-action="cd-lookup">Look it up on the map again</button>
+      <p class="small muted">Fills in anything missing from OpenStreetMap. It never overwrites what's here.</p>
+      <button class="btn ghost block" style="margin-top:6px" data-action="close-sheet">Done</button>`);
+    $("#cd-form").addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const { error } = await client.from("courses").update({ website: f.get("website").trim() || null, phone: f.get("phone").trim() || null }).eq("id", c.id);
+      if (error) { toast(error.message, true); return; }
+      toast("Saved"); closeSheet(); renderCourseInfo(c.id);
+    });
+    const up = async (files, kind) => {
+      const urls = [];
+      for (const file of files) {
+        const path = `${c.id}/${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${(file.name.split(".").pop() || "jpg").toLowerCase()}`;
+        const { error } = await client.storage.from("course-images").upload(path, file, { upsert: false, contentType: file.type || "image/jpeg" });
+        if (error) { toast(error.message, true); continue; }
+        urls.push(client.storage.from("course-images").getPublicUrl(path).data.publicUrl);
+      }
+      return urls;
+    };
+    const logo = $("#cd-logo"), photos = $("#cd-photos");
+    if (logo) logo.addEventListener("change", async () => {
+      if (!logo.files[0]) return; toast("Uploading…");
+      const [u] = await up([logo.files[0]], "logo"); if (!u) return;
+      await client.from("courses").update({ logo_url: u }).eq("id", c.id); c.logo_url = u; toast("Logo added"); courseDetailsSheet(); renderCourseInfo(c.id);
+    });
+    if (photos) photos.addEventListener("change", async () => {
+      if (!photos.files.length) return; toast("Uploading…");
+      const urls = await up([...photos.files].slice(0, 8), "photo"); if (!urls.length) return;
+      c.photos = [...(c.photos || []), ...urls];
+      await client.from("courses").update({ photos: c.photos }).eq("id", c.id); toast(`${urls.length} photo${urls.length > 1 ? "s" : ""} added`); courseDetailsSheet(); renderCourseInfo(c.id);
+    });
+  }
+
   async function renderCourseInfo(courseId) {
     if (!app.approved) { view.innerHTML = `<div class="card empty">Members only.</div>`; return; }
     view.innerHTML = `<div class="loading">Loading the course…</div>`;
@@ -4853,15 +4935,25 @@
     const row = (href, ico, label, right, action) => `<${href ? `a href="${href}"` : `button type="button" data-action="${action}"`} class="ci-row"><span class="ci-ico">${ico}</span><span class="ci-label">${label}</span><span class="ci-right">${right || ""}</span><span class="ci-chev">›</span></${href ? "a" : "button"}>`;
     view.innerHTML = `
       <a class="back-link" href="#/courses">‹ Courses</a>
-      <div class="ci-hero">
+      <div class="ci-hero${d.course.photos && d.course.photos.length ? " has-photo" : ""}">
+        ${d.course.photos && d.course.photos.length ? `<img class="ci-photo" src="${esc(d.course.photos[0])}" alt="">` : satHero(d.course.lat, d.course.lng)}
+        <div class="ci-hero-in">
+        ${d.course.logo_url ? `<img class="ci-logo" src="${esc(d.course.logo_url)}" alt="${esc(d.course.name)} logo">` : ""}
         <h1>${esc(d.course.name)}</h1>
         ${d.course.address ? `<a class="ci-addr" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(d.course.name + ", " + d.course.address)}" target="_blank" rel="noopener">${ICO_PIN}<span>${esc(d.course.address)}</span></a>` : ""}
         ${tee ? `<p class="ci-line">${holes.length} holes · Par ${par}${yds ? ` · ${yds.toLocaleString("en-GB")} yards` : ""} <span class="ci-tee"><i style="background:${esc(tee.colour || "#e3c33b")}"></i>${esc(tee.name)} tees</span></p>` : `<p class="ci-line">No scorecard yet</p>`}
+        </div>
       </div>
+      <div class="ci-contact">
+        ${d.course.website ? `<a class="btn ghost" href="${esc(webLink(d.course.website))}" target="_blank" rel="noopener">${icon('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>')}<span>${esc(prettyWeb(d.course.website))}</span></a>` : ""}
+        ${d.course.phone ? `<a class="btn ghost" href="tel:${esc(d.course.phone.replace(/[^0-9+]/g, ""))}">${icon('<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>')}<span>${esc(d.course.phone)}</span></a>` : ""}
+        <button type="button" class="btn ghost" data-action="cd-edit">${icon('<path d="M4 20h4L19 9l-4-4L4 16z"/>')}<span>${d.course.website || d.course.phone ? "Edit" : "Add website &amp; phone"}</span></button>
+      </div>
+      ${d.course.photos && d.course.photos.length > 1 ? `<div class="ci-photos">${d.course.photos.slice(1).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`).join("")}</div>` : ""}
       <div class="card ci-stats">
         <div><b>${hardest || "–"}</b><span>Hardest hole${d.ranked.length ? "" : hardest ? " (SI 1)" : ""}</span></div>
         <div><b>${d.rounds || 0}</b><span>Society rounds here</span></div>
-        <div><b>${mapped}/18</b><span>Holes mapped</span></div>
+        <div><b>${mapped}/${holes.length || 18}</b><span>Holes mapped</span></div>
       </div>
       <div class="card ci-list">
         ${tee ? row(`#/preview/${courseId}/1`, ICO_EYE, "Course Preview", "Club plan, hole by hole") : ""}
@@ -5234,6 +5326,10 @@
       case "manage-go": if (!r) break; r.tab = "setup"; r.manage = el.dataset.panel === "menu" ? "" : el.dataset.panel || null; savePrefs(); renderRoundBody(); window.scrollTo(0, 0); break;
       case "ci-scorecard": courseCardSheet(); break;
       case "ci-notes": notesSheet(); break;
+      case "cd-edit": courseDetailsSheet(); break;
+      case "cd-del-logo": { const c = coursePack.data.course; await client.from("courses").update({ logo_url: null }).eq("id", c.id); c.logo_url = null; courseDetailsSheet(); renderCourseInfo(c.id); break; }
+      case "cd-del-photo": { const c = coursePack.data.course; c.photos = (c.photos || []).filter((_, i) => i !== Number(el.dataset.i)); await client.from("courses").update({ photos: c.photos }).eq("id", c.id); courseDetailsSheet(); renderCourseInfo(c.id); break; }
+      case "cd-lookup": { const c = coursePack.data.course; el.disabled = true; el.textContent = "Looking it up…"; const got = await autoFillCourse(c); toast(got || "Nothing new found on the map"); closeSheet(); renderCourseInfo(c.id); break; }
       case "stat-trend": statTrend(el.dataset.key); break;
       case "note-del": e.preventDefault(); deleteNote(el.dataset.id); break;
       case "main-tab": if (location.hash === el.dataset.href || (el.dataset.href === "#/" && !location.hash)) route(); else location.hash = el.dataset.href; break;

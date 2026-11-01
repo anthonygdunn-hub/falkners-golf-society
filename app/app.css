@@ -1163,3 +1163,23 @@ body.has-wzfoot { padding-bottom: calc(96px + var(--safe-bottom)); }
 .mg-status { border-left: 4px solid var(--gold) !important; }
 .mg-delete .ci-label { color: #b42318; } .mg-delete .ci-ico svg { stroke: #b42318; }
 button.back-link { font-family: inherit; cursor: pointer; }
+
+/* course hero: photo or satellite, logo, contact */
+.ci-hero { position: relative; overflow: hidden; }
+.ci-hero-in { position: relative; z-index: 1; }
+.ci-sat { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); opacity: .5; }
+.ci-sat img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ci-sat::after, .ci-hero.has-photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(15,34,64,.35), rgba(15,34,64,.92)); }
+.ci-hero.has-photo::after { z-index: 0; }
+.ci-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ci-logo { width: 64px; height: 64px; object-fit: contain; background: #fff; border-radius: 12px; padding: 6px; margin-bottom: 10px; border: 2px solid var(--gold); }
+.ci-contact { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 12px; }
+.ci-contact .btn { flex: 1 1 auto; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: .88rem; padding: 0 12px; min-width: 0; }
+.ci-contact .btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-contact svg { width: 18px; height: 18px; flex: 0 0 18px; }
+.ci-photos { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; }
+.ci-photos img { height: 90px; border-radius: 10px; }
+.cd-pics { display: flex; flex-wrap: wrap; gap: 10px; }
+.cd-pics figure { margin: 0; width: 96px; text-align: center; }
+.cd-pics figure .mv-link { font-size: 13px; white-space: nowrap; }
+.cd-pics img { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }

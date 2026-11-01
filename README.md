@@ -155,6 +155,8 @@ it again.
 36. `sql/equipment.sql` — what's in each player's bag, used for the club suggestion and the Course Preview plan
 37. `sql/course-preview.sql` — Course Preview: playing notes and the society's hole averages
 38. `sql/private-game-setup.sql` — the step-by-step private game setup: up to 16 players in tee groups, format, handicaps, stake holes, draft or tee off now
+39. `sql/course-details.sql` — course website, phone, logo and photos, and filling a new course in from OpenStreetMap
+40. `sql/course-data-2026-11.sql` — scorecards and hole maps for the October 2026 courses (already applied)
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

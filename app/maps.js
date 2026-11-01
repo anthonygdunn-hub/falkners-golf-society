@@ -346,6 +346,69 @@
     return out;
   }
 
+  // A new course, looked up on OpenStreetMap: where it is, its website
+  // and phone if they're there, and every hole that's been drawn (tee,
+  // middle of the green, front and back, and par and stroke index when
+  // they're tagged). Used to fill a course in when it's added.
+  async function overpass(q) {
+    for (const host of ["https://overpass-api.de", "https://overpass.private.coffee"]) {
+      try {
+        const res = await fetch(host + "/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+        const t = await res.text();
+        if (t[0] === "{") return JSON.parse(t);
+      } catch (e) { /* try the next server */ }
+    }
+    return null;
+  }
+  async function lookupCourse(name, address) {
+    const clean = String(name || "").replace(/golf (club|course|centre|complex)/i, "").trim();
+    let at = address ? await findPlace(address).catch(() => null) : null;
+    if (!at) at = await findPlace(name + " golf").catch(() => null);
+    if (!at) return null;
+    const near = await overpass(`[out:json][timeout:40];nwr["leisure"="golf_course"](around:2500,${at.lat},${at.lng});out center tags;`);
+    const courses = ((near && near.elements) || []).map(e => ({ e, c: e.center || e }))
+      .sort((a, b) => {
+        const nameHit = x => (x.e.tags && x.e.tags.name && clean && x.e.tags.name.toLowerCase().includes(clean.toLowerCase().split(/\s+/)[0])) ? 0 : 1;
+        return nameHit(a) - nameHit(b) || metres(at, { lat: a.c.lat, lng: a.c.lon }) - metres(at, { lat: b.c.lat, lng: b.c.lon });
+      });
+    const best = courses[0];
+    const out = { lat: at.lat, lng: at.lng, holes: [] };
+    if (!best) return out;
+    const tg = best.e.tags || {};
+    Object.assign(out, { lat: best.c.lat, lng: best.c.lon, website: tg.website || tg["contact:website"] || null,
+      phone: tg.phone || tg["contact:phone"] || null, osm_ref: best.e.type + "/" + best.e.id });
+    const area = best.e.type === "node" ? null : `${best.e.type}(${best.e.id});map_to_area->.a;`;
+    if (!area) return out;
+    const d = await overpass(`[out:json][timeout:50];${area}(way["golf"="hole"](area.a);way["golf"="green"](area.a););out geom tags;`);
+    if (!d) return out;
+    const holes = (d.elements || []).filter(e => e.tags && e.tags.golf === "hole" && e.geometry && e.geometry.length > 1);
+    const greens = (d.elements || []).filter(e => e.tags && e.tags.golf === "green" && e.geometry).map(e => e.geometry.map(p => ({ lat: p.lat, lng: p.lon })));
+    const mid = pts => ({ lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng: pts.reduce((a, p) => a + p.lng, 0) / pts.length });
+    const seen = new Set();
+    holes.sort((a, b) => (b.tags.handicap ? 1 : 0) - (a.tags.handicap ? 1 : 0)).forEach(w => {
+      const ref = parseInt(w.tags.ref || "", 10);
+      if (!(ref >= 1 && ref <= 18) || seen.has(ref)) return;
+      seen.add(ref);
+      const t = { lat: w.geometry[0].lat, lng: w.geometry[0].lon };
+      let c = { lat: w.geometry[w.geometry.length - 1].lat, lng: w.geometry[w.geometry.length - 1].lon };
+      const row = { hole: ref, par: parseInt(w.tags.par, 10) || null, si: parseInt(w.tags.handicap, 10) || null, tee_lat: t.lat, tee_lng: t.lng };
+      const g = greens.map(pts => [pts, metres(mid(pts), c)]).sort((x, y) => x[1] - y[1])[0];
+      if (g && g[1] < 45) {
+        const poly = g[0]; c = mid(poly);
+        const kx = Math.cos(c.lat * Math.PI / 180) * 111320, ky = 110540;
+        const ax = (c.lng - t.lng) * kx, ay = (c.lat - t.lat) * ky, len = Math.hypot(ax, ay) || 1, ux = ax / len, uy = ay / len;
+        const proj = poly.map(p => ((p.lng - c.lng) * kx) * ux + ((p.lat - c.lat) * ky) * uy);
+        const pt = v => ({ lat: c.lat + (uy * v) / ky, lng: c.lng + (ux * v) / kx });
+        const f = pt(Math.min(...proj)), b = pt(Math.max(...proj));
+        Object.assign(row, { front_lat: f.lat, front_lng: f.lng, back_lat: b.lat, back_lng: b.lng });
+      }
+      Object.assign(row, { green_lat: c.lat, green_lng: c.lng });
+      out.holes.push(row);
+    });
+    out.holes.sort((a, b) => a.hole - b.hole);
+    return out;
+  }
+
   async function findPlace(q) {
     const res = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=gb&q=" + encodeURIComponent(q),
       { headers: { "Accept": "application/json" } });
@@ -510,5 +573,5 @@
     return true;
   }
 
-  window.HoleMaps = { previewHole, closePreview, yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, greensFromOsm, prefetch, gps };
+  window.HoleMaps = { lookupCourse, tileXY, previewHole, closePreview, yards, metres, startGps, stopGps, onGps, toGreen, openHoleMap, pinEditor, importFromOsm, greensFromOsm, prefetch, gps };
 })();
