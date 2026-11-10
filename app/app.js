@@ -5532,8 +5532,13 @@
     const holes = d.holes.get(tee.id);
     const h = holes.find(x => x.hole === holeNo) || holes[0];
     const yds = holeYards(d, h);
-    const mine = (app.bag || []).length > 0;
-    const plan = planHole(yds, h.par, mine ? app.bag : TYPICAL_BAG);
+    // A full bag plans from the member's own clubs. A bag with only a few
+    // clubs in it is topped up with typical distances, so a lone driver
+    // isn't suggested for a 90-yard pitch.
+    const own = (app.bag || []).filter(x => x.club && x.club !== "PT" && x.distance > 0);
+    const mine = own.length >= 5;
+    const topped = own.length > 0 && !mine;
+    const plan = planHole(yds, h.par, mine ? own : topped ? TYPICAL_BAG.filter(t => !own.some(o => o.club === t.club)).concat(own) : TYPICAL_BAG);
     const a = d.avg.get(h.hole), rank = d.ranked.indexOf(h.hole);
     const g = d.geo.get(h.hole);
     const mapped = g && g.green_lat != null;
@@ -5552,7 +5557,8 @@
       ${!mapped ? `<p class="small muted pv-unmapped">Drawn to scale from the card: this hole isn't on the satellite map yet${app.committee ? ` — <a href="#/course-map/${d.course.id}">map it</a>` : ""}.</p>` : ""}
       <div class="card pv-plan">
         <h2>Your club plan</h2>
-        ${!mine ? `<p class="small pv-typical">Using <b>typical club distances</b>. <a href="#/me/bag">Add your clubs</a> for a plan built on yours.</p>` : ""}
+        ${topped ? `<p class="small pv-typical">Using <b>your ${own.length === 1 ? clubName(own[0].club) : own.length + " clubs"}</b> and typical distances for the rest. <a href="#/me/bag">Add more clubs</a> for a plan built on yours.</p>`
+          : !mine ? `<p class="small pv-typical">Using <b>typical club distances</b>. <a href="#/me/bag">Add your clubs</a> for a plan built on yours.</p>` : ""}
         ${plan ? `<ol class="pv-shots">${plan.shots.map((s, i) => `<li><span class="pv-shot-n">${i === 0 ? "Tee" : nth(i + 1)}</span><span class="pv-club"><b>${esc(clubName(s.club))}</b>${s.part ? ` <span class="muted small">(part shot)</span>` : ""}</span><span class="pv-yds">${s.finish ? `<b>${s.carry}</b> to the green` : `<b>${s.carry}</b> · leaves ${s.leaves}`}</span></li>`).join("")}
           ${plan.short ? `<li><span class="pv-shot-n">Then</span><span class="pv-club">Chip from ${plan.short}</span><span class="pv-yds"></span></li>` : ""}</ol>
           <p class="pv-verdict">${verdict}</p>` : `<p class="small muted">No yardage for this hole yet, so there's no plan.</p>`}
