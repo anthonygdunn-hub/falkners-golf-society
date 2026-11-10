@@ -6148,7 +6148,12 @@
   $("#menu-btn").addEventListener("click", () => { $("#menu").hidden = !$("#menu").hidden; });
   document.addEventListener("click", e => {
     if (!e.target.closest("#menu") && !e.target.closest("#menu-btn")) $("#menu").hidden = true;
+    // Choosing anything in the menu closes it, whether it opens a page,
+    // a sheet or the website.
+    else if (e.target.closest("#menu a, #menu button")) $("#menu").hidden = true;
   });
+  // And any change of page closes it too (the back button, a link elsewhere).
+  window.addEventListener("hashchange", () => { $("#menu").hidden = true; });
   $("#signout-btn").addEventListener("click", async () => {
     await client.auth.signOut();
     $("#menu").hidden = true;
