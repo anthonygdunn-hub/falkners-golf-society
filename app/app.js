@@ -1314,7 +1314,11 @@
 
   async function reloadRound(quiet) {
     if (!app.round) return;
-    const keep = { hc: app.round.hc, wx: app.round.wx, tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments, manage: app.round.manage };
+    const keep = { hc: app.round.hc, wx: app.round.wx, tab: app.round.tab, hole: app.round.hole, board: app.round.board, groupKey: app.round.groupKey, gross: app.round.gross, editHcp: app.round.editHcp, arrived: app.round.arrived, openComments: app.round.openComments, manage: app.round.manage,
+      // A played round's typed-in results aren't part of loadRound: keep
+      // them, or coming back to the app (or the 30-second refresh) blanks
+      // the page to "not set up for scoring".
+      results: app.round.results };
     try {
       const r = await loadRound(app.round.id);
       Object.assign(r, keep);
