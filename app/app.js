@@ -750,13 +750,16 @@
       fixtures = `<div class="card"><h2>Fixtures</h2>${next.length ? next.map(e => roundItem(e, status, playing).replace('class="card round-item"', 'class="round-item fx-item"')).join("") : `<p class="small muted">No fixtures coming up.</p>`}
         <a class="small" href="../fixtures.html">Register or pay on the website ›</a></div>`;
     }
+    const detailsHtml = (p.profile_id ? await detailsCard(p.profile_id, isMe) : "") + (isMe ? await notificationsCard() : "");
     const bar = (label, n, cls) => `<div class="dist-row"><span>${label}</span><div class="dist-bar"><i class="${cls}" style="width:${holes ? Math.round(n / holes * 100) : 0}%"></i></div><b>${n}</b></div>`;
     view.innerHTML = `
       <a class="back-link" href="${isMe ? "#/" : "#/season"}">‹ ${isMe ? "Home" : "Order of Merit"}</a>
-      <div class="profile-head">${avatar(p.name, p.profile_id, "big-av" + (isMe ? " me" : ""))}<div style="flex:1;min-width:0"><h1 style="margin:0">${esc(p.name)}</h1>
+      <div class="profile-head"><button type="button" class="av-zoom" data-action="zoom-avatar" aria-label="See the picture bigger">${avatar(p.name, p.profile_id, "big-av" + (isMe ? " me" : ""))}</button><div style="flex:1;min-width:0"><h1 style="margin:0">${esc(p.name)}</h1>
         <div class="small muted">Society handicap ${p.handicap == null ? "?" : p.handicap}${hcExtra.official_index != null ? ` · England Golf ${hcExtra.official_index}` : ""}</div>
         ${Number(hcExtra.hcp_cut) > 0 ? `<div class="hc-pending">${esc(hcExtra.hcp_cut_note || `−${hcExtra.hcp_cut} next round`)} — next round only</div>` : ""}
         ${isMe ? `<label class="mv-link photo-link">${app.avatars.get(app.user.id) ? "Change" : "Add"} profile picture<input type="file" id="avatar-file" accept="image/*" hidden></label>` : ""}</div></div>
+      ${!isMe && p.profile_id ? `<button class="btn block" data-action="chat-start" data-profile="${p.profile_id}" style="margin:10px 0">Message ${esc(String(p.name).split(" ")[0])}</button>` : ""}
+      ${detailsHtml}
       ${oom ? `<a class="card oom-card" href="#/season"><div><div class="lc-label" style="color:var(--ink-soft)">Order of Merit</div>
           <div class="oom-pos">${ordinal(oom.pos)} <small>of ${oom.of}</small>${oom.move ? ` <span class="move ${oom.move > 0 ? "up" : "down"}" style="display:inline">${oom.move > 0 ? "▲" : "▼"}${Math.abs(oom.move)}</span>` : ""}</div></div>
           <div style="text-align:right"><div class="big">${oom.pts}</div><div class="thru">points</div></div></a>` : ""}
@@ -780,6 +783,594 @@
       ${isMe ? `<p class="small muted" style="text-align:center">Change your name or bio on the <a href="../member.html">website</a>.</p>` : ""}`;
   }
 
+
+  // ---------- the Clubhouse: feed, birthdays, messages ----------
+  // A society-wide feed (posts, photos, comments, likes and a birthday
+  // post on the day), one-to-one messages and group chats. Photos live in
+  // a private bucket and are shown with short-lived signed links.
+
+  const club = app.club = { posts: [], comments: [], likes: [], loaded: false, more: false, chats: null, urls: new Map(),
+    people: null, birthdays: [], openPost: null, chat: null, messages: [], reports: [], unreadChats: 0, newPosts: 0, sub: null };
+  const clubIcon = () => icon('<path d="M4 5h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M18 9h2a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-1v3l-3-3h-4"/>');
+  const CAKE = "🎂";
+
+  async function clubPeople(force) {
+    if (!club.people || force) {
+      const { data } = await client.rpc("member_directory");
+      club.people = new Map((data || []).map(p => [p.id, p]));
+    }
+    return club.people;
+  }
+  const personName = id => id && club.people && club.people.get(id) ? club.people.get(id).display_name || "A member" : "A member";
+  const whenOf = iso => {
+    const d = new Date(iso), mins = Math.round((Date.now() - d) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m";
+    if (mins < 60 * 24 && d.toDateString() === new Date().toDateString()) return timeOf(iso);
+    if (mins < 60 * 24 * 6) return d.toLocaleDateString("en-GB", { weekday: "short" }) + " " + timeOf(iso);
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  };
+
+  async function signUrls(paths) {
+    const need = [...new Set(paths.filter(Boolean))].filter(p => !(club.urls.get(p) && club.urls.get(p).exp > Date.now() + 60000));
+    if (!need.length) return;
+    const { data } = await client.storage.from("clubhouse").createSignedUrls(need, 3600);
+    (data || []).forEach(d => { if (d.signedUrl && d.path) club.urls.set(d.path, { url: d.signedUrl, exp: Date.now() + 3500e3 }); });
+  }
+  const clubUrl = p => (club.urls.get(p) || {}).url || "";
+  const photoPaths = list => list.flatMap(p => [p, "thumbs/" + p]);
+
+  async function uploadClubPhoto(prefix, file) {
+    const path = `${prefix}/${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)}.jpg`;
+    const up = window.ImageResize ? await window.ImageResize.uploadPhoto(client, "clubhouse", path, file)
+      : await client.storage.from("clubhouse").upload(path, file, { contentType: file.type || "image/jpeg" });
+    if (up.error) throw up.error;
+    return path;
+  }
+
+  // ---- unread counts for the tab badge ----
+  async function clubCounts() {
+    const seen = store.get("club-seen", "");
+    const [chats, posts] = await Promise.all([
+      client.rpc("my_chats"),
+      seen ? client.from("club_posts").select("id", { count: "exact", head: true }).gt("created_at", seen).neq("author_id", app.user.id) : Promise.resolve({ count: 0 }),
+    ]);
+    if (!chats.error) { club.chats = chats.data || []; club.unreadChats = club.chats.filter(c => !c.muted).reduce((t, c) => t + (c.unread || 0), 0); }
+    club.newPosts = posts.count || 0;
+    paintClubBadge();
+  }
+  function paintClubBadge() {
+    const b = document.getElementById("club-badge");
+    if (!b) return;
+    const n = club.unreadChats + club.newPosts;
+    b.hidden = !n; b.textContent = n > 9 ? "9+" : String(n);
+  }
+
+  // ---- live updates ----
+  function clubSubscribe() {
+    if (club.sub || !app.user) return;
+    club.sub = client.channel("clubhouse")
+      .on("postgres_changes", { event: "*", schema: "public", table: "club_posts" }, p => {
+        if (p.eventType === "DELETE") club.posts = club.posts.filter(x => x.id !== (p.old || {}).id);
+        else if (p.eventType === "INSERT") { if (!club.posts.some(x => x.id === p.new.id)) club.posts.unshift(p.new); if (p.new.author_id !== app.user.id && !onClub("feed")) club.newPosts++; }
+        else club.posts = club.posts.map(x => x.id === p.new.id ? { ...x, ...p.new } : x);
+        clubRefresh("feed");
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "club_comments" }, p => {
+        if (p.eventType === "DELETE") club.comments = club.comments.filter(x => x.id !== (p.old || {}).id);
+        else if (!club.comments.some(x => x.id === p.new.id)) club.comments.push(p.new);
+        clubRefresh("feed");
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "club_likes" }, p => {
+        if (p.eventType === "DELETE") club.likes = club.likes.filter(x => !(x.post_id === (p.old || {}).post_id && x.profile_id === (p.old || {}).profile_id));
+        else if (!club.likes.some(x => x.post_id === p.new.post_id && x.profile_id === p.new.profile_id)) club.likes.push(p.new);
+        clubRefresh("feed");
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, async p => {
+        const m = p.new;
+        if (club.chat && club.chat.id === m.chat_id) {
+          if (!club.messages.some(x => x.id === m.id)) club.messages.push(m);
+          if (m.photo_path) await signUrls(photoPaths([m.photo_path]));
+          markRead(m.chat_id); drawChat(true);
+        } else { await clubCounts(); clubRefresh("messages"); }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "chat_messages" }, p => {
+        if (club.chat && club.chat.id === p.new.chat_id) { club.messages = club.messages.map(x => x.id === p.new.id ? p.new : x); drawChat(); }
+      })
+      .subscribe();
+  }
+  const onClub = sub => { const h = location.hash; return sub === "feed" ? (h === "#/clubhouse" || h === "#/clubhouse/") : h === "#/clubhouse/" + sub; };
+  let clubTimer = null;
+  function clubRefresh(sub) {
+    paintClubBadge();
+    if (!onClub(sub)) return;
+    clearTimeout(clubTimer);
+    clubTimer = setTimeout(() => {
+      const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName) && view.contains(document.activeElement) && document.activeElement.value;
+      if (!typing) drawClubhouse(sub);
+    }, 150);
+  }
+
+  // ---- the page ----
+  async function renderClubhouse(sub) {
+    sub = sub || "feed";
+    clubSubscribe();
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    await clubPeople();
+    if (sub === "feed") {
+      // Today's birthday posts, made here if the morning job hasn't yet.
+      if (store.get("bday-made", "") !== londonToday()) { await client.rpc("make_birthday_posts").catch(() => null); store.set("bday-made", londonToday()); }
+      const [bd] = await Promise.all([client.rpc("birthdays_today"), loadFeed(true)]);
+      club.birthdays = bd.data || [];
+      store.set("club-seen", new Date().toISOString()); club.newPosts = 0;
+    } else if (sub === "messages") {
+      await clubCounts();
+    } else if (sub === "reports" && app.committee) {
+      const { data } = await client.from("club_reports").select("*").is("resolved_at", null).order("created_at", { ascending: false });
+      club.reports = data || [];
+    }
+    drawClubhouse(sub);
+    clubCounts();
+  }
+
+  async function loadFeed(fresh) {
+    const before = !fresh && club.posts.length ? club.posts[club.posts.length - 1].created_at : null;
+    let q = client.from("club_posts").select("*").order("created_at", { ascending: false }).limit(20);
+    if (before) q = q.lt("created_at", before);
+    const { data: posts, error } = await q;
+    if (error) { toast(error.message, true); return; }
+    const ids = (posts || []).map(p => p.id);
+    const [cm, lk] = ids.length ? await Promise.all([
+      client.from("club_comments").select("*").in("post_id", ids).order("created_at"),
+      client.from("club_likes").select("*").in("post_id", ids),
+    ]) : [{ data: [] }, { data: [] }];
+    if (fresh) { club.posts = []; club.comments = []; club.likes = []; }
+    const seenP = new Set(club.posts.map(p => p.id));
+    club.posts = club.posts.concat((posts || []).filter(p => !seenP.has(p.id)));
+    club.comments = club.comments.concat((cm.data || []).filter(c => !club.comments.some(x => x.id === c.id)));
+    club.likes = club.likes.concat(lk.data || []);
+    club.more = (posts || []).length === 20;
+    await signUrls(photoPaths(club.posts.flatMap(p => p.photo_paths || [])));
+  }
+
+  function drawClubhouse(sub) {
+    sub = sub || "feed";
+    const reportsN = app.committee ? club.reports.length : 0;
+    const seg = `<div class="subtabs club-tabs">
+      <a href="#/clubhouse" aria-selected="${sub === "feed"}">Feed</a>
+      <a href="#/clubhouse/messages" aria-selected="${sub === "messages"}">Messages${club.unreadChats ? ` <i class="ct-badge">${club.unreadChats > 9 ? "9+" : club.unreadChats}</i>` : ""}</a>
+      ${app.committee ? `<a href="#/clubhouse/reports" aria-selected="${sub === "reports"}">Reports${reportsN ? ` <i class="ct-badge">${reportsN}</i>` : ""}</a>` : ""}
+    </div>`;
+    const head = `<div class="club-head"><h1>Clubhouse</h1><span class="spacer"></span>${sub === "messages" ? `<button class="btn gold" style="min-height:40px" data-action="chat-new">New</button>` : ""}</div>${seg}`;
+    if (sub === "messages") { view.innerHTML = head + chatList(); return; }
+    if (sub === "reports") { view.innerHTML = head + reportsView(); return; }
+    view.innerHTML = head + birthdayBanner() + composerCard() + (club.posts.length ? club.posts.map(clubPostCard).join("") : `<div class="card empty"><p>Nothing here yet.</p><p class="small">Say hello, share a photo from the weekend, or start a thread about the next round.</p></div>`)
+      + (club.more ? `<button class="btn ghost block" data-action="club-more">Show older posts</button>` : "");
+  }
+
+  function birthdayBanner() {
+    if (!club.birthdays.length) return "";
+    const names = club.birthdays.map(b => b.display_name);
+    const list = names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+    return `<div class="card bday-banner"><span class="bday-cake">${CAKE}</span><div><b>It's ${esc(list)}'s birthday today!</b><div class="small">Leave a message on the birthday post below.</div></div></div>`;
+  }
+
+  function composerCard() {
+    return `<div class="card composer">
+      <textarea id="club-text" rows="2" maxlength="2000" placeholder="Share something with the society…"></textarea>
+      <div class="club-previews" id="club-previews"></div>
+      <div class="row" style="margin-top:8px">
+        <label class="btn ghost" style="min-height:40px">📷 Photos<input type="file" id="club-photos" accept="image/*" multiple hidden></label>
+        <span class="spacer"></span>
+        <button class="btn" style="min-height:40px" data-action="club-post">Post</button>
+      </div></div>`;
+  }
+
+  function clubPostCard(p) {
+    const likes = club.likes.filter(l => l.post_id === p.id);
+    const mine = likes.some(l => l.profile_id === app.user.id);
+    const comments = club.comments.filter(c => c.post_id === p.id);
+    const bday = p.kind === "birthday";
+    const open = club.openPost === p.id || bday;
+    const shown = open ? (bday && club.openPost !== p.id ? comments.slice(-3) : comments) : comments.slice(-1);
+    const own = p.author_id === app.user.id;
+    const who = bday ? p.birthday_of : p.author_id;
+    const photos = (p.photo_paths || []);
+    const head = bday
+      ? `<div class="bday-post">${avatar(personName(who), who, "bday-av")}<div><div class="bday-title">${CAKE} Happy birthday, ${esc(personName(who).split(" ")[0])}!</div>
+          <div class="thru">From everyone at the Falkners · ${fmtDate(String(p.created_at).slice(0, 10))}</div></div></div>`
+      : `<div class="post-head"><a href="#/member/${who}" class="ph-link">${avatar(personName(who), who)}</a><div><a href="#/member/${who}" class="ph-link"><b>${esc(personName(who))}</b></a><div class="thru">${whenOf(p.created_at)}</div></div>
+          <span class="spacer"></span>${p.hidden ? `<span class="badge">Hidden</span>` : ""}<button class="pf-btn" data-action="club-post-menu" data-id="${p.id}" aria-label="More">⋯</button></div>`;
+    return `<div class="card post club-post${bday ? " pk-bday" : ""}${p.hidden ? " is-hidden" : ""}" id="post-${p.id}">
+      ${head}
+      ${p.body ? `<p class="post-body">${linkify(p.body)}</p>` : ""}
+      ${photos.length ? `<div class="club-photos n${Math.min(photos.length, 4)}">${photos.map(ph => `<button type="button" class="cp-img" data-action="club-photo" data-path="${esc(ph)}"><img src="${esc(clubUrl("thumbs/" + ph) || clubUrl(ph))}" alt="" loading="lazy" onerror="if(this.dataset.f)return;this.dataset.f=1;this.src='${esc(clubUrl(ph))}'"></button>`).join("")}</div>` : ""}
+      <div class="post-foot">
+        <button class="pf-btn${mine ? " on" : ""}" data-action="club-like" data-id="${p.id}">${bday ? "🎉" : "👍"} ${likes.length || ""}</button>
+        <button class="pf-btn" data-action="club-comments" data-id="${p.id}">💬 ${comments.length || ""}</button>
+        ${likes.length ? `<span class="small muted likers">${esc(likes.slice(0, 2).map(l => l.profile_id === app.user.id ? "You" : personName(l.profile_id).split(" ")[0]).join(", "))}${likes.length > 2 ? ` +${likes.length - 2}` : ""}</span>` : ""}
+      </div>
+      ${shown.length || open ? `<div class="comments">
+        ${comments.length > shown.length ? `<button class="mv-link" data-action="club-comments" data-id="${p.id}">View all ${comments.length} comments</button>` : ""}
+        ${shown.map(c => `<div class="comment${c.hidden ? " is-hidden" : ""}"><b>${esc(personName(c.author_id))}</b> ${linkify(c.body)}
+          <span class="thru">${whenOf(c.created_at)}</span>
+          ${c.author_id === app.user.id || app.committee ? `<button class="mv-link" data-action="club-del-comment" data-id="${c.id}">Delete</button>` : `<button class="mv-link" data-action="club-report" data-kind="comment" data-id="${c.id}">Report</button>`}
+          ${app.committee && c.author_id !== app.user.id ? `<button class="mv-link" data-action="club-hide" data-kind="comment" data-id="${c.id}" data-hide="${!c.hidden}">${c.hidden ? "Show" : "Hide"}</button>` : ""}</div>`).join("")}
+        ${open ? `<div class="row" style="margin-top:6px"><input class="comment-input" id="cc-${p.id}" maxlength="1000" placeholder="${bday ? `Wish ${esc(personName(who).split(" ")[0])} a happy birthday…` : "Add a comment…"}"><button class="btn" style="min-height:38px" data-action="club-comment" data-id="${p.id}">Send</button></div>` : ""}
+      </div>` : ""}
+    </div>`;
+  }
+
+  // Links in posts and messages, safely: escape first, then link http(s).
+  function linkify(text) {
+    return esc(text).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`).replace(/\n/g, "<br>");
+  }
+
+  async function clubPost() {
+    const text = ($("#club-text").value || "").trim();
+    const files = [...(($("#club-photos") || {}).files || [])].slice(0, 4);
+    if (!text && !files.length) { toast("Write something or add a photo first.", true); return; }
+    const btn = view.querySelector("[data-action=club-post]");
+    btn.disabled = true; btn.textContent = files.length ? "Uploading…" : "Posting…";
+    try {
+      const paths = [];
+      for (const f of files) paths.push(await uploadClubPhoto("feed", f));
+      const { data, error } = await client.from("club_posts").insert({ author_id: app.user.id, body: text || null, photo_paths: paths }).select().single();
+      if (error) throw error;
+      if (!club.posts.some(x => x.id === data.id)) club.posts.unshift(data);
+      await signUrls(photoPaths(paths));
+      drawClubhouse("feed");
+    } catch (e) {
+      toast(/row-level security/.test(e.message || "") ? "You can't post at the moment. Speak to the committee." : e.message || "Couldn't post that. Try again.", true);
+      btn.disabled = false; btn.textContent = "Post";
+    }
+  }
+
+  async function clubLike(id) {
+    const mine = club.likes.find(l => l.post_id === id && l.profile_id === app.user.id);
+    if (mine) { club.likes = club.likes.filter(l => l !== mine); drawClubhouse("feed"); await client.from("club_likes").delete().eq("post_id", id).eq("profile_id", app.user.id); }
+    else {
+      club.likes.push({ post_id: id, profile_id: app.user.id }); buzz(8); drawClubhouse("feed");
+      const { error } = await client.from("club_likes").insert({ post_id: id, profile_id: app.user.id });
+      if (error && !/duplicate/i.test(error.message)) toast(error.message, true);
+    }
+  }
+
+  async function clubComment(id) {
+    const el = document.getElementById("cc-" + id);
+    const body = (el && el.value || "").trim();
+    if (!body) return;
+    el.disabled = true;
+    const { data, error } = await client.from("club_comments").insert({ post_id: id, author_id: app.user.id, body }).select().single();
+    if (error) { el.disabled = false; toast(/row-level security/.test(error.message) ? "You can't comment at the moment. Speak to the committee." : error.message, true); return; }
+    if (!club.comments.some(c => c.id === data.id)) club.comments.push(data);
+    club.openPost = id;
+    if (document.activeElement) document.activeElement.blur();
+    drawClubhouse("feed");
+  }
+
+  function clubPostMenu(id) {
+    const p = club.posts.find(x => x.id === id);
+    if (!p) return;
+    const own = p.author_id === app.user.id;
+    openSheet(`<h2>Post</h2><div class="fab-list">
+      ${own || app.committee ? `<button type="button" class="fab-item" data-action="club-del-post" data-id="${id}"><span><b>Delete post</b><small>${own ? "Removes it for everyone" : "Committee: removes it for everyone"}</small></span></button>` : ""}
+      ${app.committee && !own ? `<button type="button" class="fab-item" data-action="club-hide" data-kind="post" data-id="${id}" data-hide="${!p.hidden}"><span><b>${p.hidden ? "Show it again" : "Hide from members"}</b><small>Committee: ${p.hidden ? "put it back on the feed" : "only the committee and the author will see it"}</small></span></button>
+        <button type="button" class="fab-item" data-action="club-mute" data-profile="${p.author_id}"><span><b>Mute ${esc(personName(p.author_id))}</b><small>Committee: stop them posting or messaging for a while</small></span></button>` : ""}
+      ${!own ? `<button type="button" class="fab-item" data-action="club-report" data-kind="post" data-id="${id}"><span><b>Report to the committee</b><small>If it's offensive or shouldn't be here</small></span></button>` : ""}
+    </div><button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Close</button>`);
+  }
+
+  function reportSheet(kind, id) {
+    openSheet(`<h2>Report to the committee</h2><p class="small muted">The committee sees what was said and who said it. They won't see who reported it.</p>
+      <label class="field">What's wrong? (optional)<input id="report-reason" maxlength="300" placeholder="e.g. offensive, spam"></label>
+      <button class="btn block" data-action="club-report-send" data-kind="${kind}" data-id="${id}">Send report</button>
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Cancel</button>`);
+  }
+
+  function muteSheet(profile) {
+    openSheet(`<h2>Mute ${esc(personName(profile))}</h2><p class="small muted">They can still read everything, but can't post, comment, message or send photos until it's lifted.</p>
+      <div class="fab-list">${[[1, "For a day"], [7, "For a week"], [30, "For a month"], [0, "Until the committee lifts it"]].map(([d, l]) =>
+        `<button type="button" class="fab-item" data-action="club-mute-go" data-profile="${profile}" data-days="${d}"><span><b>${l}</b></span></button>`).join("")}
+      <button type="button" class="fab-item" data-action="club-mute-go" data-profile="${profile}" data-days=""><span><b>Lift a mute</b><small>Let them post again</small></span></button></div>
+      <button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Cancel</button>`);
+  }
+
+  function reportsView() {
+    if (!club.reports.length) return `<div class="card empty"><p>No reports waiting.</p><p class="small">When a member reports a post, comment or message it appears here.</p></div>`;
+    return club.reports.map(r => `<div class="card report-card">
+      <div class="row"><b>${r.kind === "post" ? "A post" : r.kind === "comment" ? "A comment" : "A message"} by ${esc(personName(r.about))}</b><span class="spacer"></span><span class="thru">${whenOf(r.created_at)}</span></div>
+      <blockquote>${linkify(r.snapshot || "")}</blockquote>
+      ${r.reason ? `<p class="small">Reason given: ${esc(r.reason)}</p>` : ""}
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        ${r.kind !== "message" ? `<button class="btn" style="min-height:38px" data-action="club-hide" data-kind="${r.kind}" data-id="${r.target_id}" data-hide="true">Hide it</button>` : ""}
+        ${r.about ? `<button class="btn ghost" style="min-height:38px" data-action="club-mute" data-profile="${r.about}">Mute them</button>` : ""}
+        <button class="btn ghost" style="min-height:38px" data-action="club-resolve" data-id="${r.id}">Nothing to do</button>
+      </div></div>`).join("") + `<p class="small muted">Messages stay private: you only see the one that was reported.</p>`;
+  }
+
+  // ---- messages ----
+  function chatTitle(c) {
+    if (c.kind === "group") return c.name || "Group";
+    const other = (c.members || []).find(m => m.id !== app.user.id);
+    return other ? other.name : "Chat";
+  }
+  function chatAvatar(c) {
+    if (c.kind === "group") return `<span class="avatar grp-av"><i>${initials(c.name || "G")}</i></span>`;
+    const other = (c.members || []).find(m => m.id !== app.user.id) || {};
+    return avatar(other.name, other.id);
+  }
+  function chatList() {
+    const chats = club.chats || [];
+    if (!chats.length) return `<div class="card empty"><p>No messages yet.</p><p class="small">Tap <b>New</b> to message a member or start a group, say for this Sunday's four-ball.</p></div>`;
+    return `<div class="card chat-list">${chats.map(c => {
+      const last = c.last_deleted ? "Message deleted" : c.last_photo && !c.last_body ? "📷 Photo" : c.last_body || (c.kind === "group" ? "Group made" : "Say hello");
+      const by = c.last_author && c.kind === "group" && c.last_body ? (c.last_author === app.user.id ? "You: " : personName(c.last_author).split(" ")[0] + ": ") : c.last_author === app.user.id && c.last_body ? "You: " : "";
+      return `<a class="chat-row${c.unread ? " unread" : ""}" href="#/chat/${c.id}">${chatAvatar(c)}<span class="cr-body"><b>${esc(chatTitle(c))}${c.muted ? " 🔕" : ""}</b><small>${esc(by + last)}</small></span>
+        <span class="cr-side"><small>${whenOf(c.last_message_at)}</small>${c.unread ? `<i class="ct-badge">${c.unread > 9 ? "9+" : c.unread}</i>` : ""}</span></a>`;
+    }).join("")}</div>`;
+  }
+
+  async function newChatSheet(group) {
+    const people = [...(await clubPeople()).values()].filter(p => p.id !== app.user.id);
+    openSheet(`<h2>${group ? "New group" : "New message"}</h2>
+      ${group ? `<label class="field">Group name<input id="grp-name" maxlength="60" placeholder="e.g. Sunday 4-ball"></label>` : `<button class="btn ghost block" style="margin-bottom:10px" data-action="chat-new-group">Start a group instead</button>`}
+      <input class="comment-input" id="people-find" placeholder="Find a member" style="width:100%;margin-bottom:8px">
+      <div class="people-list" id="people-list">${people.map(p => group
+        ? `<label class="person-row" data-name="${esc(String(p.display_name || "").toLowerCase())}"><input type="checkbox" value="${p.id}">${avatar(p.display_name, p.id)}<span>${esc(p.display_name)}</span></label>`
+        : `<button type="button" class="person-row" data-action="chat-start" data-profile="${p.id}" data-name="${esc(String(p.display_name || "").toLowerCase())}">${avatar(p.display_name, p.id)}<span>${esc(p.display_name)}</span></button>`).join("")}</div>
+      ${group ? `<button class="btn block" style="margin-top:10px" data-action="chat-make-group">Make the group</button>` : ""}
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Cancel</button>`);
+    const f = document.getElementById("people-find");
+    if (f) f.addEventListener("input", () => {
+      const q = f.value.trim().toLowerCase();
+      document.querySelectorAll("#people-list .person-row").forEach(r => { r.hidden = q && !r.dataset.name.includes(q); });
+    });
+  }
+
+  async function openDirect(profile) {
+    const { data, error } = await client.rpc("start_direct_chat", { p_other: profile });
+    if (error) { toast(error.message, true); return; }
+    closeSheet(); location.hash = "#/chat/" + data;
+  }
+  async function makeGroup() {
+    const name = ($("#grp-name").value || "").trim();
+    const ids = [...document.querySelectorAll("#people-list input:checked")].map(i => i.value);
+    if (!name) { toast("Give the group a name.", true); return; }
+    if (!ids.length) { toast("Tick at least one member.", true); return; }
+    const { data, error } = await client.rpc("create_group_chat", { p_name: name, p_members: ids });
+    if (error) { toast(error.message, true); return; }
+    closeSheet(); location.hash = "#/chat/" + data;
+  }
+
+  async function renderChat(id) {
+    clubSubscribe();
+    hideTabbar(); $("#fab").hidden = true;
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    await clubPeople();
+    const [{ data: chats }, { data: msgs, error }] = await Promise.all([
+      client.rpc("my_chats"),
+      client.from("chat_messages").select("*").eq("chat_id", id).order("created_at", { ascending: false }).limit(60),
+    ]);
+    const c = (chats || []).find(x => x.id === id);
+    if (!c || error) { view.innerHTML = `<a class="back-link" href="#/clubhouse/messages">‹ Messages</a><div class="card status-msg err">This chat isn't there any more, or you've left it.</div>`; return; }
+    club.chats = chats; club.chat = c; club.messages = (msgs || []).reverse(); club.olderChat = (msgs || []).length === 60;
+    await signUrls(photoPaths(club.messages.map(m => m.photo_path)));
+    view.innerHTML = `<div class="chat-page">
+      <div class="chat-head"><a class="back-link" href="#/clubhouse/messages">‹</a>${chatAvatar(c)}<button type="button" class="chat-title" data-action="chat-info"><b>${esc(chatTitle(c))}</b><small>${c.kind === "group" ? `${c.members.length} members · tap for details` : "Tap for details"}</small></button></div>
+      <div class="chat-msgs" id="chat-msgs"></div>
+      <div class="chat-compose">
+        <label class="cc-photo" aria-label="Add a photo">📷<input type="file" id="chat-photo" accept="image/*" hidden></label>
+        <textarea id="chat-text" rows="1" maxlength="2000" placeholder="Message"></textarea>
+        <button class="btn" data-action="chat-send" aria-label="Send">Send</button>
+      </div></div>`;
+    drawChat(true);
+    markRead(id);
+    const ta = $("#chat-text");
+    ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(120, ta.scrollHeight) + "px"; });
+    $("#chat-photo").addEventListener("change", () => sendMessage(true));
+  }
+
+  function drawChat(toBottom) {
+    const box = document.getElementById("chat-msgs");
+    if (!box || !club.chat) return;
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    const group = club.chat.kind === "group";
+    let lastDay = "", lastAuthor = null;
+    box.innerHTML = (club.olderChat ? `<button class="mv-link chat-older" data-action="chat-older">Earlier messages</button>` : "") + club.messages.map(m => {
+      const day = new Date(m.created_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+      const mine = m.author_id === app.user.id;
+      const sep = day !== lastDay ? `<div class="chat-day">${day === new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) ? "Today" : day}</div>` : "";
+      const showName = group && !mine && (lastAuthor !== m.author_id || sep);
+      lastDay = day; lastAuthor = m.author_id;
+      const inner = m.deleted ? `<i class="muted">Message deleted</i>`
+        : `${m.photo_path ? `<button type="button" class="cm-img" data-action="club-photo" data-path="${esc(m.photo_path)}"><img src="${esc(clubUrl("thumbs/" + m.photo_path) || clubUrl(m.photo_path))}" alt="" onerror="if(this.dataset.f)return;this.dataset.f=1;this.src='${esc(clubUrl(m.photo_path))}'"></button>` : ""}${m.body ? `<span>${linkify(m.body)}</span>` : ""}`;
+      return `${sep}<div class="cm ${mine ? "mine" : "theirs"}">${showName ? `<div class="cm-name">${esc(personName(m.author_id))}</div>` : ""}
+        <div class="cm-bubble" ${m.deleted ? "" : `data-action="chat-msg-menu" data-id="${m.id}"`}>${inner}<small>${timeOf(m.created_at)}</small></div></div>`;
+    }).join("") + (club.messages.length ? "" : `<p class="small muted chat-empty">${group ? "Say hello to the group." : `Say hello to ${esc(chatTitle(club.chat).split(" ")[0])}.`}</p>`);
+    if (toBottom || near) box.scrollTop = box.scrollHeight;
+  }
+
+  async function olderMessages() {
+    const first = club.messages[0];
+    if (!first) return;
+    const { data } = await client.from("chat_messages").select("*").eq("chat_id", club.chat.id).lt("created_at", first.created_at).order("created_at", { ascending: false }).limit(60);
+    club.olderChat = (data || []).length === 60;
+    club.messages = (data || []).reverse().concat(club.messages);
+    await signUrls(photoPaths(club.messages.map(m => m.photo_path)));
+    const box = document.getElementById("chat-msgs"), h = box.scrollHeight;
+    drawChat(); box.scrollTop = box.scrollHeight - h;
+  }
+
+  async function markRead(id) {
+    await client.from("chat_members").update({ last_read_at: new Date().toISOString() }).eq("chat_id", id).eq("profile_id", app.user.id);
+    const c = (club.chats || []).find(x => x.id === id);
+    if (c) c.unread = 0;
+    club.unreadChats = (club.chats || []).filter(x => !x.muted).reduce((t, x) => t + (x.unread || 0), 0);
+    paintClubBadge();
+  }
+
+  let sending = false;
+  async function sendMessage(withPhoto) {
+    if (sending || !club.chat) return;
+    const ta = $("#chat-text"), fileIn = $("#chat-photo");
+    const body = (ta.value || "").trim();
+    const file = withPhoto && fileIn.files && fileIn.files[0];
+    if (!body && !file) return;
+    sending = true;
+    const btn = view.querySelector("[data-action=chat-send]");
+    btn.disabled = true;
+    try {
+      const photo_path = file ? await uploadClubPhoto("chat/" + club.chat.id, file) : null;
+      const { data, error } = await client.from("chat_messages").insert({ chat_id: club.chat.id, author_id: app.user.id, body: body || null, photo_path }).select().single();
+      if (error) throw error;
+      if (!club.messages.some(x => x.id === data.id)) club.messages.push(data);
+      if (photo_path) await signUrls(photoPaths([photo_path]));
+      ta.value = ""; ta.style.height = "auto"; fileIn.value = "";
+      drawChat(true);
+    } catch (e) {
+      toast(/row-level security/.test(e.message || "") ? "You can't send messages at the moment. Speak to the committee." : e.message || "Didn't send. Try again.", true);
+    } finally { sending = false; btn.disabled = false; }
+  }
+
+  function chatMsgMenu(id) {
+    const m = club.messages.find(x => x.id === id);
+    if (!m) return;
+    const mine = m.author_id === app.user.id;
+    openSheet(`<div class="fab-list">
+      ${m.body ? `<button type="button" class="fab-item" data-action="chat-copy" data-id="${id}"><span><b>Copy</b></span></button>` : ""}
+      ${mine ? `<button type="button" class="fab-item" data-action="chat-del" data-id="${id}"><span><b>Delete message</b><small>Removes it for everyone in the chat</small></span></button>`
+        : `<button type="button" class="fab-item" data-action="club-report" data-kind="message" data-id="${id}"><span><b>Report to the committee</b><small>They'll see this one message, nothing else in the chat</small></span></button>`}
+    </div><button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Close</button>`);
+  }
+
+  async function chatInfo() {
+    const c = club.chat;
+    const owner = c.role === "owner";
+    openSheet(`<h2>${esc(chatTitle(c))}</h2>
+      ${c.kind === "group" && owner ? `<label class="field">Group name<input id="grp-rename" maxlength="60" value="${esc(c.name || "")}"></label><button class="btn ghost block" data-action="chat-rename">Rename</button>` : ""}
+      <h3 style="margin-top:14px">${c.kind === "group" ? `${c.members.length} members` : "In this chat"}</h3>
+      <div class="people-list">${c.members.map(m => `<div class="person-row">${avatar(m.name, m.id)}<span>${esc(m.name)}${m.id === app.user.id ? " (you)" : ""}${m.role === "owner" && c.kind === "group" ? ' <small class="muted">owner</small>' : ""}</span>
+        ${c.kind === "group" && owner && m.id !== app.user.id ? `<button class="mv-link" data-action="chat-remove" data-profile="${m.id}">Remove</button>` : ""}</div>`).join("")}</div>
+      ${c.kind === "group" && owner ? `<button class="btn ghost block" style="margin-top:8px" data-action="chat-add">Add people</button>` : ""}
+      <label class="check-row" style="margin-top:12px"><input type="checkbox" id="chat-mute" ${c.muted ? "checked" : ""}> Mute notifications for this chat</label>
+      ${c.kind === "group" ? `<button class="btn ghost block danger" style="margin-top:12px" data-action="chat-leave">Leave the group</button>` : ""}
+      <button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Done</button>`);
+    $("#chat-mute").addEventListener("change", async e => {
+      const { error } = await client.from("chat_members").update({ muted: e.target.checked }).eq("chat_id", c.id).eq("profile_id", app.user.id);
+      if (error) toast(error.message, true); else { c.muted = e.target.checked; toast(c.muted ? "Muted" : "Notifications on"); }
+    });
+  }
+
+  async function addPeopleSheet() {
+    const c = club.chat;
+    const inIt = new Set(c.members.map(m => m.id));
+    const people = [...(await clubPeople()).values()].filter(p => !inIt.has(p.id));
+    openSheet(`<h2>Add people</h2><div class="people-list" id="people-list">${people.map(p => `<label class="person-row"><input type="checkbox" value="${p.id}">${avatar(p.display_name, p.id)}<span>${esc(p.display_name)}</span></label>`).join("") || `<p class="small muted">Everyone's already in it.</p>`}</div>
+      <button class="btn block" style="margin-top:10px" data-action="chat-add-go">Add</button><button class="btn ghost block" style="margin-top:8px" data-action="close-sheet">Cancel</button>`);
+  }
+
+  // ---- contact details on a profile ----
+  async function detailsCard(profileId, isMe) {
+    if (!profileId) return "";
+    const { data: card } = await client.rpc("member_card", { p_profile: profileId });
+    if (isMe) {
+      const { data: d } = await client.from("member_details").select("*").eq("profile_id", profileId).maybeSingle();
+      const v = d || {};
+      const vis = (k) => `<select name="${k}_vis" class="vis-sel"><option value="me" ${(v[k + "_vis"] || "me") === "me" ? "selected" : ""}>Only me</option><option value="members" ${v[k + "_vis"] === "members" ? "selected" : ""}>All members</option></select>`;
+      const filled = ["phone", "email", "dob", "address"].filter(k => v[k]).length;
+      return `<div class="card details-card"><div class="row"><h2 style="margin:0">My details</h2><span class="spacer"></span><button class="mv-link" data-action="details-edit">${filled ? "Edit" : "Add"}</button></div>
+        <p class="small muted" style="margin:4px 0 0">${filled ? `${filled} of 4 added. ` : ""}You choose who sees each one. The committee can always see them.</p>
+        <form id="details-form" hidden>
+          <label class="field">Mobile<input name="phone" type="tel" maxlength="30" value="${esc(v.phone || "")}" autocomplete="tel"></label>${vis("phone")}
+          <label class="field">Email<input name="email" type="email" maxlength="200" value="${esc(v.email || "")}" autocomplete="email"></label>${vis("email")}
+          <label class="field">Date of birth<input name="dob" type="date" min="1900-01-01" max="${londonToday()}" value="${esc(v.dob || "")}"></label>${vis("dob")}
+          <p class="small muted" style="margin:-2px 0 6px">Members only ever see the day and month, never the year.</p>
+          <label class="check-row"><input type="checkbox" name="birthday_post" ${v.birthday_post === false ? "" : "checked"}> ${CAKE} Post a happy birthday on the feed on my birthday</label>
+          <label class="field" style="margin-top:10px">Home address<textarea name="address" rows="3" maxlength="300" autocomplete="street-address">${esc(v.address || "")}</textarea></label>${vis("address")}
+          <div class="row" style="gap:8px;margin-top:12px"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-action="details-edit">Cancel</button>
+            ${d ? `<span class="spacer"></span><button class="mv-link danger" type="button" data-action="details-clear">Remove all</button>` : ""}</div>
+        </form>
+        ${detailRows(card || {}, true)}</div>`;
+    }
+    const rows = detailRows(card || {}, false);
+    return rows || app.committee ? `<div class="card details-card"><h2>Contact</h2>${rows || `<p class="small muted">Nothing shared yet.</p>`}${card && card.full && !isMe ? `<p class="small muted" style="margin:6px 0 0">You see everything as committee.</p>` : ""}</div>` : "";
+  }
+  function detailRows(c, mine) {
+    const row = (ico, label, val, href) => val ? `<div class="dt-row"><span class="dt-ico">${ico}</span><span class="dt-body"><small>${label}</small>${href ? `<a href="${href}">${esc(val)}</a>` : esc(val)}</span></div>` : "";
+    return [
+      row("📞", "Mobile", c.phone, c.phone ? "tel:" + String(c.phone).replace(/[^\d+]/g, "") : ""),
+      row("✉️", "Email", c.email, c.email ? "mailto:" + c.email : ""),
+      row(CAKE, "Birthday", mine && c.dob ? fmtDate(c.dob, { day: "numeric", month: "long", year: "numeric" }) : c.birthday),
+      row("🏠", "Address", c.address, c.address ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(c.address) : ""),
+    ].join("");
+  }
+  async function saveDetails(form) {
+    const f = new FormData(form);
+    const row = { profile_id: app.user.id, updated_at: new Date().toISOString(), birthday_post: !!f.get("birthday_post") };
+    ["phone", "email", "dob", "address"].forEach(k => { const v = String(f.get(k) || "").trim(); row[k] = v || null; row[k + "_vis"] = f.get(k + "_vis") || "me"; });
+    if (row.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email)) { toast("That email doesn't look right.", true); return; }
+    const { error } = await client.from("member_details").upsert(row, { onConflict: "profile_id" });
+    if (error) { toast(error.message, true); return; }
+    toast("Details saved"); route();
+  }
+
+  // ---- which notifications a member wants ----
+  const NOTE_KINDS = [
+    ["messages", "Messages", "Direct messages and your group chats"],
+    ["feed", "Clubhouse feed", "New posts, comments and likes on yours, and birthdays"],
+    ["rounds", "Rounds", "Round live, results in, disputes in your group, entries closing and reminders"],
+    ["committee", "Committee", "When something's reported in the Clubhouse"],
+  ];
+  async function notificationsCard() {
+    const { data } = await client.from("notification_prefs").select("*").eq("profile_id", app.user.id).maybeSingle();
+    const v = data || {};
+    // Whether this phone gets them is filled in once the page is up: the
+    // check can take a moment, and the profile shouldn't wait for it.
+    setTimeout(async () => {
+      const sub = pushSupported() ? await currentSub().catch(() => null) : null;
+      const on = !!sub && "Notification" in window && Notification.permission === "granted";
+      const el = document.getElementById("note-status");
+      if (el) el.innerHTML = on ? `<p class="small muted" style="margin-top:-4px">On for this phone. Choose what you get; the number on the app icon counts them until you open the app.</p>`
+        : `<p class="small" style="margin-top:-4px">Notifications are off on this phone.</p><button class="btn gold block" data-action="push-help" style="margin-bottom:10px">Turn them on</button>`;
+    }, 0);
+    return `<div class="card notes-card"><h2>Notifications</h2><div id="note-status"></div>
+      ${NOTE_KINDS.filter(([k]) => k !== "committee" || app.committee).map(([k, l, sub2]) => `<label class="note-row"><span><b>${l}</b><small>${sub2}</small></span>
+        <input type="checkbox" class="switch" data-note="${k}" ${v[k] === false ? "" : "checked"}></label>`).join("")}
+    </div>`;
+  }
+  async function saveNote(kind, on) {
+    const { error } = await client.from("notification_prefs").upsert({ profile_id: app.user.id, [kind]: on, updated_at: new Date().toISOString() }, { onConflict: "profile_id" });
+    if (error) toast(error.message, true); else toast(on ? "On" : "Off");
+  }
+
+  // A member's own page, from the feed or a chat (not every member has a
+  // player record, so this works from the account).
+  async function renderMember(profileId) {
+    const people = await clubPeople();
+    const { data: pl } = await client.from("players").select("id").eq("profile_id", profileId).limit(1);
+    if (pl && pl.length) { location.replace(profileId === app.user.id ? "#/me" : "#/stats/" + pl[0].id); return; }
+    const p = people.get(profileId);
+    if (!p) { view.innerHTML = `<a class="back-link" href="#/clubhouse">‹ Clubhouse</a><div class="card empty"><p>We couldn't find that member.</p></div>`; return; }
+    view.innerHTML = `<a class="back-link" href="#/clubhouse">‹ Clubhouse</a>
+      <div class="profile-head">${avatar(p.display_name, p.id, "big-av")}<div style="flex:1;min-width:0"><h1 style="margin:0">${esc(p.display_name)}</h1>
+        <div class="small muted">${p.handicap != null ? `Handicap ${p.handicap}` : "Member"}</div></div></div>
+      ${p.id !== app.user.id ? `<button class="btn block" data-action="chat-start" data-profile="${p.id}" style="margin:10px 0">Message ${esc(String(p.display_name).split(" ")[0])}</button>` : ""}
+      ${await detailsCard(p.id, p.id === app.user.id)}`;
+  }
+
+  // Tap a profile picture: see it big.
+  function zoomAvatar(el) {
+    const img = el.querySelector("img");
+    if (!img) return false;
+    const ov = document.createElement("div");
+    ov.className = "zoom-ov";
+    ov.innerHTML = `<img src="${esc(img.src)}" alt=""><button type="button" aria-label="Close">✕</button>`;
+    ov.addEventListener("click", () => ov.remove());
+    document.addEventListener("keydown", function k(e) { if (e.key === "Escape") { ov.remove(); document.removeEventListener("keydown", k); } });
+    document.body.appendChild(ov);
+    return true;
+  }
 
   // ---------- phone notifications ----------
   // Round published, results in, a dispute in your group. On an iPhone
@@ -845,8 +1436,7 @@
     } else if (Notification.permission === "denied") {
       body = `<p>Notifications are blocked for the app. Turn them on in your phone's settings${pf.ios ? " (Settings → Notifications → Falkners Golf)" : " (Chrome → Site settings → Notifications)"}, then come back here.</p>`;
     } else {
-      body = `<p>Get a buzz when:</p>
-        <ul class="push-list"><li>the committee publishes a round you're playing</li><li>a score in your group is disputed</li><li>the results are in</li></ul>
+      body = `<p>Get a buzz, and a number on the app icon, for messages, the Clubhouse feed and your rounds. Choose which in <a href="#/me" data-action="close-sheet">your profile</a>.</p>
         ${on ? `<p class="status-msg ok small">Notifications are on for this phone.</p><button class="btn ghost block" data-action="push-off">Turn them off</button>`
              : `<button class="btn gold block" data-action="push-on">Turn on notifications</button>`}`;
     }
@@ -1292,7 +1882,14 @@
     if (app.pollTimer) { clearInterval(app.pollTimer); app.pollTimer = null; }
   }
 
+  // Opening the app clears the number on its icon.
+  function clearBadge() {
+    if (!app.user || app.guest) return;
+    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+    client.rpc("mark_notifications_seen").then(() => {}, () => {});
+  }
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") { clearBadge(); if (app.user && !app.guest) clubCounts().catch(() => {}); }
     if (document.visibilityState === "visible" && app.round) reloadRound(true);
   });
 
@@ -1448,9 +2045,10 @@
   };
   const ICO_GEAR = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="6.2"/><circle cx="12" cy="12" r="2.2"/><path d="M19.2 12.0L21.8 12.0 M17.1 17.1L18.9 18.9 M12.0 19.2L12.0 21.8 M6.9 17.1L5.1 18.9 M4.8 12.0L2.2 12.0 M6.9 6.9L5.1 5.1 M12.0 4.8L12.0 2.2 M17.1 6.9L18.9 5.1"/></svg>';
   function mainTabbar(active) {
-    const tabs = [["play", "Play", "#/"], ["season", "Order of Merit", "#/season"], ["records", "Records", "#/records"], ["me", "Profile", "#/me"]];
-    showTabbar(tabs.map(([k, l, h]) => `<button role="tab" data-action="main-tab" data-href="${h}" aria-selected="${active === k}">${MAIN_ICONS[k]}<span>${l}</span></button>`).join(""));
+    const tabs = [["play", "Play", "#/"], ["club", "Clubhouse", "#/clubhouse"], ["season", "Order of Merit", "#/season"], ["records", "Records", "#/records"], ["me", "Profile", "#/me"]];
+    showTabbar(tabs.map(([k, l, h]) => `<button role="tab" data-action="main-tab" data-href="${h}" aria-selected="${active === k}">${k === "club" ? clubIcon() : MAIN_ICONS[k]}<span>${l}</span>${k === "club" ? `<i class="tab-badge" id="club-badge" hidden></i>` : ""}</button>`).join(""));
     $("#fab").hidden = false;
+    paintClubBadge();
   }
 
   function fabSheet() {
@@ -6002,6 +6600,96 @@
         if (error) toast(error.message, true); else { r.comments = r.comments.filter(x => x.id !== el.dataset.id); renderRoundBody(); }
         break;
       }
+      case "club-post": clubPost(); break;
+      case "club-more": await loadFeed(false); drawClubhouse("feed"); break;
+      case "club-like": clubLike(el.dataset.id); break;
+      case "club-comments": club.openPost = club.openPost === el.dataset.id ? null : el.dataset.id; drawClubhouse("feed"); { const i = document.getElementById("cc-" + el.dataset.id); if (i) i.focus(); } break;
+      case "club-comment": clubComment(el.dataset.id); break;
+      case "club-post-menu": clubPostMenu(el.dataset.id); break;
+      case "club-del-post": {
+        closeSheet();
+        const { error } = await client.from("club_posts").delete().eq("id", el.dataset.id);
+        if (error) { toast(error.message, true); break; }
+        club.posts = club.posts.filter(x => x.id !== el.dataset.id); toast("Post deleted"); drawClubhouse("feed"); break;
+      }
+      case "club-del-comment": {
+        const { error } = await client.from("club_comments").delete().eq("id", el.dataset.id);
+        if (error) { toast(error.message, true); break; }
+        club.comments = club.comments.filter(x => x.id !== el.dataset.id); drawClubhouse("feed"); break;
+      }
+      case "club-report": reportSheet(el.dataset.kind, el.dataset.id); break;
+      case "club-report-send": {
+        const { error } = await client.rpc("report_item", { p_kind: el.dataset.kind, p_id: el.dataset.id, p_reason: ($("#report-reason") || {}).value || null });
+        closeSheet(); toast(error ? error.message : "Thanks, the committee will take a look", !!error); break;
+      }
+      case "club-hide": {
+        closeSheet();
+        const hide = el.dataset.hide === "true";
+        const { error } = await client.rpc("moderate", { p_kind: el.dataset.kind, p_id: el.dataset.id, p_hide: hide });
+        if (error) { toast(error.message, true); break; }
+        toast(hide ? "Hidden from members" : "Back on the feed");
+        if (location.hash === "#/clubhouse/reports") renderClubhouse("reports"); else { await loadFeed(true); drawClubhouse("feed"); }
+        break;
+      }
+      case "club-mute": muteSheet(el.dataset.profile); break;
+      case "club-mute-go": {
+        const days = el.dataset.days === "" ? null : Number(el.dataset.days);
+        const { error } = await client.rpc("mute_member", { p_profile: el.dataset.profile, p_days: days });
+        closeSheet(); toast(error ? error.message : days == null ? "Mute lifted" : "Muted", !!error); break;
+      }
+      case "club-resolve": {
+        const { error } = await client.rpc("resolve_report", { p_report: el.dataset.id });
+        if (error) toast(error.message, true); else renderClubhouse("reports"); break;
+      }
+      case "club-photo": {
+        const p = el.dataset.path;
+        await signUrls([p]);
+        openSheet(`<img src="${esc(clubUrl(p))}" alt="" style="width:100%;border-radius:12px;display:block"><button class="btn ghost block" style="margin-top:10px" data-action="close-sheet">Close</button>`); break;
+      }
+      case "chat-new": newChatSheet(false); break;
+      case "chat-new-group": newChatSheet(true); break;
+      case "chat-start": openDirect(el.dataset.profile); break;
+      case "chat-make-group": makeGroup(); break;
+      case "chat-send": sendMessage(false); break;
+      case "chat-older": olderMessages(); break;
+      case "chat-msg-menu": chatMsgMenu(el.dataset.id); break;
+      case "chat-copy": { const m = club.messages.find(x => x.id === el.dataset.id); closeSheet(); try { await navigator.clipboard.writeText(m.body); toast("Copied"); } catch (e2) { toast("Couldn't copy", true); } break; }
+      case "chat-del": {
+        closeSheet();
+        const { error } = await client.rpc("delete_message", { p_message: el.dataset.id });
+        if (error) { toast(error.message, true); break; }
+        club.messages = club.messages.map(x => x.id === el.dataset.id ? { ...x, deleted: true, body: null, photo_path: null } : x); drawChat(); break;
+      }
+      case "chat-info": chatInfo(); break;
+      case "chat-rename": {
+        const { error } = await client.rpc("rename_group", { p_chat: club.chat.id, p_name: $("#grp-rename").value });
+        if (error) { toast(error.message, true); break; }
+        closeSheet(); renderChat(club.chat.id); break;
+      }
+      case "chat-add": addPeopleSheet(); break;
+      case "chat-add-go": {
+        const ids = [...document.querySelectorAll("#people-list input:checked")].map(i => i.value);
+        if (!ids.length) { closeSheet(); break; }
+        const { error } = await client.rpc("add_to_group", { p_chat: club.chat.id, p_members: ids });
+        if (error) { toast(error.message, true); break; }
+        closeSheet(); renderChat(club.chat.id); break;
+      }
+      case "chat-remove": {
+        const { error } = await client.rpc("leave_chat", { p_chat: club.chat.id, p_member: el.dataset.profile });
+        if (error) { toast(error.message, true); break; }
+        closeSheet(); renderChat(club.chat.id); break;
+      }
+      case "chat-leave": {
+        const { error } = await client.rpc("leave_chat", { p_chat: club.chat.id, p_member: null });
+        if (error) { toast(error.message, true); break; }
+        closeSheet(); toast("You've left the group"); location.hash = "#/clubhouse/messages"; break;
+      }
+      case "details-edit": { const f = $("#details-form"); if (f) f.hidden = !f.hidden; break; }
+      case "details-clear": {
+        const { error } = await client.from("member_details").delete().eq("profile_id", app.user.id);
+        if (error) toast(error.message, true); else { toast("Details removed"); route(); } break;
+      }
+      case "zoom-avatar": zoomAvatar(el); break;
       case "photo": openSheet(`<img src="${esc(el.dataset.src)}" alt="" style="width:100%;border-radius:12px;display:block">`); break;
       case "share-card": shareCard(r, el.dataset.player); break;
       case "share-board": shareBoard(r, el.dataset.kind); break;
@@ -6191,8 +6879,14 @@
     }
     if (!app.approved) return renderNotApproved();
     const mainKey = parts[0] === "" ? "play" : ["season", "records", "me"].includes(parts[0]) ? parts[0]
+      : ["clubhouse", "member"].includes(parts[0]) ? "club"
       : ["stats", "statistics", "bag", "courses", "course", "handicaps"].includes(parts[0]) ? "" : null;
     if (mainKey != null) mainTabbar(mainKey);
+    if (parts[0] !== "chat") club.chat = null;
+    if (!club.counted) { club.counted = true; clubCounts().catch(() => {}); clubSubscribe(); clearBadge(); }
+    if (parts[0] === "clubhouse") return renderClubhouse(parts[1]);
+    if (parts[0] === "chat" && parts[1]) return renderChat(parts[1]);
+    if (parts[0] === "member" && parts[1]) return renderMember(parts[1]);
     if (parts[0] === "round" && parts[1]) return renderRound(parts[1], parts[2] === "start");
     if (parts[0] === "courses") return parts[1] ? renderCourseInfo(parts[1]) : renderCourses();
     if (parts[0] === "new-game") return renderNewGame();
@@ -6216,6 +6910,18 @@
   }
 
   window.addEventListener("hashchange", route);
+  document.addEventListener("submit", e => {
+    if (e.target && e.target.id === "details-form") { e.preventDefault(); saveDetails(e.target); }
+  });
+  document.addEventListener("change", e => {
+    if (e.target && e.target.dataset && e.target.dataset.note) { saveNote(e.target.dataset.note, e.target.checked); return; }
+    if (e.target && e.target.id === "club-photos") {
+      const files = [...e.target.files];
+      if (files.length > 4) toast("Up to 4 photos in a post: the first 4 will go up.", true);
+      const box = document.getElementById("club-previews");
+      if (box) box.innerHTML = files.slice(0, 4).map(f => `<img src="${URL.createObjectURL(f)}" alt="">`).join("");
+    }
+  });
 
   client.auth.onAuthStateChange((evt) => {
     if (evt === "SIGNED_OUT") { app.user = null; route(); }

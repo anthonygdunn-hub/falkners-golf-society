@@ -2,14 +2,14 @@
 // The shell (pages, styles, scripts) comes from the network when it can
 // and from the cache when it can't. Data calls to Supabase are never
 // cached — scores queue on the phone instead (see app.js).
-const CACHE = "falkners-app-v26";
+const CACHE = "falkners-app-v27";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.css?v=26",
-  "./app.js?v=26",
-  "./scoring.js?v=26",
-  "./maps.js?v=26",
+  "./app.css?v=27",
+  "./app.js?v=27",
+  "./scoring.js?v=27",
+  "./maps.js?v=27",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "../js/config.js",
@@ -82,11 +82,15 @@ self.addEventListener("fetch", e => {
 self.addEventListener("push", e => {
   let m = {};
   try { m = e.data ? e.data.json() : {}; } catch (err) { m = { title: "Falkners Golf", body: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(m.title || "Falkners Golf", {
+  // The number on the app icon: everything that's arrived since the app
+  // was last opened (iPhone home-screen app, and Android where supported).
+  const badge = self.navigator && self.navigator.setAppBadge && m.badge != null
+    ? self.navigator.setAppBadge(Number(m.badge) || 0).catch(() => {}) : Promise.resolve();
+  e.waitUntil(Promise.all([badge, self.registration.showNotification(m.title || "Falkners Golf", {
     body: m.body || "", tag: m.tag, renotify: !!m.tag,
     icon: "icons/icon-192.png", badge: "icons/icon-192.png",
     data: { url: m.url || "./" },
-  }));
+  })]));
 });
 
 self.addEventListener("notificationclick", e => {

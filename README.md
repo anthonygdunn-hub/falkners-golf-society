@@ -158,6 +158,8 @@ it again.
 39. `sql/course-details.sql` — course website, phone, logo and photos, and filling a new course in from OpenStreetMap
 40. `sql/course-data-2026-11.sql` — scorecards and hole maps for the October 2026 courses (already applied)
 41. `sql/game-formats.sql` — private games: scramble, alternate shot, greensomes, better ball, match play, own contests and money (pots and settle-up)
+42. `sql/clubhouse.sql` — the Clubhouse: members' contact details (private by default), society feed with birthday posts, direct messages and group chats, reports and mutes
+43. `sql/notifications.sql` — members' notification choices, the list behind the number on the app icon, and the Clubhouse push triggers
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

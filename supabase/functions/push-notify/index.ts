@@ -64,13 +64,28 @@ async function groupProfiles(eventId: string, playerId: string, hole: number): P
   return [...ids];
 }
 
-async function send(profileIds: string[], message: { title: string; body: string; url: string; tag: string }) {
-  if (!profileIds.length) return { sent: 0 };
-  const { data: subs } = await admin.from("push_subscriptions").select("endpoint, p256dh, auth").in("profile_id", profileIds);
+type Kind = "messages" | "feed" | "rounds" | "committee";
+
+// Send to the phones of these members, leaving out anyone who's switched
+// this kind of notification off. Each one is written down first: that list
+// is the number on the app icon (cleared when they open the app).
+async function send(profileIds: string[], message: { title: string; body: string; url: string; tag: string }, kind: Kind = "rounds") {
+  let ids = [...new Set(profileIds.filter(Boolean))];
+  if (!ids.length) return { sent: 0 };
+  const { data: prefs } = await admin.from("notification_prefs").select("profile_id, messages, feed, rounds, committee").in("profile_id", ids);
+  const off = new Set((prefs ?? []).filter((p) => (p as Record<string, unknown>)[kind] === false).map((p) => p.profile_id));
+  ids = ids.filter((id) => !off.has(id));
+  if (!ids.length) return { sent: 0, off: off.size };
+  await admin.from("notifications").insert(ids.map((profile_id) => ({ profile_id, kind, title: message.title, body: message.body, url: message.url })));
+  const { data: unseen } = await admin.from("notifications").select("profile_id").in("profile_id", ids).is("seen_at", null);
+  const badge = new Map<string, number>();
+  (unseen ?? []).forEach((n) => badge.set(n.profile_id, (badge.get(n.profile_id) ?? 0) + 1));
+  const { data: subs } = await admin.from("push_subscriptions").select("endpoint, p256dh, auth, profile_id").in("profile_id", ids);
   let sent = 0;
   await Promise.all((subs ?? []).map(async (s) => {
     try {
-      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(message), { TTL: 3600 });
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+        JSON.stringify({ ...message, badge: badge.get(s.profile_id) ?? 1 }), { TTL: 3600 });
       sent++;
     } catch (err) {
       const code = (err as { statusCode?: number }).statusCode;
@@ -180,6 +195,95 @@ async function reminders() {
   return { at: now, done };
 }
 
+// ---------- the Clubhouse ----------
+// Nothing in the call is trusted: each one reads the row it's about.
+
+async function nameOf(profileId: string | null) {
+  if (!profileId) return "A member";
+  const { data } = await admin.from("profiles").select("display_name").eq("id", profileId).maybeSingle();
+  return data?.display_name ?? "A member";
+}
+async function members(): Promise<string[]> {
+  const { data } = await admin.from("memberships").select("profile_id").eq("status", "approved");
+  return (data ?? []).map((m) => m.profile_id);
+}
+const clip = (t: string | null | undefined, n = 120) => { const s = String(t ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const first = (name: string) => name.split(" ")[0];
+
+async function clubhouse(type: string, id: string, by: string) {
+  if (!UUID.test(id)) return { ignored: "bad id" };
+  const feed = `${SITE}/app/#/clubhouse`;
+
+  if (type === "message") {
+    const { data: m } = await admin.from("chat_messages").select("chat_id, author_id, body, photo_path, deleted").eq("id", id).maybeSingle();
+    if (!m || m.deleted || !(await firstTime(`msg:${id}`))) return { ignored: "no message" };
+    const { data: c } = await admin.from("chats").select("kind, name").eq("id", m.chat_id).maybeSingle();
+    const { data: cm } = await admin.from("chat_members").select("profile_id, muted").eq("chat_id", m.chat_id);
+    const to = (cm ?? []).filter((x) => x.profile_id !== m.author_id && !x.muted).map((x) => x.profile_id);
+    const who = await nameOf(m.author_id);
+    const text = m.body ? clip(m.body) : "📷 Photo";
+    return await send(to, {
+      title: c?.kind === "group" ? (c?.name ?? "Group") : who,
+      body: c?.kind === "group" ? `${first(who)}: ${text}` : text,
+      url: `${SITE}/app/#/chat/${m.chat_id}`, tag: `chat-${m.chat_id}`,
+    }, "messages");
+  }
+
+  if (type === "club_post" || type === "birthday") {
+    const { data: p } = await admin.from("club_posts").select("author_id, kind, body, photo_paths, birthday_of, hidden").eq("id", id).maybeSingle();
+    if (!p || p.hidden || !(await firstTime(`post:${id}`))) return { ignored: "no post" };
+    const everyone = await members();
+    if (p.kind === "birthday") {
+      const name = await nameOf(p.birthday_of);
+      const a = await send(everyone.filter((x) => x !== p.birthday_of), {
+        title: `🎂 It's ${name}'s birthday`, body: `Wish ${first(name)} a happy birthday on the Clubhouse feed.`, url: feed, tag: `bday-${id}`,
+      }, "feed");
+      const b = await send([p.birthday_of], {
+        title: `🎂 Happy birthday, ${first(name)}!`, body: "From everyone at the Falkners. See your birthday messages on the Clubhouse feed.", url: feed, tag: `bday-${id}`,
+      }, "feed");
+      return { members: a, them: b };
+    }
+    const who = await nameOf(p.author_id);
+    return await send(everyone.filter((x) => x !== p.author_id), {
+      title: `${who} posted`, body: p.body ? clip(p.body) : (p.photo_paths ?? []).length > 1 ? "Shared some photos" : "Shared a photo",
+      url: feed, tag: `post-${id}`,
+    }, "feed");
+  }
+
+  if (type === "club_comment") {
+    const { data: c } = await admin.from("club_comments").select("post_id, author_id, body").eq("id", id).maybeSingle();
+    if (!c || !(await firstTime(`comment:${id}`))) return { ignored: "no comment" };
+    const { data: p } = await admin.from("club_posts").select("author_id, kind, birthday_of").eq("id", c.post_id).maybeSingle();
+    const owner = p?.kind === "birthday" ? p?.birthday_of : p?.author_id;
+    if (!owner || owner === c.author_id) return { ignored: "own post" };
+    const who = await nameOf(c.author_id);
+    return await send([owner], {
+      title: p?.kind === "birthday" ? `🎂 ${who} wished you a happy birthday` : `${who} commented on your post`,
+      body: clip(c.body), url: feed, tag: `post-${c.post_id}`,
+    }, "feed");
+  }
+
+  if (type === "club_like") {
+    if (!UUID.test(by)) return { ignored: "bad like" };
+    const { data: l } = await admin.from("club_likes").select("post_id").eq("post_id", id).eq("profile_id", by).maybeSingle();
+    const { data: p } = await admin.from("club_posts").select("author_id, kind").eq("id", id).maybeSingle();
+    if (!l || !p?.author_id || p.author_id === by || p.kind === "birthday") return { ignored: "no like" };
+    if (!(await firstTime(`like:${id}:${by}`))) return { ignored: "already sent" };
+    return await send([p.author_id], { title: `${await nameOf(by)} liked your post`, body: "", url: feed, tag: `post-${id}` }, "feed");
+  }
+
+  if (type === "report") {
+    const { data: r } = await admin.from("club_reports").select("kind").eq("id", id).maybeSingle();
+    if (!r || !(await firstTime(`report:${id}`))) return { ignored: "no report" };
+    const { data: com } = await admin.from("memberships").select("profile_id").eq("status", "approved").eq("role", "committee");
+    return await send((com ?? []).map((x) => x.profile_id), {
+      title: "Something's been reported", body: `A member has reported a ${r.kind} in the Clubhouse. Tap to take a look.`,
+      url: `${SITE}/app/#/clubhouse/reports`, tag: `report-${id}`,
+    }, "committee");
+  }
+  return { ignored: type };
+}
+
 // Write down that this one's gone. False if it already had.
 async function firstTime(key: string): Promise<boolean> {
   const { error } = await admin.from("push_sent").insert({ key });
@@ -201,9 +305,10 @@ Deno.serve(async (req) => {
     const k = await keys();
     webpush.setVapidDetails("mailto:" + (Deno.env.get("ALERTS_TO") ?? "committee@thefalknersarmsgolfsociety.co.uk"), k.public_key, k.private_key);
 
-    const { type, event_id, player_id, hole } = await req.json().catch(() => ({}));
+    const { type, event_id, player_id, hole, id, by } = await req.json().catch(() => ({}));
     if (type === "init") return json({ ready: true });
     if (type === "reminders") return json(await reminders());
+    if (["message", "club_post", "birthday", "club_comment", "club_like", "report"].includes(type)) return json(await clubhouse(type, String(id), by ? String(by) : ""));
     if (!UUID.test(String(event_id))) return json({ ignored: "bad event" });
 
     const { data: ev } = await admin.from("events").select("name, venue").eq("id", event_id).maybeSingle();
