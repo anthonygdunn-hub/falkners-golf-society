@@ -6205,6 +6205,12 @@
     try { await loadUser(); }
     catch (e) { /* offline at launch — fall through to sign in */ }
     route();
+    // Arrived from the install page (/get): show the steps straight away,
+    // and tidy the address so the home-screen icon opens the app itself.
+    if (new URLSearchParams(location.search).has("install")) {
+      history.replaceState(null, "", location.pathname + location.hash);
+      if (!isStandalone()) setTimeout(installSheet, 400);
+    }
     flushQueue();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   })();
