@@ -1321,6 +1321,12 @@
       results: app.round.results };
     try {
       const r = await loadRound(app.round.id);
+      // Fetch typed-in results afresh, so a change made on the website
+      // shows here on the next refresh rather than the old figures.
+      if (keep.results) {
+        const { data: res } = await client.from("results").select("player_id, points, gross_score, handicap, players(name, profile_id)").eq("event_id", r.id);
+        if (res && res.length) keep.results = res;
+      }
       Object.assign(r, keep);
       app.round = r;
       if (!(quiet && keep.tab === "setup")) renderRoundBody();
