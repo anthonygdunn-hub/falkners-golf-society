@@ -780,6 +780,12 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
 .pp-note { font-size: .7rem; color: #555; margin: 8px 0 0; }
 .pp-page h3 { font-size: .9rem; margin: 12px 0 4px; }
 .pp-toolbar { margin-bottom: 14px; }
+.pdf-stage { position: fixed; left: -10000px; top: 0; width: 760px; background: #fff; }
+.pdf-stage .pp-page { box-shadow: none; border-radius: 0; padding: 0 0 4px; font-size: 13px; overflow: visible; margin-bottom: 0; }
+.pdf-stage .pp-card td.pp-sc { height: 34px; width: 90px; }
+.pdf-stage .pp-card td.pp-pt { width: 50px; }
+.pdf-stage .pp-card tbody td:nth-child(-n+4) { width: 40px; }
+.pdf-stage .pp-dots { font-size: 12px; }
 @media print {
   @page { size: A4; margin: 10mm; }
   body { background: #fff !important; padding: 0 !important; }

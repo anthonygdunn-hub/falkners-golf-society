@@ -4301,6 +4301,82 @@
         <button class="btn gold block" data-action="print">🖨️ Print or save as PDF</button></div>
       <div class="print-pack">${start}${allGroups.map(card).join("")}${stakes}</div>`;
     document.body.classList.add("printing-pack");
+    app.packFile = null;
+    app.packName = `${ev.name} print pack.pdf`;
+  }
+
+  // An app added to the iPhone home screen ignores window.print(), so
+  // there (and in any installed app) the pack is drawn into a PDF on the
+  // phone and handed to the share sheet: Print, Save to Files, WhatsApp…
+  // In a normal browser tab the browser's own print still does the job.
+  const installedApp = () => window.navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  const PDF_LIBS = ["https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"];
+  function loadScriptOnce(src) {
+    return new Promise((ok, fail) => {
+      if (document.querySelector(`script[src="${src}"]`)) return ok();
+      const s = document.createElement("script");
+      s.src = src; s.onload = () => ok(); s.onerror = () => { s.remove(); fail(new Error("no connection")); };
+      document.head.appendChild(s);
+    });
+  }
+  async function makePackPdf() {
+    for (const src of PDF_LIBS) await loadScriptOnce(src);
+    const pack = document.querySelector(".print-pack");
+    if (!pack) throw new Error("the pack isn't open");
+    const stage = document.createElement("div");
+    stage.className = "pdf-stage";
+    stage.innerHTML = pack.innerHTML;
+    document.body.appendChild(stage);
+    try {
+      const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+      const pages = [...stage.querySelectorAll(".pp-page")];
+      for (let i = 0; i < pages.length; i++) {
+        const c = await window.html2canvas(pages[i], { scale: 2, backgroundColor: "#ffffff", logging: false });
+        let w = 190, h = c.height * w / c.width;
+        if (h > 277) { h = 277; w = c.width * h / c.height; }
+        if (i) pdf.addPage();
+        pdf.addImage(c.toDataURL("image/jpeg", 0.9), "JPEG", (210 - w) / 2, 10, w, h);
+      }
+      return pdf.output("blob");
+    } finally { stage.remove(); }
+  }
+  function openPdf(f) {
+    const url = URL.createObjectURL(f);
+    const a = document.createElement("a");
+    a.href = url; a.download = f.name; a.target = "_blank"; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  }
+  async function sharePack(btn) {
+    const f = app.packFile;
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f], title: f.name }); }
+      catch (e) {
+        // Too long since the tap for the phone to allow the share sheet:
+        // one more tap opens it.
+        if (e.name === "NotAllowedError") { btn.textContent = "📄 PDF ready: tap to print or share"; return; }
+        if (e.name !== "AbortError") openPdf(f);
+      }
+      btn.textContent = "📄 Print or share the PDF again";
+      return;
+    }
+    openPdf(f);
+  }
+  async function printPack(btn) {
+    if (!installedApp()) { window.print(); return; }
+    if (app.packFile) return sharePack(btn);
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Making the PDF…";
+    try {
+      const blob = await makePackPdf();
+      app.packFile = new File([blob], (app.packName || "Print pack.pdf").replace(/[\\/:*?"<>|]/g, ""), { type: "application/pdf" });
+      btn.disabled = false;
+      await sharePack(btn);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = label;
+      toast("Couldn't make the PDF (" + e.message + "). Try again with a signal.", true);
+    }
   }
 
   // ---------- prize-giving screen ----------
@@ -6450,7 +6526,7 @@
       case "present-prev": if (present.i > 0) { present.i--; drawPresent(); } break;
       case "present-exit": exitPresent(); break;
       case "present-full": { const el2 = document.documentElement; if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el2.requestFullscreen) el2.requestFullscreen().catch(() => toast("Full screen isn't available here — use the browser's own full-screen option.", true)); else toast("Use your browser's full-screen option (on an iPad: Share → Add to Home Screen).", true); break; }
-      case "print": window.print(); break;
+      case "print": printPack(el); break;
       case "rec-year": records.year = el.dataset.year; drawRecords(); break;
       case "rc-tab": rc.tab = el.dataset.tab; if (rc.tab === "setup") await rcEnsureTees(); drawRyder(); window.scrollTo(0, 0); break;
       case "rc-create": await rcDo(client.from("rc_cups").insert({ event_id: rc.data.id }), "Ryder Cup set up — now name the teams"); rc.tab = "setup"; await rcEnsureTees(); drawRyder(); break;
