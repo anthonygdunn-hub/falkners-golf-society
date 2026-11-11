@@ -4275,7 +4275,7 @@
     const head = (t) => `<div class="pp-head"><img src="icons/icon-192.png" alt=""><div><div class="pp-kick">The Falkners Arms Golf Society</div><h1>${t}</h1>
       <div class="pp-sub">${esc(ev.name)} · ${esc(r.course ? r.course.name : ev.venue || "")} · ${esc(r.tee.name)} tees · ${fmtDate(ev.event_date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div></div></div>`;
     const cs = contestsOn(r);
-    const start = `<section class="pp-page">${head("Start sheet")}
+    const start = `<section class="pp-page pp-part-start">${head("Start sheet")}
       <div class="pp-facts"><span>First tee <b>${ev.tee_time ? ev.tee_time.slice(0, 5) : "—"}</b></span><span>Par <b>${parTotal(r)}</b></span>${r.tee.slope ? `<span>Slope <b>${r.tee.slope}</b></span>` : ""}${r.tee.course_rating ? `<span>CR <b>${r.tee.course_rating}</b></span>` : ""}<span>Allowance <b>${esc(String(r.setup.allowance))}%</b></span></div>
       <table class="pp-table"><thead><tr><th>Group</th><th>Tee time</th><th>Player</th><th>Index</th><th>Plays off</th><th>Pair</th><th>Here</th></tr></thead>
       <tbody>${allGroups.map(([n, ps]) => ps.map((p, i) => `<tr class="${i === 0 ? "pp-first" : ""}"><td>${i === 0 ? n : ""}</td><td>${i === 0 && n !== "–" ? teeTimeFor(r, n) : ""}</td><td>${esc(p.name)}${p.guest ? " (guest)" : ""}</td><td>${p.index == null ? "" : p.index}</td><td><b>${p.ph == null ? "" : p.ph}</b></td><td>${(p.pairs || []).join(", ")}</td><td class="pp-box"></td></tr>`).join("")).join("")}</tbody></table>
@@ -4285,24 +4285,29 @@
       const sums = ps.map(p => S.summarise(r.holes, {}, p.ph));
       const row = h => `<tr><td class="pp-h">${h.hole}</td><td>${h.yards || ""}</td><td>${h.par}</td><td>${h.stroke_index}</td>${ps.map((p, i) => { const sh = sums[i].holes[h.hole].shots; return `<td class="pp-sc"><span class="pp-dots">${sh > 0 ? "•".repeat(Math.min(sh, 3)) : sh < 0 ? "+" : ""}</span></td><td class="pp-pt"></td>`; }).join("")}</tr>`;
       const tot = (label, hs) => `<tr class="pp-tot"><td>${label}</td><td>${hs.reduce((t, h) => t + (h.yards || 0), 0) || ""}</td><td>${hs.reduce((t, h) => t + h.par, 0)}</td><td></td>${ps.map(() => `<td></td><td></td>`).join("")}</tr>`;
-      return `<section class="pp-page">${head(n === "–" ? "Scorecard" : "Scorecard · Group " + n)}
+      return `<section class="pp-page pp-part-cards">${head(n === "–" ? "Scorecard" : "Scorecard · Group " + n)}
         <table class="pp-card"><thead><tr><th>Hole</th><th>Yds</th><th>Par</th><th>SI</th>${ps.map(p => `<th colspan="2">${esc(p.name)}<small>plays off ${p.ph == null ? "?" : p.ph}</small></th>`).join("")}</tr>
           <tr class="pp-sub2"><th></th><th></th><th></th><th></th>${ps.map(() => `<th>Score</th><th>Pts</th>`).join("")}</tr></thead>
           <tbody>${r.holes.slice(0, 9).map(row).join("")}${tot("Out", r.holes.slice(0, 9))}${r.holes.slice(9).map(row).join("")}${tot("In", r.holes.slice(9))}${tot("Total", r.holes)}</tbody></table>
         <div class="pp-sign"><span>Marker's signature</span><span>Player's signature</span></div>
         ${n !== "–" && teeTimeFor(r, n) ? `<p class="pp-note">Tee time ${teeTimeFor(r, n)}</p>` : ""}</section>`;
     };
-    const stakes = cs.map(c => `<section class="pp-page">${head(esc(c.label))}
+    const stakes = cs.map(c => `<section class="pp-page pp-part-stakes">${head(esc(c.label))}
       <div class="pp-facts"><span>Hole <b>${c.holeNo}</b></span><span>${esc(c.nine)}</span></div>
       <p>Write your name under the last one if you're in front. The last group brings this back to the clubhouse.</p>
       <table class="pp-table pp-stake"><thead><tr><th>#</th><th>Name</th><th>Group</th></tr></thead><tbody>${Array.from({ length: 14 }, (_, i) => `<tr><td>${i + 1}</td><td></td><td></td></tr>`).join("")}</tbody></table></section>`).join("");
     view.innerHTML = `<div class="pp-toolbar no-print"><a class="back-link" href="#/round/${r.id}">‹ Back to the round</a>
         <p class="small muted">${allGroups.length} scorecard${allGroups.length > 1 ? "s" : ""}${cs.length ? `, ${cs.length} stake sheet${cs.length > 1 ? "s" : ""}` : ""} and the start sheet. On a phone, Print lets you save it as a PDF or share it.</p>
-        <button class="btn gold block" data-action="print">🖨️ Print or save as PDF</button></div>
+        <button class="btn gold block" data-action="print" data-part="all">🖨️ Print everything</button>
+        <div class="pp-parts">
+          <button class="btn ghost" data-action="print" data-part="start">Start sheet</button>
+          <button class="btn ghost" data-action="print" data-part="cards">Scorecards</button>
+          ${cs.length ? `<button class="btn ghost" data-action="print" data-part="stakes">Stake sheets</button>` : ""}
+        </div></div>
       <div class="print-pack">${start}${allGroups.map(card).join("")}${stakes}</div>`;
     document.body.classList.add("printing-pack");
-    app.packFile = null;
-    app.packName = `${ev.name} print pack.pdf`;
+    app.packFiles = {};
+    app.packName = ev.name;
   }
 
   // An app added to the iPhone home screen ignores window.print(), so
@@ -4320,7 +4325,9 @@
       document.head.appendChild(s);
     });
   }
-  async function makePackPdf() {
+  const PART_NAMES = { all: "print pack", start: "start sheet", cards: "scorecards", stakes: "stake sheets" };
+  const partSel = part => part === "all" ? ".pp-page" : ".pp-part-" + part;
+  async function makePackPdf(part) {
     for (const src of PDF_LIBS) await loadScriptOnce(src);
     const pack = document.querySelector(".print-pack");
     if (!pack) throw new Error("the pack isn't open");
@@ -4330,7 +4337,7 @@
     document.body.appendChild(stage);
     try {
       const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
-      const pages = [...stage.querySelectorAll(".pp-page")];
+      const pages = [...stage.querySelectorAll(partSel(part))];
       for (let i = 0; i < pages.length; i++) {
         const c = await window.html2canvas(pages[i], { scale: 2, backgroundColor: "#ffffff", logging: false });
         let w = 190, h = c.height * w / c.width;
@@ -4348,31 +4355,40 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 120000);
   }
-  async function sharePack(btn) {
-    const f = app.packFile;
+  async function sharePack(btn, f) {
     if (navigator.canShare && navigator.canShare({ files: [f] })) {
       try { await navigator.share({ files: [f], title: f.name }); }
       catch (e) {
         // Too long since the tap for the phone to allow the share sheet:
         // one more tap opens it.
-        if (e.name === "NotAllowedError") { btn.textContent = "📄 PDF ready: tap to print or share"; return; }
+        if (e.name === "NotAllowedError") { btn.textContent = "📄 Ready: tap to print or share"; return; }
         if (e.name !== "AbortError") openPdf(f);
       }
-      btn.textContent = "📄 Print or share the PDF again";
       return;
     }
     openPdf(f);
   }
   async function printPack(btn) {
-    if (!installedApp()) { window.print(); return; }
-    if (app.packFile) return sharePack(btn);
-    const label = btn.textContent;
+    const part = btn.dataset.part || "all";
+    if (!installedApp()) {
+      // Only the chosen part goes to the printer.
+      document.body.dataset.printPart = part;
+      const done = () => { delete document.body.dataset.printPart; window.removeEventListener("afterprint", done); };
+      window.addEventListener("afterprint", done);
+      window.print();
+      return;
+    }
+    app.packFiles = app.packFiles || {};
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
+    if (app.packFiles[part]) { await sharePack(btn, app.packFiles[part]); btn.textContent = label; return; }
     btn.disabled = true; btn.textContent = "Making the PDF…";
     try {
-      const blob = await makePackPdf();
-      app.packFile = new File([blob], (app.packName || "Print pack.pdf").replace(/[\\/:*?"<>|]/g, ""), { type: "application/pdf" });
-      btn.disabled = false;
-      await sharePack(btn);
+      const blob = await makePackPdf(part);
+      const name = `${app.packName || "Round"} ${PART_NAMES[part]}.pdf`.replace(/[\\/:*?"<>|]/g, "");
+      app.packFiles[part] = new File([blob], name, { type: "application/pdf" });
+      btn.disabled = false; btn.textContent = label;
+      await sharePack(btn, app.packFiles[part]);
     } catch (e) {
       btn.disabled = false; btn.textContent = label;
       toast("Couldn't make the PDF (" + e.message + "). Try again with a signal.", true);

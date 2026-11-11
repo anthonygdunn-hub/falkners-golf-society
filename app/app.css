@@ -780,6 +780,8 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
 .pp-note { font-size: .7rem; color: #555; margin: 8px 0 0; }
 .pp-page h3 { font-size: .9rem; margin: 12px 0 4px; }
 .pp-toolbar { margin-bottom: 14px; }
+.pp-parts { display: flex; gap: 8px; margin-top: 8px; }
+.pp-parts .btn { flex: 1; min-width: 0; padding-left: 6px; padding-right: 6px; font-size: .88rem; }
 .pdf-stage { position: fixed; left: -10000px; top: 0; width: 760px; background: #fff; }
 .pdf-stage .pp-page { box-shadow: none; border-radius: 0; padding: 0 0 4px; font-size: 13px; overflow: visible; margin-bottom: 0; }
 .pdf-stage .pp-card td.pp-sc { height: 34px; width: 90px; }
@@ -792,8 +794,11 @@ body.presenting .view { max-width: none; padding: 0; animation: none; }
   .topbar, .tabbar, .no-print, .toast, #menu, #sheet { display: none !important; }
   .view { max-width: none; padding: 0; animation: none; }
   .print-pack { gap: 0; }
-  .pp-page { box-shadow: none; border-radius: 0; padding: 0; page-break-after: always; break-after: page; font-size: 10pt; overflow: visible; }
-  .pp-page:last-child { page-break-after: auto; }
+  .pp-page { box-shadow: none; border-radius: 0; padding: 0; font-size: 10pt; overflow: visible; }
+  .pp-page + .pp-page { page-break-before: always; break-before: page; }
+  body[data-print-part="start"] .pp-page:not(.pp-part-start),
+  body[data-print-part="cards"] .pp-page:not(.pp-part-cards),
+  body[data-print-part="stakes"] .pp-page:not(.pp-part-stakes) { display: none !important; }
   .pp-card td.pp-sc { height: 9mm; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
