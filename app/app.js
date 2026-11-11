@@ -5011,11 +5011,17 @@
     if (nr) return nr;
     const formats = (r.setup.formats || ["stableford"]).filter(f => FORMAT_LABELS[f] && !(r.teamGame && f === "skins"));
     if (!formats.length) formats.push("stableford");
+    // The pairs board sits next to the individual one, so the live
+    // leaderboard is one tap either way.
+    const indiv = formats.length;
+    if (r.pairs && r.pairs.length) formats.push("pairs");
     if ((r.matches || []).length) formats.push("matchplay");
     if (contestsOn(r).length || (r.gcontests || []).some(c => c.kind !== "hole")) formats.push("contests");
     if (hasStakes(r)) formats.push("money");
     if (!r.board || !formats.includes(r.board)) r.board = formats[0] || "stableford";
-    const label = f => f === "contests" ? "Contests" : f === "money" ? "Settle up" : f === "matchplay" ? "Match play" : FORMAT_LABELS[f];
+    const label = f => f === "contests" ? "Contests" : f === "money" ? "Settle up" : f === "matchplay" ? "Match play"
+      : f === "pairs" ? (isBetterBall(r) ? "Better ball" : "Pairs")
+      : indiv === 1 && formats.includes("pairs") ? "Individual" : FORMAT_LABELS[f];
     const sub = formats.length > 1 ? `<div class="subtabs">${formats.map(f =>
       `<button data-action="board" data-board="${f}" aria-selected="${r.board === f}">${label(f)}</button>`).join("")}</div>` : "";
     let body = "";
@@ -5023,6 +5029,7 @@
     else if (r.board === "medal") body = medalTable(r);
     else if (r.board === "skins") body = skinsTable(r);
     else if (r.board === "matchplay") body = matchTable(r);
+    else if (r.board === "pairs") body = isBetterBall(r) ? betterBallTable(r) : pairsTable(r);
     else if (r.board === "contests") body = contestsBoard(r) + sideGamesCard(r);
     else if (r.board === "money") body = settleView(r);
     else body = stablefordTable(r);
