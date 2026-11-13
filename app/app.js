@@ -1977,9 +1977,12 @@
     const r = app.round;
     const st = r.setup ? r.setup.status : null;
     const badge = st === "live" ? `<span class="badge live">Live</span>` : st === "final" ? `<span class="badge final">Final</span>` : "";
-    const tabs = [["score", "Score"], ["board", "Leaderboard"]];
-    if (r.pairs && r.pairs.length) tabs.push(["pairs", isBetterBall(r) ? "Better ball" : "Pairs"]);
+    // Pairs live on the Leaderboards tab now; anyone left on the old
+    // Pairs tab lands on the pairs board there.
+    if (r.tab === "pairs") { r.tab = "board"; r.board = "pairs"; }
+    const tabs = [["score", "Score"], ["board", "Leaderboards"]];
     if (!r.feedOff && !app.guest && (r.me || r.canManage)) tabs.push(["feed", "Feed"]);
+    if (r.canManage) tabs.push(["setup", "Settings"]);
     if (r.tab === "feed") store.set("feed-seen-" + r.id, r.posts[0] ? r.posts[0].created_at : "");
     if (r.results && r.tab === "results") {
       hideTabbar();
@@ -1994,7 +1997,7 @@
     view.innerHTML = `
       <div class="round-head">
         <a class="back-link" href="#/" aria-label="All rounds">‹ Rounds</a>
-        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : r.event.is_private ? '<span class="badge private">Private</span>' : ""}${badge}${r.canManage ? `<button type="button" class="gear-btn ${r.tab === "setup" ? "on" : ""}" data-action="manage" aria-label="Manage ${r.event.is_private || r.event.is_practice ? "game" : "round"}">${ICO_GEAR}</button>` : ""}</div>
+        <div class="row"><h1>${esc(r.event.name)}</h1><span class="spacer"></span>${r.event.is_practice ? '<span class="badge practice">Practice</span>' : r.event.is_private ? '<span class="badge private">Private</span>' : ""}${badge}</div>
         <div class="muted small">${esc(r.course ? r.course.name : r.event.venue || "")}${r.tee ? " · " + esc(r.tee.name) + " tees" : ""} · ${fmtDate(r.event.event_date)}</div>
         ${r.event.is_practice ? `<div class="practice-banner">Practice round — nothing here counts. It doesn't reach the website, the Order of Merit, records or handicaps.</div>` : ""}
         ${r.event.is_private && !app.guest ? `<div class="practice-banner private-banner">Private game${r.event.private_visible ? " · all members can see it" : " · only the players can see it"}. It never counts for the Order of Merit or handicaps; your result goes on your profile.</div>` : ""}
@@ -2013,7 +2016,7 @@
         if (slot) slot.innerHTML = weatherChip(f);
       }).catch(() => {});
     }
-    showTabbar(tabs.map(([k, l]) => `<button role="tab" data-action="tab" data-tab="${k}" aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span>${k === "feed" ? `<i class="tab-badge" id="feed-badge" hidden></i>` : ""}</button>`).join(""));
+    showTabbar(tabs.map(([k, l]) => `<button role="tab" ${k === "setup" ? `data-action="manage-go" data-panel="menu"` : `data-action="tab" data-tab="${k}"`} aria-selected="${r.tab === k}">${TAB_ICONS[k]}<span>${l}</span>${k === "feed" ? `<i class="tab-badge" id="feed-badge" hidden></i>` : ""}</button>`).join(""));
     updateFeedBadge();
     const body = $("#round-body");
     if (r.tab === "score") {
@@ -2202,7 +2205,7 @@
         </button>`).join("")}
       <div class="gb-links">
         <button class="btn ghost" data-action="tab" data-tab="board">Full leaderboard ›</button>
-        ${r.pairs && r.pairs.length ? `<button class="btn ghost" data-action="tab" data-tab="pairs">${isBetterBall(r) ? "Better ball" : "Pairs"} ›</button>` : ""}
+        ${r.pairs && r.pairs.length ? `<button class="btn ghost" data-action="board-go" data-board="pairs">${isBetterBall(r) ? "Better ball" : "Pairs"} ›</button>` : ""}
         ${(r.matches || []).length ? `<button class="btn ghost" data-action="board-go" data-board="matchplay">Matches ›</button>` : ""}
       </div>
     </div>`;
@@ -2502,7 +2505,7 @@
           <div class="preview-group${me && me.group === n ? " mine" : ""}"><div class="small muted">Group ${n}${me && me.group === n ? " — yours" : ""}</div>
             ${ps.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}</div>`).join("")
           : r.players.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}
-        ${r.pairs && r.pairs.length ? `<p class="small" style="margin:10px 0 0"><a href="#" data-action="tab" data-tab="pairs">See the pairs →</a></p>` : ""}
+        ${r.pairs && r.pairs.length ? `<p class="small" style="margin:10px 0 0"><a href="#" data-action="board-go" data-board="pairs">See the pairs →</a></p>` : ""}
       </div>`;
   }
 
