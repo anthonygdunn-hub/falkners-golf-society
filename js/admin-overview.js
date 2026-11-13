@@ -154,7 +154,14 @@
       var pl = playerById.get(r.player_id); return pl ? pl.name : "Player";
     };
 
-    var rounds = d.events.filter(function (e) { return !e.is_trip && !e.hidden; });
+    // The overview covers the current season (January to December). The
+    // next round can still be in the new season once its fixtures are up.
+    var allRounds = d.events.filter(function (e) { return !e.is_trip && !e.hidden && !e.is_private && !e.is_practice; });
+    var thisYear = today.slice(0, 4);
+    var seasonsUpToNow = allRounds.map(function (e) { return e.event_date.slice(0, 4); }).filter(function (y) { return y <= thisYear; }).sort();
+    var season = seasonsUpToNow.length ? seasonsUpToNow[seasonsUpToNow.length - 1] : thisYear;
+    var rounds = allRounds.filter(function (e) { return e.event_date.slice(0, 4) === season; });
+    var seasonIds = new Set(d.events.filter(function (e) { return e.event_date.slice(0, 4) === season; }).map(function (e) { return e.id; }));
     var trips = d.events.filter(function (e) { return e.is_trip; });
     var resultsByEvent = new Map();
     d.results.forEach(function (r) {
@@ -195,13 +202,13 @@
       });
     });
 
-    var upcoming = rounds.filter(function (e) { return e.event_date >= today; });
+    var upcoming = allRounds.filter(function (e) { return e.event_date >= today; });
     var played = rounds.filter(function (e) { return e.event_date < today; });
     var next = upcoming[0] || null;
     var last = played.slice().reverse().find(function (e) { return (perEvent.get(e.id).results || []).length; }) || null;
 
     return {
-      d: d, today: today, rounds: rounds, trips: trips, upcoming: upcoming, played: played,
+      d: d, today: today, rounds: rounds, trips: trips, upcoming: upcoming, played: played, season: season, seasonIds: seasonIds,
       next: next, last: last, perEvent: perEvent, nameOf: nameOf, profName: profName,
       playerById: playerById, playerByLower: playerByLower
     };
@@ -272,7 +279,7 @@
     var counting = Number(m.d.settings.counting_rounds) || null;
     var by = new Map();
     m.d.results.forEach(function (r) {
-      if (uptoEventIds && !uptoEventIds.has(r.event_id)) return;
+      if (uptoEventIds ? !uptoEventIds.has(r.event_id) : !m.seasonIds.has(r.event_id)) return;
       var pl = m.playerById.get(r.player_id); var name = pl ? pl.name : "Unknown";
       if (!by.has(name)) by.set(name, []);
       by.get(name).push(Number(r.points) || 0);
@@ -304,6 +311,7 @@
       return m.playerByLower.get(n.toLowerCase()) || n;
     };
     m.d.prizes.forEach(function (p) {
+      if (!m.seasonIds.has(p.event_id)) return;
       comps.forEach(function (c) {
         var who = canonical(p[c.winner]); if (!who) return;
         if (!tally.has(who)) tally.set(who, { name: who, ld: 0, ntp: 0 });
@@ -468,7 +476,7 @@
     moneyCells.push('<button type="button" class="ov-money-box" data-go=\'' + esc(JSON.stringify({ tab: "money", heading: "Hole in one pot" })) + '\'><b>' + money(m.d.pot) + "</b><span>Hole in One pot</span></button>");
 
     var playedCount = m.played.length;
-    return '<section class="ov-card" aria-labelledby="ov-season-h"><div class="ov-head"><h4 id="ov-season-h">Season so far</h4><span class="small">' + playedCount + " of " + m.rounds.length + " rounds played</span></div>" +
+    return '<section class="ov-card" aria-labelledby="ov-season-h"><div class="ov-head"><h4 id="ov-season-h">' + esc(m.season) + ' season so far</h4><span class="small">' + playedCount + " of " + m.rounds.length + " rounds played</span></div>" +
       '<div class="small">Players per round</div>' +
       '<div class="ov-bars" style="grid-template-columns:repeat(' + Math.max(1, bars.length) + ',1fr)">' +
         (avg ? '<div class="ov-avg" style="bottom:' + (avg / max * 100) + '%"><span>avg ' + Math.round(avg) + "</span></div>" : "") +

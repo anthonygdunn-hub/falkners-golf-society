@@ -99,6 +99,79 @@ function seasonRounds(events) {
   return (events || []).filter(e => !e.is_trip && !e.hidden);
 }
 
+// ---------- seasons ----------
+// A season is a calendar year: January to December. The Order of Merit,
+// prize standings and season stats start fresh each year; earlier
+// seasons stay one tap away on a season picker. Handicaps carry on.
+function seasonOf(dateStr) {
+  return String(dateStr || "").slice(0, 4);
+}
+
+// Every season with at least one society round in it (fixtures count,
+// so next season shows up once its first round is posted), newest first.
+function seasonYears(events) {
+  const years = new Set(seasonRounds(events)
+    .filter(e => !e.is_private && !e.is_practice)
+    .map(e => seasonOf(e.event_date)).filter(Boolean));
+  return [...years].sort().reverse();
+}
+
+// The season we're in: this calendar year once it has a round in it,
+// otherwise the most recent one before it. So next year's fixtures can
+// be posted in December without ending this season early.
+function currentSeason(events) {
+  const thisYear = String(new Date().getFullYear());
+  const years = seasonYears(events);
+  return years.find(y => y <= thisYear) || years[years.length - 1] || thisYear;
+}
+
+// Seasons that can have standings: this one and every one before it.
+function standingsSeasons(events) {
+  const now = currentSeason(events);
+  const years = seasonYears(events).filter(y => y <= now);
+  return years.length ? years : [now];
+}
+
+// The season in the address (?season=2026) if it's one of the choices,
+// otherwise the current season.
+function pickedSeason(events, choices) {
+  const years = choices || standingsSeasons(events);
+  let asked = null;
+  try { asked = new URLSearchParams(window.location.search).get("season"); } catch (e) { asked = null; }
+  return years.includes(asked) ? asked : currentSeason(events);
+}
+
+function resultsInSeason(results, year) {
+  return (results || []).filter(r => seasonOf(r.events && r.events.event_date) === year);
+}
+
+// A row of season buttons. Hidden while there's only one season.
+// Remembers the choice in the address so a refresh or a shared link
+// opens on the same season.
+function seasonPicker(el, years, selected, onPick) {
+  if (!el) return;
+  if (years.length < 2) { el.innerHTML = ""; el.hidden = true; return; }
+  el.hidden = false;
+  const now = years[0];
+  el.innerHTML = years.map(y => `<button type="button" class="year-tab${y === selected ? " is-active" : ""}" data-year="${y}" aria-pressed="${y === selected}">${y}</button>`).join("");
+  el.onclick = (e) => {
+    const btn = e.target.closest(".year-tab");
+    if (!btn || btn.dataset.year === selected) return;
+    selected = btn.dataset.year;
+    el.querySelectorAll(".year-tab").forEach(b => {
+      const on = b.dataset.year === selected;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", on);
+    });
+    try {
+      const u = new URL(window.location.href);
+      if (selected === now) u.searchParams.delete("season"); else u.searchParams.set("season", selected);
+      history.replaceState(null, "", u);
+    } catch (err) { /* the picker still works without it */ }
+    onPick(selected);
+  };
+}
+
 // How many rounds count toward the Order of Merit. Public on purpose —
 // the leaderboard is public, so the rule behind it has to be readable
 // by everyone too. Falls back to "every round counts" if anything's

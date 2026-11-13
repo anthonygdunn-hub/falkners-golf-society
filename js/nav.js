@@ -190,7 +190,7 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/schema.js?v=2026-09-03a" }));
 
 /* Share buttons, round photos, season stats and calendar files. */
-document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/extras.js?v=2026-09-03a" }));
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/extras.js?v=2026-11-13a" }));
 
 /* Motion: leaderboard, homepage countdown, pot ticker and scroll reveals. */
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/motion.js?v=2026-10-07a" }));

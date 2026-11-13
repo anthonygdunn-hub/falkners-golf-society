@@ -81,7 +81,7 @@
     </div>
     <div class="scorecard">
       <div class="scorecard-head">
-                                <h3>Order of Merit - 2026</h3><span class="meta" id="round-count-meta"></span></div>
+                                <h3>Order of Merit - <span class="season-year">2026</span></h3><span class="meta" id="round-count-meta"></span></div>
             <div id="home-leaderboard"><div class="empty-state">Loading leaderboard…</div></div>
     </div>
     <p class="text-center small" style="margin-top:16px;"><a href="leaderboard.html">View full leaderboard →</a></p>
@@ -97,7 +97,7 @@
     <ul class="fixture-list" id="home-next-fixture">
       <li class="empty-state">Loading fixtures…</li>
     </ul>
-    <p class="text-center small" style="margin-top:16px;"><a href="fixtures.html">See the full 2026 schedule →</a></p>
+    <p class="text-center small" style="margin-top:16px;"><a href="fixtures.html">See the full <span class="season-year">2026</span> schedule →</a></p>
   </div>
 </section>
 
@@ -114,19 +114,24 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
-  <script src="js/nav.js?v=2026-10-07a"></script>
-<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-10-07a"></script>
+  <script src="js/nav.js?v=2026-11-13a"></script>
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-11-13a"></script>
 <script>
 (async function () {
   try {
     const { events, results } = await fetchAllData();
 
     // Leaderboard
-    const leaderboard = buildLeaderboard(results,
+    // This season only: each calendar year starts fresh.
+    const season = typeof currentSeason === "function" ? currentSeason(events) : null;
+    const seasonResults = season ? resultsInSeason(results, season) : results;
+    if (season) document.querySelectorAll(".season-year").forEach(el => { el.textContent = season; });
+    const leaderboard = buildLeaderboard(seasonResults,
       typeof fetchLeagueSettings === "function" ? await fetchLeagueSettings() : {});
     renderLeaderboardTable(document.getElementById("home-leaderboard"), leaderboard.slice(0, 5));
-    const roundIds = new Set((typeof seasonRounds === "function" ? seasonRounds(events) : events.filter(e => !e.is_trip)).map(e => e.id));
-    const roundsLogged = new Set(results.map(r => r.event_id).filter(id => roundIds.has(id))).size;
+    const roundIds = new Set((typeof seasonRounds === "function" ? seasonRounds(events) : events.filter(e => !e.is_trip))
+      .filter(e => !season || seasonOf(e.event_date) === season).map(e => e.id));
+    const roundsLogged = new Set(seasonResults.map(r => r.event_id).filter(id => roundIds.has(id))).size;
     document.getElementById("round-count-meta").textContent = `${roundsLogged} of ${roundIds.size} rounds logged`;
 
     // Next fixture

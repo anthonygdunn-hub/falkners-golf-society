@@ -67,10 +67,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   events.forEach(e => eventsById.set(e.id, e)); try { const att = (await client.from("attendance").select("event_id, player_id, profile_id").eq("status", "playing")).data || []; const plyrs = (await client.from("players").select("id, profile_id")).data || []; events.forEach(e => { const seen = new Set(); att.filter(a => a.event_id === e.id).forEach(a => { let key = a.profile_id; if (!key && a.player_id) { const pl = plyrs.find(p => p.id === a.player_id); key = (pl && pl.profile_id) ? pl.profile_id : "p:" + a.player_id; } if (key) seen.add(key); }); const played = results.filter(r => r.event_id === e.id).length; e.playerCount = played > 0 ? played : seen.size; }); } catch (countErr) { console.error(countErr); }
 
   const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date));
-  listEl.innerHTML = sorted.length
-    ? sorted.map(e => renderFixtureItem(e)).join("")
-    : `<li class="empty-state">No fixtures posted yet.</li>`;
 
+  // One season at a time (January to December), this season first.
+  // Next season appears as soon as its first fixture is posted; a link
+  // to a particular round opens on that round's season.
+  const seasons = typeof currentSeason === "function";
+  const yearOfEv = e => e.event_date.slice(0, 4);
+  const years = [...new Set(sorted.map(yearOfEv))].sort().reverse();
+  const params = new URLSearchParams(window.location.search);
+  const linked = sorted.find(e => e.id === (params.get("registered") || (window.location.hash || "").replace("#event-", "")));
+  let year = !seasons ? null : linked ? yearOfEv(linked) : pickedSeason(events, years);
+  if (seasons && !years.includes(year)) years.unshift(year);
+
+  function showSeason(y) {
+    year = y;
+    const list = seasons ? sorted.filter(e => yearOfEv(e) === y) : sorted;
+    listEl.innerHTML = list.length
+      ? list.map(e => renderFixtureItem(e)).join("")
+      : `<li class="empty-state">No fixtures posted for ${y || "this season"} yet.</li>`;
+    const label = document.getElementById("fx-season");
+    if (label && y) label.textContent = y;
+  }
+
+  if (seasons) seasonPicker(document.getElementById("season-tabs"), years, year, showSeason);
+  showSeason(year);
   wireAccordion(listEl);
   handleArrivalFromRegistration(sorted);
 });

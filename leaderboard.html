@@ -32,8 +32,9 @@
 <section class="section">
   <div class="container">
     <span class="eyebrow">Order of Merit</span>
-    <h1>Leaderboard 2026</h1>
-    <p class="small">Total points across every logged round this season. Updates automatically the moment the committee enters a result.</p>
+    <h1 id="lb-title">Leaderboard</h1>
+    <p class="small">Total points across every logged round this season. Each season runs January to December and starts fresh; earlier seasons are one tap away. Updates automatically the moment the committee enters a result.</p>
+    <div class="year-tabs" id="season-tabs" hidden></div>
 <div class="fixtures-actions">
 <a class="btn btn-outline" href="fixtures.html">Fixtures &amp; registration</a>
 <a class="btn btn-outline" href="results.html">All results</a>
@@ -63,8 +64,8 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
-<script src="js/nav.js?v=2026-10-07a"></script>
-<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-10-07a"></script><script src="js/prize-leaderboard.js?v=2026-09-01c"></script><script src="js/leaderboard-tabs.js?v=2026-08-16c"></script>
+<script src="js/nav.js?v=2026-11-13a"></script>
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/site-data.js?v=2026-11-13a"></script><script src="js/prize-leaderboard.js?v=2026-11-13a"></script><script src="js/leaderboard-tabs.js?v=2026-08-16c"></script>
 <script>
 (async function () {
   try {
@@ -74,14 +75,31 @@
     // a stale cache would blank the whole table for ten minutes after a
     // deploy; with it, the standings just show under the old rules.
     const rules = typeof fetchLeagueSettings === "function" ? await fetchLeagueSettings() : {};
-    const leaderboard = buildLeaderboard(results, rules);
-    renderLeaderboardTable(document.getElementById("full-leaderboard"), leaderboard);
-    const roundIds = new Set((typeof seasonRounds === "function" ? seasonRounds(events) : events.filter(e => !e.is_trip)).map(e => e.id));
-    const roundsLogged = new Set(results.map(r => r.event_id).filter(id => roundIds.has(id))).size;
-    document.getElementById("lb-meta").textContent = `${roundsLogged} of ${roundIds.size} rounds logged`;
-    const note = typeof countingRoundsNote === "function"
-      ? countingRoundsNote(rules.countingRounds, leaderboard) : "";
-    if (note) document.getElementById("lb-rule").textContent = note;
+    const seasons = typeof standingsSeasons === "function";
+    const years = seasons ? standingsSeasons(events) : [];
+
+    function show(year) {
+      const rows = seasons ? resultsInSeason(results, year) : results;
+      const leaderboard = buildLeaderboard(rows, rules);
+      renderLeaderboardTable(document.getElementById("full-leaderboard"), leaderboard);
+      const roundIds = new Set((typeof seasonRounds === "function" ? seasonRounds(events) : events.filter(e => !e.is_trip))
+        .filter(e => !seasons || seasonOf(e.event_date) === year).map(e => e.id));
+      const roundsLogged = new Set(rows.map(r => r.event_id).filter(id => roundIds.has(id))).size;
+      document.getElementById("lb-meta").textContent = `${roundsLogged} of ${roundIds.size} rounds logged`;
+      const note = typeof countingRoundsNote === "function" ? countingRoundsNote(rules.countingRounds, leaderboard) : "";
+      document.getElementById("lb-rule").textContent = note || "";
+      if (seasons) {
+        document.getElementById("lb-title").textContent = "Leaderboard " + year;
+        document.title = "Leaderboard " + year + " — The Falkners Arms Golf Society";
+        // The prize table and season stats follow the same season.
+        window.FALKNERS_SEASON = year;
+        window.dispatchEvent(new CustomEvent("season-change", { detail: year }));
+      }
+    }
+
+    const start = seasons ? pickedSeason(events, years) : null;
+    if (seasons) seasonPicker(document.getElementById("season-tabs"), years, start, show);
+    show(start);
   } catch (err) {
     console.error(err);
     document.getElementById("full-leaderboard").innerHTML = `<div class="empty-state">Couldn't load the standings just now — please try again in a moment.</div>`;

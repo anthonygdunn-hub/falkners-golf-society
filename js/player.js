@@ -42,10 +42,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.title = player.name + " — The Falkners Arms Golf Society";
   nameEl.textContent = player.name;
 
-  // The season shown is the one with the latest logged round.
   const rounds = (typeof seasonRounds === "function" ? seasonRounds(data.events) : data.events.filter(e => !e.is_trip));
+  // The current season by default (January to December, starting fresh
+  // each year), with earlier seasons on the season picker.
   const scored = data.results.map(r => r.events?.event_date).filter(Boolean).sort();
-  const season = (scored[scored.length - 1] || new Date().toISOString()).slice(0, 4);
+  const years = typeof standingsSeasons === "function" ? standingsSeasons(data.events) : [];
+  const first = years.length ? pickedSeason(data.events, years) : (scored[scored.length - 1] || new Date().toISOString()).slice(0, 4);
+  if (years.length) seasonPicker(document.getElementById("pl-seasons"), years, first, draw);
+  draw(first);
+
+  function draw(season) {
   const seasonRoundsList = rounds.filter(e => e.event_date.slice(0, 4) === season).sort((a, b) => a.event_date.localeCompare(b.event_date));
   const seasonIds = new Set(seasonRoundsList.map(e => e.id));
   const seasonResults = data.results.filter(r => seasonIds.has(r.event_id));
@@ -156,5 +162,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { chart.classList.add("mo-animate"); io.disconnect(); } }), { threshold: 0.2 });
       io.observe(chart);
     }
+  }
   }
 });

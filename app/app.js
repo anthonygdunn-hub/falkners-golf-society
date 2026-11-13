@@ -443,15 +443,23 @@
   // Same table and the same rules as the website's leaderboard page
   // (buildLeaderboard in js/site-data.js), so the two never disagree.
 
-  async function loadSeason() {
-    const [res, set] = await Promise.all([
+  // A season is a calendar year and starts fresh each January; with no
+  // year given it's the current season. Earlier seasons stay viewable.
+  async function loadSeason(year) {
+    const [res, set, evs] = await Promise.all([
       client.from("results").select("*, players(name, handicap, profile_id), events(name, event_date)"),
       client.from("league_settings").select("counting_rounds").maybeSingle(),
+      client.from("events").select("id, event_date, is_trip, hidden, is_private, is_practice"),
     ]);
     if (res.error) throw res.error;
+    const events = evs.data || [];
+    const seasons = typeof standingsSeasons === "function";
+    const years = seasons ? standingsSeasons(events) : [];
+    const season = seasons ? (years.includes(year) ? year : currentSeason(events)) : null;
+    const rows = seasons ? resultsInSeason(res.data || [], season) : res.data || [];
     const countingRounds = set.data ? set.data.counting_rounds : null;
-    const table = typeof buildLeaderboard === "function" ? buildLeaderboard(res.data || [], { countingRounds }) : [];
-    return { table, results: res.data || [], countingRounds };
+    const table = typeof buildLeaderboard === "function" ? buildLeaderboard(rows, { countingRounds }) : [];
+    return { table, results: rows, countingRounds, season, years };
   }
 
   function seasonRow(e, i, mine) {
@@ -466,14 +474,15 @@
   async function renderSeason() {
     view.innerHTML = `<div class="loading">Loading the Order of Merit…</div>`;
     let d;
-    try { d = await loadSeason(); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    try { d = await loadSeason(app.oomYear); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
     const me = app.user.id;
     const top = d.table[0];
     view.innerHTML = `
       <a class="back-link" href="#/">‹ Home</a>
-      <h1>Order of Merit</h1>
-      <p class="small muted" style="margin-top:-4px">Stableford points across the season${d.countingRounds ? ` · best ${d.countingRounds} rounds count` : ""}. Arrows show the move since the last round.</p>
-      ${top ? leaderCard("Leading the season", esc(top.name), top.totalPoints, "pts", `${top.rounds} rounds`) : ""}
+      <h1>Order of Merit${d.season ? " " + d.season : ""}</h1>
+      ${d.years.length > 1 ? `<div class="subtabs">${d.years.map(y => `<button data-action="oom-year" data-year="${y}" aria-selected="${y === d.season}">${y}</button>`).join("")}</div>` : ""}
+      <p class="small muted" style="margin-top:-4px">Stableford points across the season${d.countingRounds ? ` · best ${d.countingRounds} rounds count` : ""}. Each season runs January to December and starts fresh. Arrows show the move since the last round.</p>
+      ${top ? leaderCard("Leading the season", esc(top.name), top.totalPoints, "pts", `${top.rounds} round${top.rounds === 1 ? "" : "s"}`) : ""}
       <div class="card board-card"><table class="board"><thead><tr><th></th><th colspan="2">Player</th><th class="num">Pts</th></tr></thead>
         <tbody>${d.table.map((e, i) => seasonRow(e, i, e.profileId === me)).join("") || `<tr><td colspan="4" class="muted">No results yet.</td></tr>`}</tbody></table>
         <p class="small muted" style="margin:10px 0 0">Tap a player for their stats.</p></div>`;
@@ -488,7 +497,7 @@
       const me = app.user.id;
       const i = d.table.findIndex(e => e.profileId === me);
       const rows = d.table.slice(0, 3).map((e, n) => seasonRow(e, n, e.profileId === me)).join("") + (i > 2 ? seasonRow(d.table[i], i, true) : "");
-      el.innerHTML = `<div class="row"><h2 style="margin:0">Order of Merit</h2><span class="spacer"></span><a class="mv-link" href="#/season">Full table ›</a></div>
+      el.innerHTML = `<div class="row"><h2 style="margin:0">Order of Merit${d.season ? " " + d.season : ""}</h2><span class="spacer"></span><a class="mv-link" href="#/season">Full table ›</a></div>
         <table class="board" style="margin-top:6px"><tbody>${rows}</tbody></table>`;
     } catch (e) { el.remove(); }
   }
@@ -4161,12 +4170,12 @@
 
   // ---------- records & honours ----------
 
-  const records = { data: null, year: "all", a: null, b: null };
+  const records = { data: null, year: null, a: null, b: null };
 
   async function loadRecords() {
     const [res, evs, prizes, hs, setups] = await Promise.all([
       client.from("results").select("event_id, player_id, points, gross_score, players(name, profile_id)"),
-      client.from("events").select("id, name, venue, event_date, hidden, is_trip"),
+      client.from("events").select("id, name, venue, event_date, hidden, is_trip, is_private, is_practice"),
       client.from("event_prizes").select("*"),
       client.from("hole_scores").select("event_id, player_id, hole, strokes, picked_up"),
       client.from("event_scoring").select("event_id, tee_id"),
@@ -4191,6 +4200,11 @@
     const evById = new Map(d.events.map(e => [e.id, e]));
     const played = new Set(d.results.map(x => x.event_id));
     const years = [...new Set(d.events.filter(e => played.has(e.id)).map(e => e.event_date.slice(0, 4)))].sort().reverse();
+    // Records open on the current season, which starts fresh each
+    // January; All time and earlier seasons are a tap away.
+    const nowSeason = typeof currentSeason === "function" ? currentSeason(d.events) : years[0];
+    if (nowSeason && !years.includes(nowSeason)) { years.push(nowSeason); years.sort().reverse(); }
+    if (!records.year) records.year = nowSeason || "all";
     const inYear = id => { const e = evById.get(id); return e && (records.year === "all" || e.event_date.startsWith(records.year)); };
     const res = d.results.filter(r => r.points != null && inYear(r.event_id));
     const nameOf = id => { const p = d.players.find(x => x.id === id); return p ? p.name : "?"; };
@@ -4415,7 +4429,7 @@
     present.eventId = eventId; present.tv = !!tv; present.i = 0;
     if (!app.round || app.round.id !== eventId) { app.round = r; subscribe(r); }
     let season = null;
-    try { season = await loadSeason(); } catch (e) { /* the season slide is skipped */ }
+    try { season = await loadSeason(String(r.event.event_date || "").slice(0, 4)); } catch (e) { /* the season slide is skipped */ }
     present.season = season;
     buildSlides(r);
     document.body.classList.add("presenting");
@@ -6554,6 +6568,7 @@
       case "present-full": { const el2 = document.documentElement; if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (el2.requestFullscreen) el2.requestFullscreen().catch(() => toast("Full screen isn't available here — use the browser's own full-screen option.", true)); else toast("Use your browser's full-screen option (on an iPad: Share → Add to Home Screen).", true); break; }
       case "print": printPack(el); break;
       case "rec-year": records.year = el.dataset.year; drawRecords(); break;
+      case "oom-year": app.oomYear = el.dataset.year; renderSeason(); break;
       case "rc-tab": rc.tab = el.dataset.tab; if (rc.tab === "setup") await rcEnsureTees(); drawRyder(); window.scrollTo(0, 0); break;
       case "rc-create": await rcDo(client.from("rc_cups").insert({ event_id: rc.data.id }), "Ryder Cup set up — now name the teams"); rc.tab = "setup"; await rcEnsureTees(); drawRyder(); break;
       case "rc-save-cup": await rcDo(client.from("rc_cups").update({ team1_name: $("#rc-n1").value.trim() || "Team 1", team2_name: $("#rc-n2").value.trim() || "Team 2",

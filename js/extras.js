@@ -293,6 +293,11 @@
         var evs = await client.from("events").select("*").order("event_date");
         var events = evs.data || [];
         whenPresent(".fixture-item[data-event-id]", function () { decorateFixtures(events); });
+        // Switching season redraws the list, so decorate the new rounds too.
+        var seasonTabs = document.getElementById("season-tabs");
+        if (seasonTabs) seasonTabs.addEventListener("click", function () {
+          setTimeout(function () { decorateFixtures(events); }, 50);
+        });
         return;
       }
 
@@ -304,11 +309,16 @@
       var allResults = res[1].data || [];
 
       if (here === "leaderboard.html") {
-        var year = String(new Date().getFullYear());
-        var stats = seasonStats(allEvents, allResults, year);
-        if (!stats.rounds) return;
-        var host = document.querySelector(".section .container");
-        if (host) host.appendChild(statCard(stats, year));
+        var drawStats = function (year) {
+          var old = document.getElementById("season-stats");
+          if (old) old.remove();
+          var stats = seasonStats(allEvents, allResults, year);
+          if (!stats.rounds) return;
+          var host = document.querySelector(".section .container");
+          if (host) host.appendChild(statCard(stats, year));
+        };
+        drawStats(window.FALKNERS_SEASON || (typeof pickedSeason === "function" ? pickedSeason(allEvents) : String(new Date().getFullYear())));
+        window.addEventListener("season-change", function (e) { drawStats(e.detail); });
         return;
       }
 
