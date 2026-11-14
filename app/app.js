@@ -1289,7 +1289,7 @@
       const vis = (k) => `<select name="${k}_vis" class="vis-sel"><option value="me" ${(v[k + "_vis"] || "me") === "me" ? "selected" : ""}>Only me</option><option value="members" ${v[k + "_vis"] === "members" ? "selected" : ""}>All members</option></select>`;
       const filled = ["phone", "email", "dob", "address"].filter(k => v[k]).length;
       return `<div class="card details-card"><div class="row"><h2 style="margin:0">My details</h2><span class="spacer"></span><button class="mv-link" data-action="details-edit">${filled ? "Edit" : "Add"}</button></div>
-        <p class="small muted" style="margin:4px 0 0">${filled ? `${filled} of 4 added. ` : ""}You choose who sees each one. The committee can always see them.</p>
+        <p class="small muted" style="margin:4px 0 0">${filled ? `${filled} of 4 added. ` : ""}You choose who sees each one. The committee can always see them. <a href="../privacy.html" target="_blank" rel="noopener">How we look after them</a></p>
         <form id="details-form" hidden>
           <label class="field">Mobile<input name="phone" type="tel" maxlength="30" value="${esc(v.phone || "")}" autocomplete="tel"></label>${vis("phone")}
           <label class="field">Email<input name="email" type="email" maxlength="200" value="${esc(v.email || "")}" autocomplete="email"></label>${vis("email")}
