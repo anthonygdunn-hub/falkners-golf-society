@@ -2031,6 +2031,7 @@
     if (r.tab === "score") {
       body.innerHTML = scoreView(r);
       if (store.get("gps-on", false) && r.geo && r.geo.size && window.HoleMaps) window.HoleMaps.startGps();
+      maybeMapHelp(r);
     }
     else if (r.tab === "setup" && r.canManage) { body.innerHTML = setupView(r); wireSetup(r); }
     else if (r.tab === "pairs" && r.pairs.length) body.innerHTML = notReady(r) || (isBetterBall(r) ? betterBallTable(r) : pairsTable(r));
@@ -2444,8 +2445,14 @@
     const g = r.geo && r.geo.get(hole);
     const mapped = g && g.green_lat != null && g.tee_lat != null;
     if (!mapped) {
-      return app.committee && r.course
-        ? `<div class="gps-bar muted small">Hole ${hole} isn't on the map yet. <a href="#/course-map/${r.course.id}">Map the holes</a></div>` : "";
+      const committeeLink = app.committee && r.course ? ` <a href="#/course-map/${r.course.id}">Map the holes</a>` : "";
+      // Players in a live round can fill the gap from where they stand.
+      if (!canMapHere(r)) return committeeLink ? `<div class="gps-bar muted small">Hole ${hole} isn't on the map yet.${committeeLink}</div>` : "";
+      const btn = (kind, label) => `<button class="btn ghost map-here-btn" data-action="map-here" data-kind="${kind}">${label}</button>`;
+      return `<div class="gps-bar map-help">
+        <span class="small">Hole ${hole} isn't mapped yet. Help map it: <button class="mv-link" data-action="map-help">How?</button>${committeeLink}</span>
+        <span class="map-here-btns">${!g || g.tee_lat == null ? btn("tee", "📍 Save the tee here") : ""}${!g || g.green_lat == null ? btn("green", "⛳ Save the green here") : ""}</span>
+      </div>`;
     }
     const on = store.get("gps-on", false);
     return `<div class="gps-bar">
@@ -2454,6 +2461,67 @@
       <span class="spacer"></span>
       <button class="btn ghost" style="min-height:36px" data-action="hole-map">Map</button>
     </div>`;
+  }
+
+  // ---------- mapping a course on the day ----------
+  // Anyone scoring a live round can save a hole's tee, or the middle of
+  // its green, from where they're standing. Only blanks get filled; the
+  // committee can still move anything on the Map the holes screen.
+  function canMapHere(r) {
+    return !!(r && r.course && r.setup && r.setup.status === "live" && canScore(r) && window.HoleMaps);
+  }
+  function holesToMap(r) {
+    const total = (r.holes && r.holes.length) || 18;
+    let left = 0;
+    for (let h = 1; h <= total; h++) { const g = r.geo && r.geo.get(h); if (!g || g.tee_lat == null || g.green_lat == null) left++; }
+    return { left, total };
+  }
+  function mapHelpSheet(r) {
+    const { left, total } = holesToMap(r);
+    const name = r.course ? r.course.name : "This course";
+    openSheet(`<h2>Help map ${esc(name)}</h2>
+      <p class="small muted" style="margin-top:-4px">${esc(name)} isn't fully on the app's map yet: ${left} of ${total} holes still to do. You can fill it in as you play, and from then on everyone gets yardages to the green here.</p>
+      <ol class="map-help-steps">
+        <li><b>On the tee</b>, tap <b>📍 Save the tee here</b> under the hole number</li>
+        <li><b>At the green</b>, stand in the middle of it and tap <b>⛳ Save the green here</b></li>
+        <li>That's it. A few seconds a hole, and one person per group is plenty</li>
+      </ol>
+      <p class="small muted">Allow location when your phone asks. Holes that are already mapped can't be changed by mistake.</p>
+      <button class="btn block" data-action="close-sheet">Got it</button>`);
+  }
+  function maybeMapHelp(r) {
+    if (!canMapHere(r) || r.tab !== "score" || !holesToMap(r).left) return;
+    const key = "map-help-" + r.id;
+    if (store.get(key, false)) return;
+    store.set(key, true);
+    mapHelpSheet(r);
+  }
+  async function mapHere(el) {
+    const r = app.round, hole = r.hole, kind = el.dataset.kind;
+    const HM = window.HoleMaps;
+    const label = el.textContent;
+    document.querySelectorAll(".map-here-btn").forEach(b => { b.disabled = true; });
+    el.textContent = "Getting a GPS fix…";
+    HM.startGps();
+    const started = Date.now();
+    let fix = null;
+    while (Date.now() - started < 25000) {
+      const p = HM.gps.pos;
+      if (p && p.acc <= 30 && Date.now() - p.at < 15000) { fix = p; break; }
+      if (HM.gps.error && /turned off/.test(HM.gps.error)) break;
+      await new Promise(res => setTimeout(res, 500));
+    }
+    const done = () => { document.querySelectorAll(".map-here-btn").forEach(b => { b.disabled = false; }); el.textContent = label; };
+    if (!fix) {
+      done();
+      toast(HM.gps.error && /turned off/.test(HM.gps.error) ? HM.gps.error : "Couldn't get an accurate enough GPS fix. Try again in the open.", true);
+      return;
+    }
+    const { data, error } = await client.rpc("map_hole_here", { p_event: r.id, p_hole: hole, p_kind: kind, p_lat: fix.lat, p_lng: fix.lng, p_acc: fix.acc });
+    if (error) { done(); toast(error.message, true); return; }
+    if (data) r.geo.set(hole, data);
+    toast(`Hole ${hole} ${kind === "tee" ? "tee" : "green"} saved. Thanks!`);
+    renderRoundBody();
   }
 
   function gpsText(r, hole) {
@@ -6872,6 +6940,8 @@
         break;
       }
       case "new-tee": newTee(el.dataset.course); break;
+      case "map-here": mapHere(el); break;
+      case "map-help": mapHelpSheet(app.round); break;
       case "gps-on": store.set("gps-on", true); window.HoleMaps.startGps(); renderRoundBody(); break;
       case "hole-map":
         window.HoleMaps.openHoleMap({
