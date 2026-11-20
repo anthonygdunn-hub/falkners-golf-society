@@ -185,6 +185,7 @@
     $("#menu-btn").hidden = false;
     $("#menu-courses").hidden = !app.approved;
     if ($("#menu-handicaps")) $("#menu-handicaps").hidden = !app.committee;
+    if ($("#menu-members")) $("#menu-members").hidden = !app.committee;
   }
 
   function renderSignIn(msg) {
@@ -1366,6 +1367,189 @@
         <div class="small muted">${p.handicap != null ? `Handicap ${p.handicap}` : "Member"}</div></div></div>
       ${p.id !== app.user.id ? `<button class="btn block" data-action="chat-start" data-profile="${p.id}" style="margin:10px 0">Message ${esc(String(p.display_name).split(" ")[0])}</button>` : ""}
       ${await detailsCard(p.id, p.id === app.user.id)}`;
+  }
+
+  // ---------- Members (committee only) ----------
+  // Everyone with a login: approve or turn down requests, make someone an
+  // admin (committee), link a login to the right player record, set a
+  // society handicap, or remove someone. The database rules decide what's
+  // allowed; this is only the handle.
+  const adm = { q: "", data: null };
+  async function loadAdminMembers() {
+    const [ms, ps, pl, evs] = await Promise.all([
+      client.from("memberships").select("profile_id, role, status, requested_at, decided_at, intended_event_id"),
+      client.from("profiles").select("id, display_name, created_at"),
+      client.from("players").select("id, name, profile_id, handicap, official_index, active").order("name"),
+      client.from("events").select("id, name, event_date"),
+    ]);
+    if (ms.error) throw ms.error;
+    const prof = new Map((ps.data || []).map(p => [p.id, p]));
+    const players = pl.data || [];
+    const byProfile = new Map(players.filter(p => p.profile_id).map(p => [p.profile_id, p]));
+    const evById = new Map((evs.data || []).map(e => [e.id, e]));
+    const people = (ms.data || []).map(m => {
+      const p = prof.get(m.profile_id) || {};
+      return { id: m.profile_id, name: p.display_name || "Unnamed", role: m.role, status: m.status, requested: m.requested_at || p.created_at,
+        event: m.intended_event_id ? evById.get(m.intended_event_id) : null, player: byProfile.get(m.profile_id) || null };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    adm.data = { people, players };
+    return adm.data;
+  }
+  const normName = n => String(n || "").toLowerCase().replace(/\s+/g, " ").trim();
+  function admRow(m) {
+    const sub = m.status === "pending" ? `Asked ${m.requested ? new Date(m.requested).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}${m.event ? " · wants to play " + esc(m.event.name) : ""}`
+      : m.player ? `Handicap ${m.player.handicap != null ? esc(m.player.handicap) : "–"}` : `<span class="adm-warn">Not linked to any scores</span>`;
+    return `<a class="adm-row" href="#/members/${esc(m.id)}">${avatar(m.name, m.id)}<span class="adm-txt"><b>${esc(m.name)}</b>${m.role === "committee" ? ` <span class="badge adm-badge">Admin</span>` : ""}<small>${sub}</small></span><span class="ci-chev">›</span></a>`;
+  }
+  async function renderAdminMembers(profileId) {
+    if (!app.committee) { view.innerHTML = `<a class="back-link" href="#/">‹ Home</a><div class="card empty"><p>Only the committee can manage members.</p></div>`; return; }
+    if (profileId) return renderAdminMember(profileId);
+    view.innerHTML = `<div class="card"><p class="muted">Loading members…</p></div>`;
+    let d;
+    try { d = await loadAdminMembers(); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    const draw = () => {
+      const q = normName(adm.q);
+      const hit = m => !q || normName(m.name).includes(q);
+      const pending = d.people.filter(m => m.status === "pending" && hit(m));
+      const admins = d.people.filter(m => m.status === "approved" && m.role === "committee" && hit(m));
+      const members = d.people.filter(m => m.status === "approved" && m.role !== "committee" && hit(m));
+      const removed = d.people.filter(m => m.status === "rejected" && hit(m));
+      const unlinked = d.people.filter(m => m.status === "approved" && !m.player).length;
+      $("#adm-list").innerHTML = `
+        ${pending.length ? `<h2 class="adm-h">Waiting for approval <span class="mg-badge">${pending.length}</span></h2><div class="card ci-list">${pending.map(admRow).join("")}</div>` : ""}
+        <h2 class="adm-h">Admins <small class="muted">(committee)</small></h2><div class="card ci-list">${admins.map(admRow).join("") || `<p class="small muted" style="padding:12px">No one matches.</p>`}</div>
+        <h2 class="adm-h">Members${unlinked ? ` <small class="adm-warn">${unlinked} not linked to scores</small>` : ""}</h2><div class="card ci-list">${members.map(admRow).join("") || `<p class="small muted" style="padding:12px">No one matches.</p>`}</div>
+        ${removed.length ? `<h2 class="adm-h">Removed or turned down</h2><div class="card ci-list">${removed.map(admRow).join("")}</div>` : ""}`;
+    };
+    const total = d.people.filter(m => m.status === "approved").length;
+    view.innerHTML = `<a class="back-link" href="#/">‹ Home</a>
+      <h1>Members</h1>
+      <p class="small muted" style="margin-top:-4px">${total} members with a login. Tap anyone to make them an admin, link them to their scores, change their handicap or remove them.</p>
+      <input type="search" id="adm-search" class="adm-search" placeholder="Search by name" value="${esc(adm.q)}" autocomplete="off">
+      <div id="adm-list"></div>`;
+    draw();
+    $("#adm-search").addEventListener("input", e => { adm.q = e.target.value; draw(); });
+  }
+  async function renderAdminMember(profileId) {
+    let d = adm.data;
+    if (!d || !d.people.some(m => m.id === profileId)) {
+      view.innerHTML = `<div class="card"><p class="muted">Loading…</p></div>`;
+      try { d = await loadAdminMembers(); } catch (e) { view.innerHTML = `<div class="card status-msg err">${esc(e.message)}</div>`; return; }
+    }
+    const m = d.people.find(x => x.id === profileId);
+    if (!m) { view.innerHTML = `<a class="back-link" href="#/members">‹ Members</a><div class="card empty"><p>We couldn't find that member.</p></div>`; return; }
+    const self = m.id === app.user.id;
+    const sameName = d.people.filter(x => x.id !== m.id && normName(x.name) === normName(m.name));
+    const match = !m.player ? d.players.find(p => !p.profile_id && normName(p.name) === normName(m.name)) : null;
+    const status = m.status === "pending" ? "Waiting for approval" : m.status === "rejected" ? "Removed / turned down" : m.role === "committee" ? "Admin (committee)" : "Member";
+    view.innerHTML = `<a class="back-link" href="#/members">‹ Members</a>
+      <div class="profile-head">${avatar(m.name, m.id, "big-av")}<div style="flex:1;min-width:0"><h1 style="margin:0">${esc(m.name)}</h1>
+        <div class="small muted">${esc(status)}${m.requested ? " · joined " + new Date(m.requested).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : ""}</div></div></div>
+      ${sameName.length ? `<p class="status-msg err small">There's another login with the same name${sameName.some(x => x.player) ? " that's already linked to the scores" : ""}. It may be a second sign-up: check with them which email they use.</p>` : ""}
+      ${m.status === "pending" ? `<div class="card"><h2>Request to join</h2>
+          <p class="small muted">${m.event ? "Wants to play in " + esc(m.event.name) + ". Approving also puts them in it." : "Approve to give them access to the website and app."}</p>
+          <div class="adm-btns"><button class="btn gold" data-action="adm-decide" data-id="${esc(m.id)}" data-status="approved">Approve</button>
+          <button class="btn ghost" data-action="adm-decide" data-id="${esc(m.id)}" data-status="rejected">Turn down</button></div></div>` : ""}
+      ${m.status === "approved" ? `<div class="card"><h2>Admin</h2>
+          <p class="small muted">${m.role === "committee" ? "An admin of the app and website, with full committee access: rounds, results, handicaps and members." : "Make them an admin to give them full committee access: rounds, results, handicaps and members."}</p>
+          ${self ? `<p class="small muted">You can't change your own access.</p>` : m.role === "committee"
+            ? `<button class="btn ghost block" data-action="adm-role" data-id="${esc(m.id)}" data-role="member">Remove admin</button>`
+            : `<button class="btn block" data-action="adm-role" data-id="${esc(m.id)}" data-role="committee">Make admin</button>`}</div>` : ""}
+      <div class="card"><h2>Scores and handicap</h2>
+        ${m.player ? `<p class="small">Linked to <b>${esc(m.player.name)}</b>, so their scores, results and handicap show as theirs.</p>
+            <label class="small muted" for="adm-hc">Society handicap</label>
+            <div class="adm-hc"><input id="adm-hc" type="number" inputmode="decimal" step="0.1" min="-10" max="54" value="${m.player.handicap != null ? esc(m.player.handicap) : ""}">
+            <button class="btn" data-action="adm-hc" data-player="${esc(m.player.id)}">Save</button></div>
+            <button class="mv-link small" data-action="adm-link" data-id="${esc(m.id)}" style="margin-top:10px">Linked to the wrong player? Change it</button>`
+          : `<p class="small adm-warn">Not linked to a player, so their scores and handicap don't show as theirs.</p>
+            ${match ? `<button class="btn block" data-action="adm-link-to" data-id="${esc(m.id)}" data-player="${esc(match.id)}">Link to ${esc(match.name)}</button>` : ""}
+            <button class="btn ghost block" data-action="adm-link" data-id="${esc(m.id)}" style="margin-top:8px">${match ? "Pick someone else" : "Link to a player"}</button>`}
+      </div>
+      ${self ? "" : m.status === "rejected"
+        ? `<div class="card"><h2>Bring them back</h2><p class="small muted">Gives them access to the website and app again.</p><button class="btn block" data-action="adm-decide" data-id="${esc(m.id)}" data-status="approved">Restore as a member</button></div>`
+        : m.status === "approved" ? `<button class="btn ghost block adm-remove" data-action="adm-remove" data-id="${esc(m.id)}">Remove from the society</button>` : ""}`;
+  }
+  async function admRefresh(id) { adm.data = null; await renderAdminMembers(id); }
+  async function admDecide(id, status) {
+    const m = adm.data && adm.data.people.find(x => x.id === id);
+    const { error } = await client.from("memberships").update({ status, decided_at: new Date().toISOString(), decided_by: app.user.id }).eq("profile_id", id);
+    if (error) { toast(error.message, true); return; }
+    // Approving someone who signed up to play in a round also puts them in it.
+    if (status === "approved" && m && m.status === "pending" && m.event) {
+      const a = await client.from("attendance").insert({ event_id: m.event.id, profile_id: id });
+      if (a.error && !/duplicate/i.test(a.error.message)) toast("Approved, but couldn't add them to " + m.event.name + ": " + a.error.message, true);
+    }
+    toast(status === "approved" ? "Approved" : "Done");
+    admRefresh(id);
+  }
+  function admConfirm(title, body, action, id, extra) {
+    openSheet(`<h2>${title}</h2><p class="small muted">${body}</p>
+      <button class="btn block" data-action="${action}" data-id="${esc(id)}" ${extra || ""} data-confirmed="1">${title}</button>
+      <button class="btn ghost block" data-action="close-sheet" style="margin-top:8px">Cancel</button>`);
+  }
+  async function admRole(el) {
+    const m = adm.data.people.find(x => x.id === el.dataset.id);
+    if (!m) return;
+    const role = el.dataset.role;
+    if (!el.dataset.confirmed) {
+      return role === "committee"
+        ? admConfirm("Make admin", `${esc(m.name)} will get full committee access to the app and website: rounds, results, handicaps and members.`, "adm-role", m.id, `data-role="committee"`)
+        : admConfirm("Remove admin", `${esc(m.name)} goes back to being a member. Their scores and history stay as they are.`, "adm-role", m.id, `data-role="member"`);
+    }
+    if (role !== "committee" && adm.data.people.filter(x => x.status === "approved" && x.role === "committee").length <= 1) { toast("There has to be at least one admin.", true); return; }
+    const { error } = await client.from("memberships").update({ role }).eq("profile_id", m.id);
+    if (error) { toast(error.message, true); return; }
+    closeSheet();
+    toast(role === "committee" ? `${m.name} is now an admin` : `${m.name} is no longer an admin`);
+    admRefresh(m.id);
+  }
+  async function admRemove(el) {
+    const m = adm.data.people.find(x => x.id === el.dataset.id);
+    if (!m) return;
+    if (!el.dataset.confirmed) return admConfirm("Remove from the society", `${esc(m.name)} won't be able to use the website or app. Their past scores and results stay. You can restore them later.`, "adm-remove", m.id);
+    const { error } = await client.from("memberships").update({ status: "rejected", role: "member", decided_at: new Date().toISOString(), decided_by: app.user.id }).eq("profile_id", m.id);
+    if (error) { toast(error.message, true); return; }
+    closeSheet(); toast(`${m.name} removed`); admRefresh(m.id);
+  }
+  function admLinkSheet(id, q) {
+    const m = adm.data.people.find(x => x.id === id);
+    const nq = normName(q);
+    const list = adm.data.players.filter(p => p.active !== false || p.profile_id === id).filter(p => !nq || normName(p.name).includes(nq));
+    openSheet(`<h2>Link ${esc(m.name)}</h2>
+      <p class="small muted" style="margin-top:-4px">Pick the player whose scores are theirs. Players already linked to someone else are marked.</p>
+      <input type="search" id="adm-link-q" class="adm-search" placeholder="Search players" value="${esc(q || "")}" autocomplete="off">
+      <div class="ci-list adm-pick">${list.map(p => `<button type="button" class="ci-row" data-action="adm-link-to" data-id="${esc(id)}" data-player="${esc(p.id)}" ${p.profile_id && p.profile_id !== id ? "disabled" : ""}>
+        <span class="ci-label">${esc(p.name)}<small>${p.profile_id === id ? "Linked now" : p.profile_id ? "Linked to another login" : "Handicap " + (p.handicap != null ? esc(p.handicap) : "–")}</small></span></button>`).join("") || `<p class="small muted">No players match.</p>`}</div>
+      ${m.player ? `<button class="btn ghost block" data-action="adm-unlink" data-id="${esc(id)}" style="margin-top:10px">Unlink from ${esc(m.player.name)}</button>` : ""}
+      <button class="btn ghost block" data-action="close-sheet" style="margin-top:8px">Cancel</button>`);
+    const inp = $("#adm-link-q");
+    inp.addEventListener("input", () => { const v = inp.value; admLinkSheet(id, v); const n = $("#adm-link-q"); n.focus(); n.setSelectionRange(v.length, v.length); });
+  }
+  async function admLinkTo(id, playerId) {
+    const m = adm.data.people.find(x => x.id === id);
+    if (m && m.player && m.player.id !== playerId) {
+      const u = await client.from("players").update({ profile_id: null }).eq("id", m.player.id);
+      if (u.error) { toast(u.error.message, true); return; }
+    }
+    const { error } = await client.from("players").update({ profile_id: id }).eq("id", playerId);
+    if (error) { toast(error.message, true); return; }
+    closeSheet(); toast("Linked"); admRefresh(id);
+  }
+  async function admUnlink(id) {
+    const m = adm.data.people.find(x => x.id === id);
+    if (!m || !m.player) return;
+    const { error } = await client.from("players").update({ profile_id: null }).eq("id", m.player.id);
+    if (error) { toast(error.message, true); return; }
+    closeSheet(); toast("Unlinked"); admRefresh(id);
+  }
+  async function admHandicap(playerId) {
+    const v = $("#adm-hc").value;
+    const val = v === "" ? null : Math.round(Number(v) * 10) / 10;
+    if (val == null || isNaN(val) || val < -10 || val > 54) { toast("Enter a handicap between −10 and 54.", true); return; }
+    const { error } = await client.from("players").update({ handicap: val }).eq("id", playerId);
+    if (error) { toast(error.message, true); return; }
+    const p = adm.data.players.find(x => x.id === playerId); if (p) p.handicap = val;
+    toast("Handicap saved");
   }
 
   // Tap a profile picture: see it big.
@@ -7050,6 +7234,13 @@
       }
       case "new-tee": newTee(el.dataset.course); break;
       case "map-here": mapHere(el); break;
+      case "adm-decide": admDecide(el.dataset.id, el.dataset.status); break;
+      case "adm-role": admRole(el); break;
+      case "adm-remove": admRemove(el); break;
+      case "adm-link": admLinkSheet(el.dataset.id, ""); break;
+      case "adm-link-to": admLinkTo(el.dataset.id, el.dataset.player); break;
+      case "adm-unlink": admUnlink(el.dataset.id); break;
+      case "adm-hc": admHandicap(el.dataset.player); break;
       case "meal-open": app.mealFromList = el.dataset.from === "list"; mealForm(app.round, el.dataset.player); break;
       case "meal-save": mealSave(); break;
       case "meal-list": mealList(app.round); break;
@@ -7179,7 +7370,7 @@
     if (!app.approved) return renderNotApproved();
     const mainKey = parts[0] === "" ? "play" : ["season", "records", "me"].includes(parts[0]) ? parts[0]
       : ["clubhouse", "member"].includes(parts[0]) ? "club"
-      : ["stats", "statistics", "bag", "courses", "course", "handicaps"].includes(parts[0]) ? "" : null;
+      : ["stats", "statistics", "bag", "courses", "course", "handicaps", "members"].includes(parts[0]) ? "" : null;
     if (mainKey != null) mainTabbar(mainKey);
     if (parts[0] !== "chat") club.chat = null;
     if (!club.counted) { club.counted = true; clubCounts().catch(() => {}); clubSubscribe(); clearBadge(); }
@@ -7193,6 +7384,7 @@
     if (parts[0] === "season") return renderSeason();
     if (parts[0] === "records") return renderRecords();
     if (parts[0] === "handicaps") return renderHandicaps();
+    if (parts[0] === "members") return renderAdminMembers(parts[1]);
     if (parts[0] === "ryder" && parts[1]) return renderRyder(parts[1], parts[2]);
     if (parts[0] === "rc" && parts[1]) return renderRcMatch(parts[1]);
     if (parts[0] === "print" && parts[1]) return renderPrint(parts[1]);
