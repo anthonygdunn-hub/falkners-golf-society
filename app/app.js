@@ -2682,9 +2682,10 @@
     if (error) { toast(error.message, true); return; }
     const row = r.meals.find(m => m.player_id === f.dataset.player);
     if (row) { row.choices = out ? null : data.choices; row.not_eating = data.not_eating; }
-    closeSheet();
-    toast("Meal saved. Thanks!");
+    toast(row ? `Saved for ${row.mine ? "you" : row.name}` : "Meal saved. Thanks!");
     renderRoundBody();
+    // Putting in several people's meals: straight back to the list.
+    if (app.mealFromList) mealList(r); else closeSheet();
   }
   function mealList(r) {
     const canEdit = app.committee;
@@ -2699,11 +2700,12 @@
     if (out) tally.push(`<span class="meal-total"><b>${out}</b> not eating</span>`);
     tally.push(`<span class="meal-total meal-total-wait"><b>${left}</b> still to choose</span>`);
     openSheet(`<h2>${esc(r.menu.title || "Meal choices")}</h2>
+      ${canEdit ? `<p class="small muted" style="margin-top:-4px">Committee: tap <b>Add</b> or <b>Change</b> to put in anyone's meal.</p>` : ""}
       <div class="meal-totals">${tally.join("")}</div>
       <ul class="meal-list">${r.meals.map(m => `<li class="${m.mine ? "is-me" : ""}">
         <span class="meal-name">${esc(m.name)}</span>
         <span class="meal-pick">${m.not_eating || m.choices ? esc(mealText(r, m)) : `<span class="muted">Not chosen yet</span>`}</span>
-        ${canEdit ? `<button class="mv-link small" data-action="meal-open" data-player="${esc(m.player_id)}">Change</button>` : ""}</li>`).join("")}</ul>
+        ${canEdit ? `<button class="btn ghost meal-edit-btn" data-action="meal-open" data-from="list" data-player="${esc(m.player_id)}">${m.not_eating || m.choices ? "Change" : "Add"}</button>` : ""}</li>`).join("")}</ul>
       <button class="btn ghost block" data-action="close-sheet" style="margin-top:10px">Done</button>`);
   }
 
@@ -7048,7 +7050,7 @@
       }
       case "new-tee": newTee(el.dataset.course); break;
       case "map-here": mapHere(el); break;
-      case "meal-open": mealForm(app.round, el.dataset.player); break;
+      case "meal-open": app.mealFromList = el.dataset.from === "list"; mealForm(app.round, el.dataset.player); break;
       case "meal-save": mealSave(); break;
       case "meal-list": mealList(app.round); break;
       case "map-help": mapHelpSheet(app.round); break;

@@ -1214,5 +1214,6 @@ body.lb-lock { overflow: hidden; }
 .meal-list li { display: grid; grid-template-columns: minmax(110px, 34%) 1fr auto; gap: 8px; align-items: baseline; padding: 7px 0; border-top: 1px solid rgba(0,0,0,.08); }
 .meal-list li.is-me .meal-name { font-weight: 700; }
 .meal-list .muted { color: var(--ink-soft); }
-.meal-edit { background: none; border: 0; color: var(--navy, #1d3461); text-decoration: underline; cursor: pointer; font: inherit; font-size: .82rem; }
+.meal-edit.btn { padding: 4px 12px; min-height: 0; font-size: .8rem; align-self: center; }
+.meal-committee { margin: 0 0 10px; }
 @media (max-width: 560px) { .meal-list li { grid-template-columns: 1fr auto; } .meal-list .meal-pick { grid-column: 1 / -1; grid-row: 2; } }

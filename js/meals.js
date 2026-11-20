@@ -68,7 +68,7 @@
         <label class="meal-option meal-out"><input type="checkbox" name="not_eating" ${row && row.not_eating ? "checked" : ""}> <span>${who.mine ? "I'm" : "They're"} not having the meal</span></label>
         <div class="meal-actions">
           <button class="btn btn-brass" type="submit" ${canSave ? "" : "disabled"}>${row && (row.choices || row.not_eating) ? "Update choice" : "Save my choice"}</button>
-          ${who.mine ? "" : `<button class="btn btn-ghost meal-cancel" type="button">Cancel</button>`}
+          ${who.mine ? "" : `<button class="btn btn-outline meal-cancel" type="button">Cancel</button>`}
         </div>
         <p class="small meal-msg" role="status"></p>
       </form>`;
@@ -100,15 +100,16 @@
         ? (closed && !ctx.committee
           ? `<p class="small">${me && (me.choices || me.not_eating) ? `You chose: <b>${esc(me.not_eating ? "not having the meal" : menu.courses.map(c => describe(menu, me, c.key)).join(", then "))}</b>.` : "You didn't choose a meal."} Ask the committee if you need to change it.</p>`
           : form(menu, editing, editing, canSave))
-        : `<p class="small">Only players in this round choose a meal.${ctx.committee ? " Tap a name below to choose for them." : ""}</p>`;
+        : `<p class="small">Only players in this round choose a meal.</p>`;
       const list = rows.map(b => {
         const meal = b.not_eating ? `<span class="muted">Not eating</span>`
           : b.choices ? menu.courses.map(c => esc(describe(menu, b, c.key))).join(" · ")
           : `<span class="muted">Not chosen yet</span>`;
-        const edit = ctx.committee ? `<button class="meal-edit" type="button" data-player="${esc(b.player_id)}">Change</button>` : "";
+        const edit = ctx.committee ? `<button class="meal-edit btn btn-outline btn-small" type="button" data-player="${esc(b.player_id)}">${b.not_eating || b.choices ? "Change" : "Add"}</button>` : "";
         return `<li class="${b.mine ? "is-me" : ""}"><span class="meal-name">${esc(b.name)}</span><span class="meal-pick">${meal}</span>${edit}</li>`;
       }).join("");
       slot.innerHTML = `<div class="meal-box">${head}
+        ${ctx.committee ? `<p class="small meal-committee">Committee: use <b>Add</b> or <b>Change</b> next to anyone to put in their meal.</p>` : ""}
         ${formHtml}
         <div class="meal-totals">${totals(menu, rows)}</div>
         <ul class="meal-list">${list}</ul></div>`;
