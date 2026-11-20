@@ -193,4 +193,4 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/extras.js?v=2026-11-13a" }));
 
 /* Motion: leaderboard, homepage countdown, pot ticker and scroll reveals. */
-document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/motion.js?v=2026-10-07a" }));
+document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/motion.js?v=2026-11-20c" }));

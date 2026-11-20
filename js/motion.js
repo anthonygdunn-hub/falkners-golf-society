@@ -96,7 +96,7 @@
       client.from("attendance").select("id, status").eq("event_id", ev.id),
       client.from("league_settings").select("max_players").maybeSingle()
     ]);
-    var taken = (both[0].data || []).filter(function (a) { return a.status !== "waiting"; }).length;
+    var taken = (both[0].data || []).filter(function (a) { return a.status === "playing"; }).length;
     var cap = ev.max_players || (both[1].data && both[1].data.max_players) || 32;
 
     var p = ev.event_date.split("-");

@@ -181,8 +181,10 @@ async function refreshAttendees(eventId) {
     return;
   }
 
-  const rows = allRows.filter(r => r.status !== "waiting");
+  const rows = allRows.filter(r => r.status === "playing");
   const waitingRows = allRows.filter(r => r.status === "waiting");
+  // Coming for the food, not playing.
+  const foodRows = allRows.filter(r => r.status === "food");
   const event = eventsById.get(eventId);
   const cap = capFor(event);
   const isPastRound = (slot.closest(".fixture-item") || {}).dataset?.past === "true";
@@ -202,6 +204,7 @@ async function refreshAttendees(eventId) {
      reads like a team sheet. Each name carries its handicap in
      brackets, so the sort ignores that and compares the name itself. */
   const waitingNames = waitingRows.length ? await resolveAttendeeNames(waitingRows) : [];
+  const foodNames = foodRows.length ? (await resolveAttendeeNames(foodRows)).map(bareName) : [];
 
   slot.innerHTML = (isPastRound ? "" : `<p class="small" style="margin:0 0 6px;"><strong>${rows.length}</strong> of ${cap} places taken${rows.length >= cap ? " · full" : ""}</p>`) +
     `<div class="attendee-list">${names
@@ -211,6 +214,9 @@ async function refreshAttendees(eventId) {
     .join("")}</div>` +
     (waitingNames.length && !isPastRound
       ? `<p class="small" style="margin:12px 0 6px;">Waiting list, in order</p><div class="attendee-list">${waitingNames.map(n => `<span class="attendee-chip" style="opacity:.7;">${escapeHtml(n)}</span>`).join("")}</div>`
+      : "") +
+    (foodNames.length
+      ? `<p class="small" style="margin:12px 0 6px;">Joining for food, not playing</p><div class="attendee-list">${foodNames.slice().sort((a, b) => a.localeCompare(b)).map(n => `<span class="attendee-chip attendee-food">🍽️ ${escapeHtml(n)}</span>`).join("")}</div>`
       : "");
 }
 
@@ -386,9 +392,10 @@ async function renderRegisterControl(eventId) {
   }
 
   const all = everyone || [];
-  const taken = all.filter(r => r.status !== "waiting").length;
+  const taken = all.filter(r => r.status === "playing").length;
   const waitingOrder = all.filter(r => r.status === "waiting").map(r => r.id);
-  drawAttendanceButton(slot, eventId, myRow || null, { event, taken, cap: capFor(event), guests, waitingOrder });
+  const { data: menu } = await client.from("event_menus").select("event_id").eq("event_id", eventId).maybeSingle();
+  drawAttendanceButton(slot, eventId, myRow || null, { event, taken, cap: capFor(event), guests, waitingOrder, hasMenu: !!menu });
 }
 
 // Today's date in the UK, as YYYY-MM-DD.
@@ -424,11 +431,21 @@ function drawAttendanceButton(slot, eventId, myRow, ctx) {
       slot.innerHTML = `<p class="small">Sign-ups for this round closed on ${niceDay(closesOn(event))}. If you still want to play, ask a committee member.</p>`;
       return;
     }
-    slot.innerHTML = full
+    slot.innerHTML = (full
       ? `<button class="btn btn-brass" type="button" data-join>Join the waiting list</button>
          <p class="small" style="margin-top:8px;">All ${ctx.cap} places are taken. If one comes free, the committee will offer it to the waiting list in order.</p>`
       : `<button class="btn btn-brass" type="button" data-join>I'm playing</button>
-         <p class="small" style="margin-top:8px;">${left} of ${ctx.cap} places left. Sign-ups close ${niceDay(closesOn(event))}.</p>`;
+         <p class="small" style="margin-top:8px;">${left} of ${ctx.cap} places left. Sign-ups close ${niceDay(closesOn(event))}.</p>`)
+      + (ctx.hasMenu ? `<button class="btn btn-outline btn-small" type="button" data-food style="margin-top:4px;">🍽️ Not playing, just coming for the food</button>` : "");
+    const foodBtn = slot.querySelector("[data-food]");
+    if (foodBtn) foodBtn.addEventListener("click", async () => {
+      foodBtn.disabled = true;
+      const { error } = await client.rpc("join_for_food", { p_event: eventId });
+      if (error) return showSlotError(slot, error);
+      await renderRegisterControl(eventId);
+      refreshAttendees(eventId);
+      if (typeof renderMeals === "function") renderMeals(client, eventId, { user: currentUser, approved: isApprovedMember, committee: isCommittee }).catch(() => {});
+    });
     slot.querySelector("[data-join]").addEventListener("click", async (e) => {
       e.target.disabled = true;
       const myPlayers = ((await client.from("players").select("id").eq("profile_id", currentUser.id)).data) || [];
@@ -438,6 +455,13 @@ function drawAttendanceButton(slot, eventId, myRow, ctx) {
       await renderRegisterControl(eventId);
       refreshAttendees(eventId);
     });
+    return;
+  }
+
+  if (myRow.status === "food") {
+    slot.innerHTML = `<p class="small"><span class="pay-status is-confirmed">Coming for the food</span> You're not playing, but you're on the meal list. Choose your meal below.</p>
+      <button class="btn btn-outline btn-small" type="button" data-leave>Can't make it after all</button>`;
+    slot.querySelector("[data-leave]").addEventListener("click", () => leaveRound(slot, eventId));
     return;
   }
 
@@ -540,7 +564,7 @@ function renderPaymentBlock(slot, eventId, myRow, guests) {
   if (!cost) return;
 
   const covered = [{ name: "You", payment_status: myRow.payment_status || "unpaid" }]
-    .concat((guests || []).filter(g => g.status !== "waiting").map(g => ({ name: g.name, payment_status: g.payment_status || "unpaid" })));
+    .concat((guests || []).filter(g => g.status === "playing").map(g => ({ name: g.name, payment_status: g.payment_status || "unpaid" })));
   const outstanding = covered.filter(c => c.payment_status !== "confirmed");
   const status = !outstanding.length ? "confirmed"
     : outstanding.every(c => c.payment_status === "claimed") ? "claimed" : "unpaid";

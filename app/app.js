@@ -1746,7 +1746,7 @@
     // Meal choices (e.g. a Christmas meal), if the committee put a menu on the round.
     const [menu, meals] = await Promise.all([
       client.from("event_menus").select("*").eq("event_id", eventId).maybeSingle(),
-      client.rpc("meal_board", { p_event: eventId }),
+      client.rpc("meal_list", { p_event: eventId }),
     ]);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
@@ -2873,6 +2873,37 @@
     // Putting in several people's meals: straight back to the list.
     if (app.mealFromList) mealList(r); else closeSheet();
   }
+  async function mealReload(r) {
+    const { data } = await client.rpc("meal_list", { p_event: r.id });
+    r.meals = data || [];
+    renderRoundBody();
+    mealList(r);
+  }
+  async function mealPaid(el) {
+    const r = app.round; el.disabled = true;
+    const { error } = await client.rpc("set_food_paid", { p_event: r.id, p_player: el.dataset.player, p_paid: el.dataset.paid === "1" });
+    if (error) { el.disabled = false; toast(error.message, true); return; }
+    const m = r.meals.find(x => x.player_id === el.dataset.player); if (m) m.food_paid = el.dataset.paid === "1";
+    mealList(r);
+  }
+  async function mealRemove(pid) {
+    const r = app.round, m = r.meals.find(x => x.player_id === pid);
+    if (!m) return;
+    if (!confirm(`Take ${m.name} off the round? They're down for food only.`)) return;
+    const { error } = await client.rpc("remove_food_only", { p_event: r.id, p_player: pid });
+    if (error) { toast(error.message, true); return; }
+    toast(`${m.name} taken off`);
+    mealReload(r);
+  }
+  async function mealAdd() {
+    const r = app.round, inp = $("#meal-add-name");
+    const name = inp ? inp.value.trim() : "";
+    if (!name) { toast("Type their name first.", true); return; }
+    const { error } = await client.rpc("add_food_only", { p_event: r.id, p_name: name });
+    if (error) { toast(error.message, true); return; }
+    toast(`${name} added for food`);
+    mealReload(r);
+  }
   function mealList(r) {
     const canEdit = app.committee;
     const tally = [];
@@ -2885,13 +2916,24 @@
     const left = r.meals.filter(m => !m.not_eating && !m.choices).length;
     if (out) tally.push(`<span class="meal-total"><b>${out}</b> not eating</span>`);
     tally.push(`<span class="meal-total meal-total-wait"><b>${left}</b> still to choose</span>`);
+    const food = r.meals.filter(m => m.attending === "food").length;
+    if (food) tally.push(`<span class="meal-total"><b>${food}</b> food only</span>`);
+    const eating = r.meals.filter(m => !m.not_eating);
+    const paid = eating.filter(m => m.food_paid).length;
+    const price = Number(r.menu.price || 0);
     openSheet(`<h2>${esc(r.menu.title || "Meal choices")}</h2>
-      ${canEdit ? `<p class="small muted" style="margin-top:-4px">Committee: tap <b>Add</b> or <b>Change</b> to put in anyone's meal.</p>` : ""}
+      ${canEdit ? `<p class="small muted" style="margin-top:-4px">Committee: tap <b>Add</b> or <b>Change</b> to put in anyone's meal, and <b>Not paid</b> / <b>Paid</b> for the food money.</p>` : ""}
       <div class="meal-totals">${tally.join("")}</div>
+      <p class="small" style="margin:0 0 6px"><b>${paid} of ${eating.length}</b> paid for food${price ? ` · £${(paid * price).toFixed(2)} of £${(eating.length * price).toFixed(2)}` : ""}</p>
       <ul class="meal-list">${r.meals.map(m => `<li class="${m.mine ? "is-me" : ""}">
-        <span class="meal-name">${esc(m.name)}</span>
+        <span class="meal-name">${esc(m.name)}${m.attending === "food" ? ` <em class="meal-tag">Food only</em>` : ""}${!canEdit && m.food_paid && !m.not_eating ? ` <em class="meal-tag is-paid">Paid</em>` : ""}</span>
         <span class="meal-pick">${m.not_eating || m.choices ? esc(mealText(r, m)) : `<span class="muted">Not chosen yet</span>`}</span>
-        ${canEdit ? `<button class="btn ghost meal-edit-btn" data-action="meal-open" data-from="list" data-player="${esc(m.player_id)}">${m.not_eating || m.choices ? "Change" : "Add"}</button>` : ""}</li>`).join("")}</ul>
+        ${canEdit ? `<span class="meal-tools">
+          ${m.not_eating ? "" : `<button class="meal-paid ${m.food_paid ? "is-paid" : ""}" data-action="meal-paid" data-player="${esc(m.player_id)}" data-paid="${m.food_paid ? "0" : "1"}">${m.food_paid ? "✓ Paid" : "Not paid"}</button>`}
+          <button class="btn ghost meal-edit-btn" data-action="meal-open" data-from="list" data-player="${esc(m.player_id)}">${m.not_eating || m.choices ? "Change" : "Add"}</button>
+          ${m.attending === "food" ? `<button class="meal-remove" data-action="meal-remove" data-player="${esc(m.player_id)}" aria-label="Take ${esc(m.name)} off the round">✕</button>` : ""}</span>` : ""}</li>`).join("")}</ul>
+      ${canEdit ? `<div class="meal-add"><label class="small muted" for="meal-add-name">Add someone coming for the food but not playing</label>
+        <div class="meal-add-row"><input id="meal-add-name" type="text" placeholder="Their name, e.g. Colette Hodges" autocomplete="off"><button class="btn" data-action="meal-add">Add</button></div></div>` : ""}
       <button class="btn ghost block" data-action="close-sheet" style="margin-top:10px">Done</button>`);
   }
 
@@ -7249,6 +7291,9 @@
       case "meal-open": app.mealFromList = el.dataset.from === "list"; mealForm(app.round, el.dataset.player); break;
       case "meal-save": mealSave(); break;
       case "meal-list": mealList(app.round); break;
+      case "meal-paid": mealPaid(el); break;
+      case "meal-remove": mealRemove(el.dataset.player); break;
+      case "meal-add": mealAdd(); break;
       case "map-help": mapHelpSheet(app.round); break;
       case "gps-on": store.set("gps-on", true); window.HoleMaps.startGps(); renderRoundBody(); break;
       case "hole-map":

@@ -45,7 +45,18 @@
     const waiting = board.filter(b => !b.not_eating && !b.choices).length;
     if (out) parts.push(`<span class="meal-total"><b>${out}</b> not eating</span>`);
     parts.push(`<span class="meal-total meal-total-wait"><b>${waiting}</b> still to choose</span>`);
+    const food = board.filter(b => b.attending === "food").length;
+    if (food) parts.push(`<span class="meal-total"><b>${food}</b> food only</span>`);
     return parts.join("");
+  }
+
+  // Pub money: who's paid for their food (the committee keeps this up to date).
+  function payLine(menu, board) {
+    const eating = board.filter(b => !b.not_eating);
+    const paid = eating.filter(b => b.food_paid).length;
+    const price = Number(menu.price || 0);
+    const money = price ? ` · £${(paid * price).toFixed(2)} of £${(eating.length * price).toFixed(2)}` : "";
+    return `<p class="small meal-paid-line"><b>${paid} of ${eating.length}</b> paid for food${money}</p>`;
   }
 
   function form(menu, who, row, canSave) {
@@ -88,7 +99,7 @@
       return;
     }
 
-    const { data: board, error } = await client.rpc("meal_board", { p_event: eventId });
+    const { data: board, error } = await client.rpc("meal_list", { p_event: eventId });
     if (error) { slot.innerHTML = `<div class="meal-box">${head}<p class="small">Couldn't load the meal choices just now.</p></div>`; return; }
     const rows = board || [];
     const me = rows.find(b => b.mine);
@@ -100,24 +111,64 @@
         ? (closed && !ctx.committee
           ? `<p class="small">${me && (me.choices || me.not_eating) ? `You chose: <b>${esc(me.not_eating ? "not having the meal" : menu.courses.map(c => describe(menu, me, c.key)).join(", then "))}</b>.` : "You didn't choose a meal."} Ask the committee if you need to change it.</p>`
           : form(menu, editing, editing, canSave))
-        : `<p class="small">Only players in this round choose a meal.</p>`;
+        : `<p class="small">Only people on this round choose a meal. Not playing? Use <b>Not playing, just coming for the food</b> above.</p>`;
       const list = rows.map(b => {
         const meal = b.not_eating ? `<span class="muted">Not eating</span>`
           : b.choices ? menu.courses.map(c => esc(describe(menu, b, c.key))).join(" · ")
           : `<span class="muted">Not chosen yet</span>`;
-        const edit = ctx.committee ? `<button class="meal-edit btn btn-outline btn-small" type="button" data-player="${esc(b.player_id)}">${b.not_eating || b.choices ? "Change" : "Add"}</button>` : "";
-        return `<li class="${b.mine ? "is-me" : ""}"><span class="meal-name">${esc(b.name)}</span><span class="meal-pick">${meal}</span>${edit}</li>`;
+        const edit = ctx.committee ? `<span class="meal-tools">
+            ${b.not_eating ? "" : `<button class="meal-paid ${b.food_paid ? "is-paid" : ""}" type="button" data-player="${esc(b.player_id)}" data-paid="${b.food_paid ? "0" : "1"}">${b.food_paid ? "✓ Paid" : "Not paid"}</button>`}
+            <button class="meal-edit btn btn-outline btn-small" type="button" data-player="${esc(b.player_id)}">${b.not_eating || b.choices ? "Change" : "Add"}</button>
+            ${b.attending === "food" ? `<button class="meal-remove" type="button" data-player="${esc(b.player_id)}" title="Take off the round">✕</button>` : ""}</span>`
+          : (b.food_paid && !b.not_eating ? `<span class="meal-paid is-paid">✓ Paid</span>` : "");
+        return `<li class="${b.mine ? "is-me" : ""}"><span class="meal-name">${esc(b.name)}${b.attending === "food" ? ` <em class="meal-tag">Food only</em>` : ""}</span><span class="meal-pick">${meal}</span>${edit}</li>`;
       }).join("");
       slot.innerHTML = `<div class="meal-box">${head}
         ${ctx.committee ? `<p class="small meal-committee">Committee: use <b>Add</b> or <b>Change</b> next to anyone to put in their meal.</p>` : ""}
         ${formHtml}
         <div class="meal-totals">${totals(menu, rows)}</div>
-        <ul class="meal-list">${list}</ul></div>`;
+        ${payLine(menu, rows)}
+        <ul class="meal-list">${list}</ul>
+        ${ctx.committee ? `<form class="meal-add"><label class="small" for="meal-add-${eventId}">Add someone who's coming for the food but not playing</label>
+          <div class="meal-add-row"><input id="meal-add-${eventId}" name="name" type="text" placeholder="Their name, e.g. Colette Hodges" autocomplete="off" required>
+          <button class="btn btn-brass btn-small" type="submit">Add</button></div><p class="small meal-add-msg" role="status"></p></form>` : ""}</div>`;
       wire();
+    }
+
+    async function reload() {
+      const { data } = await client.rpc("meal_list", { p_event: eventId });
+      rows.splice(0, rows.length, ...(data || []));
+      draw();
     }
 
     function wire() {
       const f = slot.querySelector(".meal-form");
+      slot.querySelectorAll("button.meal-paid").forEach(b => b.addEventListener("click", async () => {
+        b.disabled = true;
+        const { error } = await client.rpc("set_food_paid", { p_event: eventId, p_player: b.dataset.player, p_paid: b.dataset.paid === "1" });
+        if (error) { b.disabled = false; alert(error.message); return; }
+        const row = rows.find(r => r.player_id === b.dataset.player); if (row) row.food_paid = b.dataset.paid === "1";
+        draw();
+      }));
+      slot.querySelectorAll(".meal-remove").forEach(b => b.addEventListener("click", async () => {
+        const row = rows.find(r => r.player_id === b.dataset.player);
+        if (!row || !confirm(`Take ${row.name} off the round? They're down for food only.`)) return;
+        const { error } = await client.rpc("remove_food_only", { p_event: eventId, p_player: row.player_id });
+        if (error) { alert(error.message); return; }
+        reload();
+      }));
+      const add = slot.querySelector(".meal-add");
+      if (add) add.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const name = add.querySelector("[name=name]").value.trim();
+        const msg = add.querySelector(".meal-add-msg");
+        if (!name) return;
+        msg.textContent = "Adding…";
+        const { error } = await client.rpc("add_food_only", { p_event: eventId, p_name: name });
+        if (error) { msg.textContent = error.message; return; }
+        await reload();
+        const m2 = slot.querySelector(".meal-add-msg"); if (m2) m2.textContent = `${name} added. Use Add next to their name for their meal.`;
+      });
       slot.querySelectorAll(".meal-edit").forEach(b => b.addEventListener("click", () => {
         editing = rows.find(r => r.player_id === b.dataset.player) || null;
         draw();

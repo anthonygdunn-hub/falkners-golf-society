@@ -173,7 +173,7 @@
     var perEvent = new Map();
     d.events.forEach(function (ev) {
       var rows = d.attendance.filter(function (a) { return a.event_id === ev.id; });
-      var playing = rows.filter(function (a) { return a.status !== "waiting"; });
+      var playing = rows.filter(function (a) { return a.status === "playing"; });
       var waiting = rows.filter(function (a) { return a.status === "waiting"; })
         .sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
 
@@ -682,7 +682,7 @@
       }).join("") + "</dl>" : '<p class="small">Prizes not recorded yet.</p>');
     } else {
       var people = personRows(m, ev);
-      var playing = people.filter(function (x) { return x.r.status !== "waiting"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+      var playing = people.filter(function (x) { return x.r.status === "playing"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       var waiting = people.filter(function (x) { return x.r.status === "waiting"; });
       var line = function (x) {
         return '<li><span class="ov-p-name"><button type="button" class="ov-plain ov-underline" data-player="' + esc(x.name) + '">' + esc(x.name) + "</button>" +
@@ -781,7 +781,7 @@
     html += section("Sign-ups and payments", entries.length ? '<ul class="ov-p-list">' + entries.map(function (x) {
       return '<li><span class="ov-p-name"><button type="button" class="ov-plain ov-underline" data-round="' + x.ev.id + '">' + esc(x.ev.name) + "</button>" +
         (x.guest ? ' <span class="small">guest: ' + esc(x.guest) + "</span>" : "") + (x.a.status === "waiting" ? ' <span class="pay-status is-claimed">Waiting</span>' : "") + "</span>" +
-        (x.ev.cost && x.a.status !== "waiting" ? payChip(x.a.payment_status) + payButton(x.a) : "") + "</li>";
+        (x.ev.cost && x.a.status === "playing" ? payChip(x.a.payment_status) + payButton(x.a) : "") + "</li>";
     }).join("") + "</ul>" : '<p class="small">No sign-ups on record.</p>');
 
     return { kicker: "Player", title: players[0] ? players[0].name : name, html: html };
@@ -792,7 +792,7 @@
     var m = M, ev = m.d.events.find(function (e) { return e.id === id; });
     if (!ev) return null;
     var s = m.perEvent.get(id);
-    var people = personRows(m, ev).filter(function (x) { return x.r.status !== "waiting"; });
+    var people = personRows(m, ev).filter(function (x) { return x.r.status === "playing"; });
     var counts = { all: people.length, unpaid: 0, claimed: 0, confirmed: 0 };
     people.forEach(function (x) { counts[x.r.payment_status || "unpaid"]++; });
     var shown = people.filter(function (x) { return filter === "all" || (x.r.payment_status || "unpaid") === filter; })

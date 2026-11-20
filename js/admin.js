@@ -861,7 +861,7 @@ async function refreshPlayingList(eventId) {
   /* Playing is sorted by name, because the list is read to answer "is
      so-and-so playing?". The waiting list stays in the order people
      joined it, because that's the fair order to offer places in. */
-  const playing = rows.filter(r => r.status !== "waiting").map(toRow).sort((a, b) => a.name.localeCompare(b.name));
+  const playing = rows.filter(r => r.status === "playing").map(toRow).sort((a, b) => a.name.localeCompare(b.name));
   const waiting = rows.filter(r => r.status === "waiting").map(toRow);
   const full = playing.length >= cap;
 
