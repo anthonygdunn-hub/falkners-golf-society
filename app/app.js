@@ -2937,6 +2937,7 @@
       if (here) r.checkins.set(id, { player_id: id, checked_in_by: app.user.id }); else r.checkins.delete(id);
     }
     if (here && ids.length) toast(ids.length > 1 ? `${ids.length} checked in` : "Checked in");
+    if (!here && ids.length) toast("Check-in undone");
     renderRoundBody();
   }
 
@@ -2949,8 +2950,10 @@
     return `<div class="card">
       <h2>Check-in</h2>
       <p class="small" style="margin:0"><b>${here.length} of ${r.players.length}</b> checked in${today ? "" : " — players can check in from the app once the round's set up, or on the day"}.</p>
-      ${missing.length ? `<div style="margin-top:8px">${missing.map(p => `<div class="row checkin-row"><span>${esc(p.name)}${p.group ? ` <span class="muted small">Grp ${p.group}</span>` : ""}</span><span class="spacer"></span>
+      ${missing.length ? `<h3 class="ci-sub">Not checked in yet <span class="muted">(${missing.length})</span></h3><div>${missing.map(p => `<div class="row checkin-row"><span>${esc(p.name)}${p.group ? ` <span class="muted small">Grp ${p.group}</span>` : ""}</span><span class="spacer"></span>
         <button class="btn ghost" style="min-height:34px" data-action="checkin" data-player="${p.id}" data-here="1">Check in</button></div>`).join("")}</div>` : ""}
+      ${here.length ? `<h3 class="ci-sub">Checked in <span class="muted">(${here.length})</span></h3><div>${here.map(p => `<div class="row checkin-row is-here"><span>✓ ${esc(p.name)}${p.group ? ` <span class="muted small">Grp ${p.group}</span>` : ""}</span><span class="spacer"></span>
+        <button class="btn ghost ci-undo" style="min-height:34px" data-action="checkin" data-player="${p.id}" data-here="0">Undo</button></div>`).join("")}</div>` : ""}
     </div>`;
   }
 

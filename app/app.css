@@ -1369,3 +1369,8 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .btn.adm-remove { margin: 14px 0 24px; color: #a33; border-color: rgba(170,51,51,.35); }
 .adm-pick { max-height: 50vh; overflow: auto; margin: 6px 0 4px; }
 .adm-pick .ci-row[disabled] { opacity: .45; }
+
+/* Check-in lists (Manage) */
+.ci-sub { font-size: .95rem; margin: 14px 0 4px; }
+.checkin-row.is-here > span:first-child { color: #1d6b34; font-weight: 600; }
+.btn.ci-undo { color: #a33; border-color: rgba(170,51,51,.35); }
