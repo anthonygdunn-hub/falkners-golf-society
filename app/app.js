@@ -13,6 +13,8 @@
 // ------------------------------------------------------------------
 (function () {
   "use strict";
+  // Which version of the app this is: the ?v= on this script's address.
+  const APP_V = (() => { try { return new URL(document.currentScript.src).searchParams.get("v") || ""; } catch (e) { return ""; } })();
 
   const S = window.Scoring;
   const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -7434,5 +7436,31 @@
     }
     flushQueue();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Pick up new versions by itself: check when the app is opened or
+    // comes back to the front, and reload once a newer one is live. If
+    // something is open mid-edit, offer it instead of reloading.
+    setTimeout(checkForUpdate, 4000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForUpdate(); });
   })();
+
+  let updateCheckedAt = 0, updateOffered = false;
+  async function checkForUpdate() {
+    if (!APP_V || Date.now() - updateCheckedAt < 60000) return;
+    updateCheckedAt = Date.now();
+    try {
+      const res = await fetch("index.html?check=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) return;
+      const m = (await res.text()).match(/app\.js\?v=([0-9a-z.-]+)/i);
+      if (!m || m[1] === APP_V) return;
+      const busy = !$("#sheet").hidden || document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (!busy) { location.reload(); return; }
+      if (updateOffered) return;
+      updateOffered = true;
+      const bar = document.createElement("button");
+      bar.type = "button"; bar.className = "update-bar";
+      bar.textContent = "A new version of the app is ready. Tap to update";
+      bar.addEventListener("click", () => location.reload());
+      document.body.appendChild(bar);
+    } catch (e) { /* offline: try again next time */ }
+  }
 })();
