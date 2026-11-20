@@ -311,6 +311,7 @@ function renderFixtureItem(event, opts = {}) {
         <div class="fixture-section-label">${past ? 'Who played' : "Who's playing"}</div>
         <div class="attendee-slot" data-attendees-for="${event.id}"><p class="small">Loading…</p></div>
         <div class="groups-slot" data-groups-for="${event.id}"></div>
+        <div class="meal-slot" data-meal-for="${event.id}"></div>
         <div class="register-slot" data-register-for="${event.id}"></div>
       </div>
     </li>

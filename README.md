@@ -161,6 +161,7 @@ it again.
 42. `sql/clubhouse.sql` — the Clubhouse: members' contact details (private by default), society feed with birthday posts, direct messages and group chats, reports and mutes
 43. `sql/notifications.sql` — members' notification choices, the list behind the number on the app icon, and the Clubhouse push triggers
 44. `sql/map-on-the-day.sql` – lets players in a live round fill in unmapped tees and greens from where they stand
+45. `sql/meal-choices.sql` – a menu on a round (e.g. the Christmas meal) with each player's choice
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

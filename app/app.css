@@ -1325,3 +1325,26 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .map-here-btns .btn { flex: 1; min-height: 38px; padding: 6px 8px; font-size: .86rem; }
 .map-help-steps { margin: 6px 0 10px; padding-left: 20px; line-height: 1.5; }
 .map-help-steps li { margin-bottom: 6px; }
+
+/* Meal choices */
+.meal-card .row { align-items: baseline; }
+.meal-card-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.meal-card-btns .btn { flex: 1 1 auto; }
+.meal-course { border: 0; padding: 0; margin: 0 0 12px; }
+.meal-course legend { font-weight: 700; margin-bottom: 6px; }
+.meal-course.is-off { opacity: .45; }
+.meal-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 6px; background: var(--card, #fff); border: 1px solid var(--line, rgba(0,0,0,.12)); border-radius: 12px; cursor: pointer; }
+.meal-option input { width: 20px; height: 20px; accent-color: var(--gold, #b0924a); flex: none; }
+.meal-note { font-style: normal; font-size: .72rem; font-weight: 700; color: #8a6414; background: rgba(176,146,74,.18); border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
+.meal-extras { display: flex; gap: 8px; flex-wrap: wrap; margin: -2px 0 8px 30px; }
+.meal-extras[hidden] { display: none; }
+.meal-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--line, rgba(0,0,0,.12)); border-radius: 999px; font-size: .9rem; background: var(--card, #fff); }
+.meal-out { border-style: dashed; background: transparent; }
+.meal-totals { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.meal-total { font-size: .8rem; border: 1px solid var(--line, rgba(0,0,0,.12)); border-radius: 999px; padding: 3px 10px; }
+.meal-total-wait { border-style: dashed; }
+.meal-list { list-style: none; margin: 0; padding: 0; font-size: .92rem; }
+.meal-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 0; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
+.meal-list .meal-name { font-weight: 600; }
+.meal-list li.is-me .meal-name { color: var(--gold-dark, #8a6414); }
+.meal-list .meal-pick { grid-column: 1 / -1; grid-row: 2; color: var(--muted, #5b6478); font-size: .86rem; }

@@ -13,6 +13,7 @@ let client;
 let currentUser = null;
 let currentDisplayName = "";
 let isApprovedMember = false;
+let isCommittee = false;
 let membershipStatus = null;
 let bankDetails = null;
 let leagueSettings = { max_players: 32, close_days: 7 };
@@ -29,11 +30,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     currentUser = session.user;
     const { data: membership } = await client
       .from("memberships")
-      .select("status")
+      .select("status, role")
       .eq("profile_id", currentUser.id)
       .maybeSingle();
     membershipStatus = membership?.status || null;
     isApprovedMember = membershipStatus === "approved";
+    isCommittee = isApprovedMember && membership?.role === "committee";
 
     if (isApprovedMember) {
       // Both only readable once you're an approved member, which is
@@ -120,6 +122,11 @@ function toggleItem(item, open) {
     refreshAttendees(eventId);
     refreshGroups(eventId);
     renderForecast(item, eventId);
+    // Meal choices, if the committee has put a menu on this round.
+    if (typeof renderMeals === "function") {
+      renderMeals(client, eventId, { user: currentUser, approved: isApprovedMember, committee: isCommittee })
+        .catch(err => console.error(err));
+    }
   }
 }
 

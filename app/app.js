@@ -1557,6 +1557,11 @@
       client.from("game_contests").select("*").eq("event_id", eventId).order("position"),
       client.from("game_contest_claims").select("*").eq("event_id", eventId).order("created_at"),
     ]);
+    // Meal choices (e.g. a Christmas meal), if the committee put a menu on the round.
+    const [menu, meals] = await Promise.all([
+      client.from("event_menus").select("*").eq("event_id", eventId).maybeSingle(),
+      client.rpc("meal_board", { p_event: eventId }),
+    ]);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
@@ -1598,6 +1603,8 @@
       stats: new Map((stats.error ? [] : stats.data || []).map(x => [cellKey(x.player_id, x.hole), x])),
       prizes: prizes.error ? null : prizes.data,
       admins: admins.error ? null : admins.data || [],
+      menu: menu.error ? null : menu.data,
+      meals: meals.error ? [] : meals.data || [],
       canManage: !!manage.data,
       teams: teams.error ? [] : teams.data || [],
       matches: matches.error ? [] : matches.data || [],
@@ -2145,7 +2152,7 @@
   }
 
   function scoreView(r) {
-    const ci = checkinCard(r);
+    const ci = mealCard(r) + checkinCard(r);
     const nr = notReady(r);
     if (nr) return ci + nr;
     // Before the committee publishes it, players see a preview of the round.
@@ -2599,6 +2606,105 @@
       return drawSet ? [r.me] : r.players;
     }
     return r.players.filter(p => p.group === r.me.group);
+  }
+
+  // ---------- meal choices ----------
+  // Players choose their own meal until it closes; the committee can
+  // choose for anyone in the round. Everyone sees who's having what.
+  const mealClosed = r => !!(r.menu && r.menu.closes_at && new Date() > new Date(r.menu.closes_at));
+  function mealText(r, row) {
+    if (!row) return "";
+    if (row.not_eating) return "Not having the meal";
+    if (!row.choices) return "";
+    return r.menu.courses.map(c => {
+      const v = row.choices[c.key]; if (!v) return "";
+      const x = row.choices[c.key + "_extra"];
+      return x ? `${v} with ${x.toLowerCase()}` : v;
+    }).filter(Boolean).join(", then ");
+  }
+  function mealCard(r) {
+    if (!r.menu || (r.setup && r.setup.status === "final")) return "";
+    const closed = mealClosed(r);
+    const me = r.meals.find(m => m.mine);
+    const when = r.menu.closes_at ? new Date(r.menu.closes_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/London" }) : "";
+    const chosen = me && (me.choices || me.not_eating);
+    const left = r.meals.filter(m => !m.not_eating && !m.choices).length;
+    return `<div class="card meal-card">
+      <div class="row"><h2 style="margin:0">🍽️ ${esc(r.menu.title || "Meal choices")}</h2><span class="small muted">${closed ? "Closed" : when ? "By " + esc(when) : ""}</span></div>
+      ${me ? `<p style="margin:8px 0 10px">${chosen ? `You're having: <b>${esc(mealText(r, me))}</b>` : closed ? "You didn't choose a meal. Ask the committee if you need to." : "You haven't chosen yet."}</p>` : ""}
+      <div class="meal-card-btns">
+        ${me && (!closed || r.canManage || app.committee) ? `<button class="btn ${chosen ? "ghost" : "gold"}" data-action="meal-open" data-player="${esc(me.player_id)}">${chosen ? "Change my choice" : "Choose my meal"}</button>` : ""}
+        <button class="btn ghost" data-action="meal-list">Everyone's choices${left ? ` · ${left} to go` : ""}</button>
+      </div>
+    </div>`;
+  }
+  function mealForm(r, playerId) {
+    const row = r.meals.find(m => m.player_id === playerId);
+    if (!row) return;
+    const ch = row.choices || {};
+    const courses = r.menu.courses.map(c => `<fieldset class="meal-course"><legend>${esc(c.label)}</legend>${c.options.map(o => `
+      <label class="meal-option"><input type="radio" name="m-${esc(c.key)}" value="${esc(o.name)}" ${ch[c.key] === o.name ? "checked" : ""}>
+        <span>${esc(o.name)}${o.note ? ` <em class="meal-note">${esc(o.note)}</em>` : ""}</span></label>
+      ${(o.extras || []).length ? `<div class="meal-extras" data-extras-for="${esc(c.key)}" data-option="${esc(o.name)}" ${ch[c.key] === o.name ? "" : "hidden"}>${o.extras.map(x => `<label class="meal-chip"><input type="radio" name="m-${esc(c.key)}_extra" value="${esc(x)}" ${ch[c.key + "_extra"] === x ? "checked" : ""}> with ${esc(x.toLowerCase())}</label>`).join("")}</div>` : ""}`).join("")}</fieldset>`).join("");
+    openSheet(`<h2>${esc(r.menu.title || "Meal choices")}</h2>
+      <p class="small muted" style="margin-top:-4px">${row.mine ? "Your meal" : "Choosing for <b>" + esc(row.name) + "</b>"}</p>
+      <form id="meal-form" data-player="${esc(playerId)}">
+        ${courses}
+        <label class="meal-option meal-out"><input type="checkbox" name="m-out" ${row.not_eating ? "checked" : ""}> <span>${row.mine ? "I'm" : "They're"} not having the meal</span></label>
+        <button class="btn block" type="button" data-action="meal-save" style="margin-top:8px">Save</button>
+        <button class="btn ghost block" type="button" data-action="close-sheet" style="margin-top:8px">Cancel</button>
+      </form>`);
+    const f = $("#meal-form");
+    const sync = () => {
+      const out = f.querySelector("[name=m-out]").checked;
+      f.querySelectorAll(".meal-course").forEach(fs => { fs.disabled = out; fs.classList.toggle("is-off", out); });
+    };
+    f.addEventListener("change", e => {
+      const n = e.target.name || "";
+      if (e.target.type === "radio" && !n.endsWith("_extra")) {
+        const key = n.slice(2);
+        f.querySelectorAll(`[data-extras-for="${key}"]`).forEach(x => { x.hidden = x.dataset.option !== e.target.value; });
+      }
+      sync();
+    });
+    sync();
+  }
+  async function mealSave() {
+    const r = app.round, f = $("#meal-form");
+    if (!r || !f) return;
+    const out = f.querySelector("[name=m-out]").checked;
+    const choices = {};
+    r.menu.courses.forEach(c => {
+      const v = f.querySelector(`[name="m-${c.key}"]:checked`); if (v) choices[c.key] = v.value;
+      const x = f.querySelector(`[data-extras-for="${c.key}"]:not([hidden]) [name="m-${c.key}_extra"]:checked`); if (x) choices[c.key + "_extra"] = x.value;
+    });
+    const { data, error } = await client.rpc("set_meal_choice", { p_event: r.id, p_player: f.dataset.player, p_choices: choices, p_not_eating: out });
+    if (error) { toast(error.message, true); return; }
+    const row = r.meals.find(m => m.player_id === f.dataset.player);
+    if (row) { row.choices = out ? null : data.choices; row.not_eating = data.not_eating; }
+    closeSheet();
+    toast("Meal saved. Thanks!");
+    renderRoundBody();
+  }
+  function mealList(r) {
+    const canEdit = app.committee;
+    const tally = [];
+    r.menu.courses.forEach(c => c.options.forEach(o => {
+      const having = r.meals.filter(m => !m.not_eating && m.choices && m.choices[c.key] === o.name);
+      const extra = (o.extras || []).length && having.length ? " (" + o.extras.map(x => `${having.filter(m => m.choices[c.key + "_extra"] === x).length} ${x.toLowerCase()}`).join(", ") + ")" : "";
+      tally.push(`<span class="meal-total"><b>${having.length}</b> ${esc(o.name)}${esc(extra)}</span>`);
+    }));
+    const out = r.meals.filter(m => m.not_eating).length;
+    const left = r.meals.filter(m => !m.not_eating && !m.choices).length;
+    if (out) tally.push(`<span class="meal-total"><b>${out}</b> not eating</span>`);
+    tally.push(`<span class="meal-total meal-total-wait"><b>${left}</b> still to choose</span>`);
+    openSheet(`<h2>${esc(r.menu.title || "Meal choices")}</h2>
+      <div class="meal-totals">${tally.join("")}</div>
+      <ul class="meal-list">${r.meals.map(m => `<li class="${m.mine ? "is-me" : ""}">
+        <span class="meal-name">${esc(m.name)}</span>
+        <span class="meal-pick">${m.not_eating || m.choices ? esc(mealText(r, m)) : `<span class="muted">Not chosen yet</span>`}</span>
+        ${canEdit ? `<button class="mv-link small" data-action="meal-open" data-player="${esc(m.player_id)}">Change</button>` : ""}</li>`).join("")}</ul>
+      <button class="btn ghost block" data-action="close-sheet" style="margin-top:10px">Done</button>`);
   }
 
   function checkinCard(r) {
@@ -6941,6 +7047,9 @@
       }
       case "new-tee": newTee(el.dataset.course); break;
       case "map-here": mapHere(el); break;
+      case "meal-open": mealForm(app.round, el.dataset.player); break;
+      case "meal-save": mealSave(); break;
+      case "meal-list": mealList(app.round); break;
       case "map-help": mapHelpSheet(app.round); break;
       case "gps-on": store.set("gps-on", true); window.HoleMaps.startGps(); renderRoundBody(); break;
       case "hole-map":
