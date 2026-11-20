@@ -5781,6 +5781,7 @@
         ${row("tees", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', "Tee sheet", groupsN || "")}
         ${r.contestsOff ? "" : row("contests", '<path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/>', "Stake holes")}
         ${r.feedOff ? "" : `<button type="button" class="ci-row" data-action="tab" data-tab="feed"><span class="ci-ico">${TAB_ICONS.feed}</span><span class="ci-label">Message the players<small>Post to the ${what} feed</small></span><span class="ci-chev">›</span></button>`}
+        ${r.menu ? (() => { const left = r.meals.filter(m => !m.not_eating && !m.choices).length; return `<button type="button" class="ci-row" data-action="meal-list"><span class="ci-ico">${icon('<path d="M7 3v8M5 3v4a2 2 0 0 0 4 0V3M7 11v10"/><path d="M17 21V3c-2 1-3 4-3 7h3"/>')}</span><span class="ci-label">${esc(r.menu.title || "Meal choices")}<small>${left ? left + " still to choose" : "Everyone has chosen"}</small></span><span class="ci-chev">›</span></button>`; })() : ""}
       </div>
       <div class="card ci-list mg-list"><p class="mg-head">Players</p>
         ${row("players", '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M19 8v6M16 11h6"/>', "Players & handicaps", r.players.length)}
