@@ -15,6 +15,20 @@
   "use strict";
   // Which version of the app this is: the ?v= on this script's address.
   const APP_V = (() => { try { return new URL(document.currentScript.src).searchParams.get("v") || ""; } catch (e) { return ""; } })();
+  // iPhone: don't auto-zoom into a tapped box (pinch zoom still works,
+  // iOS ignores maximum-scale for that), and undo any zoom on a new page.
+  (function () {
+    const vp = document.querySelector('meta[name="viewport"]');
+    const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (!vp || !iOS) return;
+    const base = vp.getAttribute("content").replace(/,\s*maximum-scale=[^,]*/g, "");
+    vp.setAttribute("content", base + ", maximum-scale=1");
+    window.addEventListener("hashchange", () => {
+      vp.setAttribute("content", base + ", maximum-scale=1.0001");
+      setTimeout(() => vp.setAttribute("content", base + ", maximum-scale=1"), 50);
+    });
+  })();
+
 
   const S = window.Scoring;
   const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

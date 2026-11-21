@@ -1390,3 +1390,9 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .meal-add { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
 .meal-add-row { display: flex; gap: 8px; margin-top: 6px; }
 .meal-add-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line, rgba(0,0,0,.15)); border-radius: 10px; font: inherit; }
+
+/* Phones zoom in when a box with small text is tapped, and stay zoomed.
+   16px is the size iPhones leave alone. */
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea { font-size: max(16px, 1em) !important; }
+}

@@ -194,3 +194,18 @@ document.head.appendChild(Object.assign(document.createElement("script"), { src:
 
 /* Motion: leaderboard, homepage countdown, pot ticker and scroll reveals. */
 document.head.appendChild(Object.assign(document.createElement("script"), { src: "js/motion.js?v=2026-11-20c" }));
+
+// iPhone zoom fix
+  // iPhone: don't auto-zoom into a tapped box (pinch zoom still works,
+  // iOS ignores maximum-scale for that), and undo any zoom on a new page.
+  (function () {
+    const vp = document.querySelector('meta[name="viewport"]');
+    const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (!vp || !iOS) return;
+    const base = vp.getAttribute("content").replace(/,\s*maximum-scale=[^,]*/g, "");
+    vp.setAttribute("content", base + ", maximum-scale=1");
+    window.addEventListener("pageshow", () => {
+      vp.setAttribute("content", base + ", maximum-scale=1.0001");
+      setTimeout(() => vp.setAttribute("content", base + ", maximum-scale=1"), 50);
+    });
+  })();

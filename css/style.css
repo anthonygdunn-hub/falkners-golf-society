@@ -1228,3 +1228,9 @@ body.lb-lock { overflow: hidden; }
 .meal-add-row { display: flex; gap: 8px; margin-top: 6px; }
 .meal-add-row input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid rgba(0,0,0,.18); border-radius: 8px; font: inherit; }
 .meal-add-msg { margin: 6px 0 0; }
+
+/* Phones zoom in when a box with small text is tapped, and stay zoomed.
+   16px is the size iPhones leave alone. */
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea { font-size: max(16px, 1em) !important; }
+}
