@@ -267,7 +267,7 @@ async function refreshGroups(eventId) {
 
   if (error || !rows || !rows.length) return;
 
-  const names = await resolveAttendeeNames(rows);
+  const names = await resolveNamesAligned(rows);
 
   const collect = (type) => {
     const byNumber = new Map();
@@ -300,25 +300,42 @@ async function refreshGroups(eventId) {
 
 // Names live in two tables, so they're looked up explicitly rather than
 // leaning on an automatic join.
-function hcapSuffix(h) { return (h === null || h === undefined || h === "") ? "" : " (" + h + ")"; } async function resolveAttendeeNames(rows) {
-  const profileIds = rows.map(r => r.profile_id).filter(Boolean);
-  const playerIds = rows.map(r => r.player_id).filter(Boolean);
+function hcapSuffix(h) { return (h === null || h === undefined || h === "") ? "" : " (" + h + ")"; }
 
-  const [profs, plyrs] = await Promise.all([
-    profileIds.length
-      ? client.from("profiles").select("id, display_name, handicap").in("id", profileIds)
-      : Promise.resolve({ data: [] }),
-    playerIds.length
-      ? client.from("players").select("id, name, handicap, profile_id").or("id.in.(" + (playerIds.length ? playerIds.join(",") : "00000000-0000-0000-0000-000000000000") + "),profile_id.in.(" + (profileIds.length ? profileIds.join(",") : "00000000-0000-0000-0000-000000000000") + ")")
-      : Promise.resolve({ data: [] })
+/* One name for each row, in the same order as the rows. Members are
+   named from their player record (everyone can read those) and only
+   fall back to their profile, which most people can't read. */
+async function resolveNamesAligned(rows) {
+  const zero = "00000000-0000-0000-0000-000000000000";
+  const profileIds = [...new Set(rows.map(r => r.profile_id).filter(Boolean))];
+  const playerIds = [...new Set(rows.map(r => r.player_id).filter(Boolean))];
+  if (!profileIds.length && !playerIds.length) return rows.map(() => "Player");
+  const [plyrs, profs] = await Promise.all([
+    client.from("players").select("id, name, handicap, profile_id")
+      .or("id.in.(" + (playerIds.length ? playerIds.join(",") : zero) + "),profile_id.in.(" + (profileIds.length ? profileIds.join(",") : zero) + ")"),
+    profileIds.length ? client.from("profiles").select("id, display_name, handicap").in("id", profileIds) : Promise.resolve({ data: [] }),
   ]);
+  const players = plyrs.data || [];
+  const byId = new Map(players.map(p => [p.id, p]));
+  const byProfile = new Map(players.filter(p => p.profile_id).map(p => [p.profile_id, p]));
+  const profById = new Map((profs.data || []).map(p => [p.id, p]));
+  return rows.map(r => {
+    if (r.player_id && byId.get(r.player_id)) { const p = byId.get(r.player_id); return p.name + hcapSuffix(p.handicap); }
+    if (r.profile_id) {
+      const pl = byProfile.get(r.profile_id), pr = profById.get(r.profile_id);
+      if (pl) return pl.name + hcapSuffix(pl.handicap);
+      if (pr && pr.display_name) return pr.display_name + hcapSuffix(pr.handicap);
+      return "Member";
+    }
+    return "Player";
+  });
+}
 
-  const profById = new Map((profs.data || []).map(p => [p.id, p.display_name + hcapSuffix(p.handicap != null ? p.handicap : (((plyrs.data || []).find(pl => pl.profile_id === p.id) || {}).handicap))]));
-  const playerById = new Map((plyrs.data || []).map(p => [p.id, p.name + hcapSuffix(p.handicap)]));
-
-  return rows.filter(r => { if (!r.player_id) return true; const pl = (plyrs.data || []).find(p => p.id === r.player_id); return !(pl && pl.profile_id && profileIds.indexOf(pl.profile_id) !== -1); }).map(r => r.player_id
-    ? (playerById.get(r.player_id) || "Player")
-    : (profById.get(r.profile_id) || "Member"));
+/* Names for a list of people: like the above, but someone listed both by
+   their account and their player record only appears once. */
+async function resolveAttendeeNames(rows) {
+  const names = await resolveNamesAligned(rows);
+  return names.filter((n, i) => n === "Member" || n === "Player" || names.indexOf(n) === i);
 }
 
 async function renderRegisterControl(eventId) {
