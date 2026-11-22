@@ -167,6 +167,12 @@ function handleArrivalFromRegistration(events) {
   if (!item) return;
 
   toggleItem(item, true);
+  const cardBack = typeof window.cardPayReturn === "function"
+    ? window.cardPayReturn(() => renderRegisterControl(target)) : null;
+  if (cardBack) {
+    item.querySelector(".register-slot").insertAdjacentHTML("beforebegin",
+      `<p class="status-msg ${cardBack.ok ? "ok" : "err"}">${escapeHtml(cardBack.text)}</p>`);
+  }
   if (registeredId) {
     const slot = item.querySelector(".register-slot");
     slot.insertAdjacentHTML("beforebegin", `<p class="status-msg ok">You're registered — see you there!</p>`);
@@ -490,6 +496,7 @@ function drawAttendanceButton(slot, eventId, myRow, ctx) {
     slot.innerHTML = `<p class="small"><span class="pay-status is-confirmed">Coming for the food</span> You're not playing, but you're on the meal list. Choose your meal below.</p>
       <button class="btn btn-outline btn-small" type="button" data-leave>Can't make it after all</button>`;
     slot.querySelector("[data-leave]").addEventListener("click", () => leaveRound(slot, eventId));
+    renderCardBox(slot, eventId);
     return;
   }
 
@@ -626,10 +633,11 @@ function renderPaymentBlock(slot, eventId, myRow, guests) {
   slot.insertAdjacentHTML("beforeend", `
     <div class="pay-box">
       <strong>${heading}</strong>
-      ${status === "confirmed" ? "" : bank}
+      ${status === "confirmed" ? "" : `<div class="pay-method">Bank transfer · free</div>${bank}`}
       ${action}
       <div class="small" data-pay-status></div>
     </div>`);
+  renderCardBox([...slot.querySelectorAll(".pay-box")].pop(), eventId);
 
   const btn = slot.querySelector("[data-pay]");
   if (!btn) return;
@@ -648,6 +656,15 @@ function renderPaymentBlock(slot, eventId, myRow, guests) {
     }
 
     renderRegisterControl(eventId);
+  });
+}
+
+// Card / Apple Pay / Google Pay, when the committee has switched it on
+// (js/card-pay.js). Comes back to this fixture afterwards.
+function renderCardBox(container, eventId) {
+  if (!container || typeof window.renderCardPay !== "function") return;
+  window.renderCardPay(client, container, eventId, {
+    returnUrl: location.origin + location.pathname + "#event-" + eventId,
   });
 }
 

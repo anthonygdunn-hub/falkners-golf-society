@@ -163,6 +163,7 @@ it again.
 44. `sql/map-on-the-day.sql` – lets players in a live round fill in unmapped tees and greens from where they stand
 45. `sql/meal-choices.sql` – a menu on a round (e.g. the Christmas meal) with each player's choice
 46. `sql/food-only.sql` – people coming for the food but not playing, and pub money paid / unpaid
+47. `sql/card-payments.sql` – pay for a round by card, Apple Pay or Google Pay through Stripe (golf only, golf + food, or food only, card fee added). Needs the `card-checkout` and `stripe-webhook` functions, the STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET secrets, and `society_settings.card_payments` turned on
 
 Deploy the `push-notify` Edge Function from `supabase/functions/push-notify/index.ts`.
 It makes its own signing keys on first run (kept in `push_config`, service role only).

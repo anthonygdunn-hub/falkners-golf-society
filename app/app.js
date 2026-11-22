@@ -1762,6 +1762,9 @@
       client.from("event_menus").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("meal_list", { p_event: eventId }),
     ]);
+    // Paying for the round: what I owe (card prices), my place, and the
+    // society's bank details. Tolerant: no payment card if these fail.
+    const pay = await loadPay(eventId);
     // Check-ins are a nice-to-have: if they can't load, the round still opens.
     const err = ev.error || setup.error || field.error || hcps.error || scores.error || entries.error || subs.error;
     if (err) throw err;
@@ -1805,6 +1808,7 @@
       admins: admins.error ? null : admins.data || [],
       menu: menu.error ? null : menu.data,
       meals: meals.error ? [] : meals.data || [],
+      pay,
       canManage: !!manage.data,
       teams: teams.error ? [] : teams.data || [],
       matches: matches.error ? [] : matches.data || [],
@@ -1823,6 +1827,82 @@
     (entries.data || []).forEach(e => applyEntry(r, e));
     buildPlayers(r);
     return r;
+  }
+
+  async function loadPay(eventId) {
+    if (app.guest || !app.user) return null;
+    try {
+      const [q, mine, bank] = await Promise.all([
+        client.rpc("card_quote", { p_event: eventId }),
+        client.from("attendance").select("id, status, payment_status, payment_reference, food_paid").eq("event_id", eventId).eq("profile_id", app.user.id).maybeSingle(),
+        client.from("society_settings").select("account_name, sort_code, account_number, payment_note").maybeSingle(),
+      ]);
+      if (!mine.data || !["playing", "food"].includes(mine.data.status)) return null;
+      return { quote: q.error ? null : q.data, mine: mine.data, bank: bank.error ? null : bank.data };
+    } catch (e) { return null; }
+  }
+
+  // "Pay for this round": card / Apple Pay (js/card-pay.js) when the
+  // committee has it switched on, and bank transfer (free) as before.
+  function payCard(r) {
+    const p = r.pay;
+    if (!p || (r.setup && r.setup.status === "final")) return "";
+    const golfEach = Number(r.event.cost || 0), foodEach = Number((r.menu && r.menu.price) || 0);
+    const meMeal = r.meals.find(m => m.mine);
+    const golfDue = p.mine.status === "playing" && golfEach > 0 && p.mine.payment_status !== "confirmed";
+    const foodDue = foodEach > 0 && !p.mine.food_paid && !(meMeal && meMeal.not_eating);
+    const owes = p.quote && p.quote.options && Object.keys(p.quote.options).length;
+    if (!golfDue && !foodDue && !owes) return "";
+    const gbp = n => "£" + (Number.isInteger(n) ? n : n.toFixed(2));
+    const chip = (label, state) => `<span class="pay-chip ${state === "Paid" ? "is-paid" : state === "Awaiting check" ? "is-wait" : ""}">${label}<b>${state}</b></span>`;
+    const golfState = p.mine.payment_status === "confirmed" ? "Paid" : p.mine.payment_status === "claimed" ? "Awaiting check" : "Unpaid";
+    const ref = p.mine.payment_reference || payRef(r);
+    const b = p.bank || {};
+    const hasBank = b.account_name || b.account_number;
+    const cardOn = !!(p.quote && p.quote.enabled && owes);
+    return `<div class="card pay-card">
+      <div class="row"><h2 style="margin:0">💷 Pay for ${esc(r.event.name)}</h2></div>
+      <div class="pay-chips">
+        ${p.mine.status === "playing" && golfEach ? chip("Golf " + gbp(golfEach), golfState) : ""}
+        ${foodEach && !(meMeal && meMeal.not_eating) ? chip("Food " + gbp(foodEach), p.mine.food_paid ? "Paid" : "Unpaid") : ""}
+      </div>
+      ${cardOn ? `<div data-card-slot></div>` : ""}
+      ${golfDue ? `<details class="pay-bank"${cardOn ? "" : " open"}>
+        <summary>${cardOn ? "Or pay by bank transfer (free)" : "Pay by bank transfer"}</summary>
+        ${hasBank ? `<dl class="pay-dl">
+          ${b.account_name ? `<dt>Account</dt><dd>${esc(b.account_name)}</dd>` : ""}
+          ${b.sort_code ? `<dt>Sort code</dt><dd>${esc(b.sort_code)}</dd>` : ""}
+          ${b.account_number ? `<dt>Account no.</dt><dd>${esc(b.account_number)}</dd>` : ""}
+          <dt>Reference</dt><dd class="mono">${esc(ref)}</dd>
+        </dl>${b.payment_note ? `<p class="small muted">${esc(b.payment_note)}</p>` : ""}` : `<p class="small muted">The committee hasn't added the bank details yet.</p>`}
+        ${p.mine.payment_status === "claimed"
+          ? `<p class="small">You've said you've paid the golf. The committee will confirm it once it lands.</p><button class="btn ghost" data-action="pay-claim" data-status="unpaid">Actually, I haven't paid yet</button>`
+          : `<button class="btn ${cardOn ? "ghost" : "gold"}" data-action="pay-claim" data-status="claimed">I've paid the golf by transfer</button>`}
+      </details>` : ""}
+    </div>`;
+  }
+  function payRef(r) {
+    const round = (r.event.name.match(/\d+/) || [])[0];
+    const mine = r.meals.find(m => m.mine);
+    const surname = String((r.me && r.me.name) || (mine && mine.name) || "").trim().split(/\s+/).pop() || "MEMBER";
+    return `${round ? "R" + round : "FAGS"} ${surname.toUpperCase()}`.slice(0, 18);
+  }
+  function fillPayCard(r) {
+    const slot = document.querySelector(".pay-card [data-card-slot]");
+    if (!slot || !r.pay || typeof window.renderCardPay !== "function") return;
+    window.renderCardPay(client, slot, r.id, { quote: r.pay.quote, returnUrl: location.origin + location.pathname + "#/round/" + r.id });
+  }
+  async function payClaim(el) {
+    const r = app.round; el.disabled = true;
+    const { error } = await client.rpc("claim_round_payment", { p_event: r.id, p_status: el.dataset.status, p_reference: (r.pay && r.pay.mine.payment_reference) || payRef(r) });
+    if (error) { el.disabled = false; return toast(error.message, true); }
+    await refreshPay();
+    toast(el.dataset.status === "claimed" ? "Thanks — the committee will confirm it" : "Marked as not paid");
+  }
+  async function refreshPay() {
+    const r = app.round; if (!r) return;
+    r.pay = await loadPay(r.id);
+    if (r.tab === "score") renderRoundBody();
   }
 
   function applyScore(r, s) {
@@ -2237,6 +2317,7 @@
     const body = $("#round-body");
     if (r.tab === "score") {
       body.innerHTML = scoreView(r);
+      fillPayCard(r);
       if (store.get("gps-on", false) && r.geo && r.geo.size && window.HoleMaps) window.HoleMaps.startGps();
       maybeMapHelp(r);
     }
@@ -2352,7 +2433,7 @@
   }
 
   function scoreView(r) {
-    const ci = mealCard(r) + checkinCard(r);
+    const ci = payCard(r) + mealCard(r) + checkinCard(r);
     const nr = notReady(r);
     if (nr) return ci + nr;
     // Before the committee publishes it, players see a preview of the round.
@@ -7304,6 +7385,7 @@
       case "adm-hc": admHandicap(el.dataset.player); break;
       case "meal-open": app.mealFromList = el.dataset.from === "list"; mealForm(app.round, el.dataset.player); break;
       case "meal-save": mealSave(); break;
+      case "pay-claim": payClaim(el); break;
       case "meal-list": mealList(app.round); break;
       case "meal-paid": mealPaid(el); break;
       case "meal-remove": mealRemove(el.dataset.player); break;
@@ -7487,6 +7569,9 @@
     try { await loadUser(); }
     catch (e) { /* offline at launch — fall through to sign in */ }
     route();
+    // Back from Stripe's checkout page.
+    const cardBack = window.cardPayReturn && window.cardPayReturn(() => refreshPay());
+    if (cardBack) setTimeout(() => toast(cardBack.text, !cardBack.ok), 600);
     // Arrived from the install page (/get): show the steps straight away,
     // and tidy the address so the home-screen icon opens the app itself.
     if (new URLSearchParams(location.search).has("install")) {

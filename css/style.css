@@ -1235,6 +1235,24 @@ body.lb-lock { overflow: hidden; }
   input, select, textarea { font-size: max(16px, 1em) !important; }
 }
 
+/* ---------- Card / Apple Pay (js/card-pay.js) ---------- */
+.pay-method { margin: 10px 0 -4px; font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+.card-pay { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.card-pay-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.card-pay-wallets { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+.card-pay-opts { display: grid; gap: 8px; margin: 10px 0; }
+.card-pay-opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; cursor: pointer; }
+.card-pay-opt:has(input:checked) { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.card-pay-opt input { margin: 0; accent-color: var(--gold); width: 18px; height: 18px; flex: none; }
+.card-pay-opt-text { flex: 1; display: flex; flex-direction: column; line-height: 1.3; }
+.card-pay-opt-name { font-weight: 600; }
+.card-pay-opt-sub { font-size: 0.82rem; color: var(--ink-soft); }
+.card-pay-opt-price { font-weight: 700; font-variant-numeric: tabular-nums; }
+.card-pay-one { margin: 8px 0; }
+.card-pay-fee { font-size: 0.82rem; color: var(--ink-soft); margin: 6px 0 10px; }
+.card-pay-msg { font-size: 0.85rem; margin-top: 8px; }
+.card-pay-msg.is-err { color: #7A2331; }
+
 /* Next season showing, an earlier season's round still to come */
 .fx-nextup { list-style: none; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--gold); border-radius: var(--radius); background: #FBF7EE; }
 .fx-nextup-label { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #7A5A11; margin-right: 6px; }
