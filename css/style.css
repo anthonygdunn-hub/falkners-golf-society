@@ -1234,3 +1234,8 @@ body.lb-lock { overflow: hidden; }
 @media (hover: none) and (pointer: coarse) {
   input, select, textarea { font-size: max(16px, 1em) !important; }
 }
+
+/* Next season showing, an earlier season's round still to come */
+.fx-nextup { list-style: none; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--gold); border-radius: var(--radius); background: #FBF7EE; }
+.fx-nextup-label { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #7A5A11; margin-right: 6px; }
+.fx-nextup a { font-weight: 600; color: var(--navy); text-decoration: none; }

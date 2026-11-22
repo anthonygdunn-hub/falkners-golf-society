@@ -78,15 +78,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   const years = [...new Set(sorted.map(yearOfEv))].sort().reverse();
   const params = new URLSearchParams(window.location.search);
   const linked = sorted.find(e => e.id === (params.get("registered") || (window.location.hash || "").replace("#event-", "")));
-  let year = !seasons ? null : linked ? yearOfEv(linked) : pickedSeason(events, years);
+  // Fixtures open on the newest season posted (so next year's calendar
+  // shows as soon as it's up), unless the address asks for another.
+  const asked = params.get("season");
+  let year = !seasons ? null : linked ? yearOfEv(linked) : years.includes(asked) ? asked : (years[0] || pickedSeason(events, years));
   if (seasons && !years.includes(year)) years.unshift(year);
+
+  // While a round from an earlier season is still to come (Round 9 in
+  // late November), keep it one tap away from the new season's list.
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const nextUp = sorted.find(e => e.event_date >= todayStr);
 
   function showSeason(y) {
     year = y;
     const list = seasons ? sorted.filter(e => yearOfEv(e) === y) : sorted;
-    listEl.innerHTML = list.length
+    const jump = seasons && nextUp && yearOfEv(nextUp) !== y && yearOfEv(nextUp) < y
+      ? `<li class="fx-nextup"><span class="fx-nextup-label">Next up</span> <a href="?season=${yearOfEv(nextUp)}#event-${nextUp.id}" data-next-up="${nextUp.id}">${escapeHtml(nextUp.name)} · ${escapeHtml(nextUp.venue || "")} · ${new Date(nextUp.event_date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })} ›</a></li>`
+      : "";
+    listEl.innerHTML = jump + (list.length
       ? list.map(e => renderFixtureItem(e)).join("")
-      : `<li class="empty-state">No fixtures posted for ${y || "this season"} yet.</li>`;
+      : `<li class="empty-state">No fixtures posted for ${y || "this season"} yet.</li>`);
     const label = document.getElementById("fx-season");
     if (label && y) label.textContent = y;
   }
