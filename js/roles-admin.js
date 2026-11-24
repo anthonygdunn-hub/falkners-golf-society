@@ -21,6 +21,7 @@
   var client = null;
   var me = null;
   var members = [];
+  var iAmOwner = false;
   var events = [];
   var grants = [];
 
@@ -77,23 +78,25 @@
 
   async function loadAll() {
     var res = await Promise.all([
-      client.from("memberships").select("profile_id, role, status"),
+      client.from("memberships").select("profile_id, role, status, is_owner"),
       client.from("profiles").select("id, display_name"),
       client.from("events").select("id, name, venue, event_date").order("event_date", { ascending: false }),
-      client.from("moderator_grants").select("id, profile_id, event_id")
+      client.from("moderator_grants").select("id, profile_id, event_id"),
+      client.rpc("is_overall_admin")
     ]);
 
     var ms = res[0].data || [];
     var ps = res[1].data || [];
     events = res[2].data || [];
     grants = res[3].data || [];
+    iAmOwner = !!(res[4] && res[4].data);
 
     var nameOf = {};
     ps.forEach(function (p) { nameOf[p.id] = p.display_name; });
 
     members = ms
       .filter(function (m) { return m.status === "approved"; })
-      .map(function (m) { return { id: m.profile_id, name: nameOf[m.profile_id] || "Unnamed", role: m.role }; })
+      .map(function (m) { return { id: m.profile_id, name: nameOf[m.profile_id] || "Unnamed", role: m.role, owner: !!m.is_owner }; })
       .sort(function (a, b) { return a.name.localeCompare(b.name); });
 
     renderRoles();
@@ -107,12 +110,19 @@
     list.innerHTML = '<table style="width:100%;border-collapse:collapse;">' +
       members.map(function (m) {
         var self = m.id === me;
+        // Only the overall admin hands out or takes away committee, and
+        // nobody else can change the overall admin. The database enforces
+        // this too; locking the box here just saves a confusing error.
+        var locked = self || m.owner || (!iAmOwner && m.role === "committee");
         return '<tr>' +
           '<td style="padding:10px 0;border-bottom:1px solid var(--line);">' + esc(m.name) +
-          (self ? ' <span class="small" style="color:var(--ink-soft);">(you)</span>' : "") + "</td>" +
+          (self ? ' <span class="small" style="color:var(--ink-soft);">(you)</span>' : "") +
+          (m.owner ? ' <span class="small" style="color:var(--ink-soft);">· overall admin</span>' : "") + "</td>" +
           '<td align="right" style="padding:10px 0;border-bottom:1px solid var(--line);">' +
-          '<select data-role-for="' + esc(m.id) + '"' + (self ? " disabled" : "") + ">" +
-          ["member", "moderator", "committee"].map(function (r) {
+          '<select data-role-for="' + esc(m.id) + '"' + (locked ? " disabled" : "") + ">" +
+          ["member", "moderator", "committee"].filter(function (r) {
+            return iAmOwner || r !== "committee" || m.role === "committee";
+          }).map(function (r) {
             return '<option value="' + r + '"' + (m.role === r ? " selected" : "") + ">" +
               r.charAt(0).toUpperCase() + r.slice(1) + "</option>";
           }).join("") +

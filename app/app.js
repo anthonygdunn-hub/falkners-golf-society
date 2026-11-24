@@ -183,11 +183,12 @@
     const { data } = await client.auth.getSession();
     app.user = data.session ? data.session.user : null;
     app.guest = null;
-    if (!app.user) { app.approved = false; app.committee = false; return; }
+    if (!app.user) { app.approved = false; app.committee = false; app.owner = false; return; }
     const [appr, comm] = await Promise.all([
       client.rpc("is_approved_member"),
       client.rpc("is_committee"),
-    ]);
+      client.rpc("is_overall_admin"),
+    ]).then(r => { app.owner = !!(r[2] && r[2].data); return r; });
     app.approved = !!appr.data;
     app.committee = !!comm.data;
     // A friend invited to a member's private game: one game, nothing else.
@@ -1405,7 +1406,7 @@
   const adm = { q: "", data: null };
   async function loadAdminMembers() {
     const [ms, ps, pl, evs] = await Promise.all([
-      client.from("memberships").select("profile_id, role, status, requested_at, decided_at, intended_event_id"),
+      client.from("memberships").select("profile_id, role, status, requested_at, decided_at, intended_event_id, is_owner"),
       client.from("profiles").select("id, display_name, created_at"),
       client.from("players").select("id, name, profile_id, handicap, official_index, active").order("name"),
       client.from("events").select("id, name, event_date"),
@@ -1417,7 +1418,7 @@
     const evById = new Map((evs.data || []).map(e => [e.id, e]));
     const people = (ms.data || []).map(m => {
       const p = prof.get(m.profile_id) || {};
-      return { id: m.profile_id, name: p.display_name || "Unnamed", role: m.role, status: m.status, requested: m.requested_at || p.created_at,
+      return { id: m.profile_id, name: p.display_name || "Unnamed", role: m.role, owner: !!m.is_owner, status: m.status, requested: m.requested_at || p.created_at,
         event: m.intended_event_id ? evById.get(m.intended_event_id) : null, player: byProfile.get(m.profile_id) || null };
     }).sort((a, b) => a.name.localeCompare(b.name));
     adm.data = { people, players };
@@ -1480,7 +1481,10 @@
           <button class="btn ghost" data-action="adm-decide" data-id="${esc(m.id)}" data-status="rejected">Turn down</button></div></div>` : ""}
       ${m.status === "approved" ? `<div class="card"><h2>Admin</h2>
           <p class="small muted">${m.role === "committee" ? "An admin of the app and website, with full committee access: rounds, results, handicaps and members." : "Make them an admin to give them full committee access: rounds, results, handicaps and members."}</p>
-          ${self ? `<p class="small muted">You can't change your own access.</p>` : m.role === "committee"
+          ${self ? `<p class="small muted">You can't change your own access.</p>`
+            : m.owner ? `<p class="small muted">The overall admin. Only they can change their own access.</p>`
+            : !app.owner ? `<p class="small muted">Only the overall admin can give or take away admin access.</p>`
+            : m.role === "committee"
             ? `<button class="btn ghost block" data-action="adm-role" data-id="${esc(m.id)}" data-role="member">Remove admin</button>`
             : `<button class="btn block" data-action="adm-role" data-id="${esc(m.id)}" data-role="committee">Make admin</button>`}</div>` : ""}
       <div class="card"><h2>Scores and handicap</h2>
@@ -1493,7 +1497,7 @@
             ${match ? `<button class="btn block" data-action="adm-link-to" data-id="${esc(m.id)}" data-player="${esc(match.id)}">Link to ${esc(match.name)}</button>` : ""}
             <button class="btn ghost block" data-action="adm-link" data-id="${esc(m.id)}" style="margin-top:8px">${match ? "Pick someone else" : "Link to a player"}</button>`}
       </div>
-      ${self ? "" : m.status === "rejected"
+      ${self || m.owner || (m.role === "committee" && !app.owner) ? "" : m.status === "rejected"
         ? `<div class="card"><h2>Bring them back</h2><p class="small muted">Gives them access to the website and app again.</p><button class="btn block" data-action="adm-decide" data-id="${esc(m.id)}" data-status="approved">Restore as a member</button></div>`
         : m.status === "approved" ? `<button class="btn ghost block adm-remove" data-action="adm-remove" data-id="${esc(m.id)}">Remove from the society</button>` : ""}`;
   }

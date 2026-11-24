@@ -177,6 +177,15 @@ Under Authentication → URL Configuration, the Site URL must be the live domain
 and the redirect list must include `https://www.thefalknersarmsgolfsociety.co.uk/**`,
 or sign-up emails will send people to the wrong place.
 
+### Overall admin
+
+`sql/overall-admin.sql` marks one membership (Anthony's) as the overall admin.
+The database then stops anyone else from changing or removing that account,
+and only the overall admin can give or take away committee access. Every other
+committee power is unchanged. To change who the overall admin is, set
+`memberships.is_owner` in the Supabase SQL editor; it can't be done from the
+website or app.
+
 ### Forgotten passwords
 
 Every sign-in screen (My Account, `admin.html`, `newsletter-admin.html` and the
