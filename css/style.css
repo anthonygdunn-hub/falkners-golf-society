@@ -1262,3 +1262,8 @@ body.lb-lock { overflow: hidden; }
    the edge of the card. Let them shrink to the card like other boxes. */
 input[type="date"], input[type="time"] { min-width: 0; max-width: 100%; display: block; -webkit-appearance: none; appearance: none; min-height: 46px; }
 input[type="date"]::-webkit-date-and-time-value, input[type="time"]::-webkit-date-and-time-value { text-align: left; }
+
+/* Season buttons above each round list on the committee admin page
+   (js/round-options.js), the same buttons as the fixtures page. */
+.year-tabs.round-seasons { margin: 2px 0 10px; gap: 6px; }
+.round-seasons .year-tab { font-size: 0.85rem; padding: 7px 12px; }
