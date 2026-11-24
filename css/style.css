@@ -1257,3 +1257,8 @@ body.lb-lock { overflow: hidden; }
 .fx-nextup { list-style: none; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--gold); border-radius: var(--radius); background: #FBF7EE; }
 .fx-nextup-label { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #7A5A11; margin-right: 6px; }
 .fx-nextup a { font-weight: 600; color: var(--navy); text-decoration: none; }
+
+/* iPhone: date and time boxes keep their own built-in width and run off
+   the edge of the card. Let them shrink to the card like other boxes. */
+input[type="date"], input[type="time"] { min-width: 0; max-width: 100%; display: block; -webkit-appearance: none; appearance: none; min-height: 46px; }
+input[type="date"]::-webkit-date-and-time-value, input[type="time"]::-webkit-date-and-time-value { text-align: left; }
