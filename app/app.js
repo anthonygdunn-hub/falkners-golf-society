@@ -4853,6 +4853,7 @@
         <table class="pp-card"><thead><tr><th>Hole</th><th>Yds</th><th>Par</th><th>SI</th>${ps.map(p => `<th colspan="2">${esc(p.name)}<small>plays off ${p.ph == null ? "?" : p.ph}</small></th>`).join("")}</tr>
           <tr class="pp-sub2"><th></th><th></th><th></th><th></th>${ps.map(() => `<th>Score</th><th>Pts</th>`).join("")}</tr></thead>
           <tbody>${r.holes.slice(0, 9).map(row).join("")}${tot("Out", r.holes.slice(0, 9))}${r.holes.slice(9).map(row).join("")}${tot("In", r.holes.slice(9))}${tot("Total", r.holes)}</tbody></table>
+        <p class="pp-note pp-key"><span class="pp-dots">•</span> = a shot on that hole, from the player's playing handicap and the hole's stroke index (SI). Take it off the score before working out the points. <span class="pp-dots">••</span> = two shots.</p>
         <div class="pp-sign"><span>Marker's signature</span><span>Player's signature</span></div>
         ${n !== "–" && teeTimeFor(r, n) ? `<p class="pp-note">Tee time ${teeTimeFor(r, n)}</p>` : ""}</section>`;
     };

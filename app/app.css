@@ -1438,3 +1438,7 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .round-notice-label { display: block; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: #7A5A11; margin-bottom: 4px; font-weight: 700; }
 .hero-notice { margin: 10px 0 12px; padding: 9px 12px; border-radius: 10px; background: rgba(217,190,124,.16); border: 1px solid rgba(217,190,124,.45); color: #fff; font-size: .86rem; line-height: 1.4; }
 .hero-notice b { color: #D9BE7C; text-transform: uppercase; letter-spacing: .06em; font-size: .72rem; display: block; }
+
+/* Key under each printed scorecard explaining the shot dots */
+.pp-key { margin-top: 8px; }
+.pp-key .pp-dots, .pdf-stage .pp-key .pp-dots { position: static; font-size: 1.1em; letter-spacing: 0; }
