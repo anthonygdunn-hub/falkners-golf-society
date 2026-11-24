@@ -286,6 +286,13 @@ async function refreshGroups(eventId) {
 
   const names = await resolveNamesAligned(rows);
 
+  // Who's riding in a golf buggy, ticked by the committee on the admin page.
+  const { data: buggyRows } = await client.from("attendance")
+    .select("player_id, profile_id").eq("event_id", eventId).eq("buggy", true);
+  const buggy = new Set((buggyRows || []).flatMap(b => [b.player_id, b.profile_id]).filter(Boolean));
+  const inBuggy = new Set();
+  rows.forEach((r, i) => { if ((r.player_id && buggy.has(r.player_id)) || (r.profile_id && buggy.has(r.profile_id))) inBuggy.add(names[i]); });
+
   const collect = (type) => {
     const byNumber = new Map();
     rows.forEach((r, i) => {
@@ -306,7 +313,7 @@ async function refreshGroups(eventId) {
         <div class="tee-group">
           <span class="tee-group-label">${word} ${number}</span>
           <ul class="tee-group-names">
-            ${players.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}
+            ${players.map((p) => `<li>${escapeHtml(p)}${inBuggy.has(p) ? ' <span class="buggy-ic" title="In a buggy" role="img" aria-label="in a buggy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12"/><path d="M7 4v8M16 4l1 8"/><path d="M9 12V9h4"/><path d="M3 12h17l1 4H3z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg></span>' : ""}</li>`).join("")}
           </ul>
         </div>`).join("")}
     </div>` : "";

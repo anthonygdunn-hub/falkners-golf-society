@@ -445,6 +445,7 @@
         <div><span>You</span><b>${youre ? "Playing" : "Not entered"}</b></div>
       </div>
       <div id="hero-wx"></div>
+      ${e.app_notice ? `<div class="hero-notice"><b>Round rule</b> ${esc(e.app_notice)}</div>` : ""}
       ${cta}
       ${youre ? "" : `<a class="hero-link" href="../fixtures.html">Register on the website ›</a>`}
     </div>`;
@@ -1788,9 +1789,11 @@
       client.from("game_contest_claims").select("*").eq("event_id", eventId).order("created_at"),
     ]);
     // Meal choices (e.g. a Christmas meal), if the committee put a menu on the round.
-    const [menu, meals] = await Promise.all([
+    const [menu, meals, buggies] = await Promise.all([
       client.from("event_menus").select("*").eq("event_id", eventId).maybeSingle(),
       client.rpc("meal_list", { p_event: eventId }),
+      // Who's in a golf buggy (the committee ticks it on the admin page).
+      client.from("attendance").select("player_id, profile_id").eq("event_id", eventId).eq("buggy", true),
     ]);
     // Paying for the round: what I owe (card prices), my place, and the
     // society's bank details. Tolerant: no payment card if these fail.
@@ -1822,6 +1825,7 @@
       setup: setup.data,
       tee, course, holes, geo,
       field: field.data || [],
+      buggy: new Set((buggies.error ? [] : buggies.data || []).flatMap(b => [b.player_id, b.profile_id]).filter(Boolean)),
       hcps: new Map((hcps.data || []).map(h => [h.player_id, h])),
       scores: {},
       entries: new Map(),
@@ -2051,6 +2055,7 @@
         id: f.player_id, profileId: f.profile_id, name: f.name, index, ph, ch, full,
         overridden: h.playing_handicap != null,
         guest: f.is_guest, group: f.tee_group, pairs: (f.pair_groups || []).map(Number),
+        buggy: !!(r.buggy && (r.buggy.has(f.player_id) || (f.profile_id && r.buggy.has(f.profile_id)))),
         scores: r.scores[f.player_id] || {},
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
@@ -2436,6 +2441,16 @@
 
   // ---------- score entry ----------
 
+  // A round notice (e.g. the 4-club rule), set by the committee on the
+  // website's Edit a fixture. Shown at the top of the round and on the
+  // home screen's next-round card.
+  const noticeCard = e => e && e.app_notice
+    ? `<div class="card round-notice" role="note"><span class="round-notice-label">Round rule</span>${esc(e.app_notice)}</div>` : "";
+
+  // A small golf buggy beside the name of anyone riding in one.
+  const BUGGY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12"/><path d="M7 4v8M16 4l1 8"/><path d="M9 12V9h4"/><path d="M3 12h17l1 4H3z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>';
+  const buggyMark = p => p && p.buggy ? ` <span class="buggy-ic" title="In a buggy" role="img" aria-label="in a buggy">${BUGGY_SVG}</span>` : "";
+
   function groupsOf(r) {
     const groups = new Map();
     r.players.forEach(p => {
@@ -2463,7 +2478,7 @@
   }
 
   function scoreView(r) {
-    const ci = payCard(r) + mealCard(r) + checkinCard(r);
+    const ci = noticeCard(r.event) + payCard(r) + mealCard(r) + checkinCard(r);
     const nr = notReady(r);
     if (nr) return ci + nr;
     // Before the committee publishes it, players see a preview of the round.
@@ -2898,8 +2913,8 @@
         <h2>${groups.length ? "Tee groups" : "Who's playing"}</h2>
         ${groups.length ? groups.map(([n, ps]) => `
           <div class="preview-group${me && me.group === n ? " mine" : ""}"><div class="small muted">Group ${n}${me && me.group === n ? " — yours" : ""}</div>
-            ${ps.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}</div>`).join("")
-          : r.players.map(p => `<div class="row"><span>${esc(p.name)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}
+            ${ps.map(p => `<div class="row"><span>${esc(p.name)}${buggyMark(p)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}</div>`).join("")
+          : r.players.map(p => `<div class="row"><span>${esc(p.name)}${buggyMark(p)}</span><span class="spacer"></span><span class="small">plays off <b>${p.ph == null ? "?" : p.ph}</b></span></div>`).join("")}
         ${r.pairs && r.pairs.length ? `<p class="small" style="margin:10px 0 0"><a href="#" data-action="board-go" data-board="pairs">See the pairs →</a></p>` : ""}
       </div>`;
   }
@@ -3088,7 +3103,7 @@
       ${group.map(p => {
         const inNow = r.checkins.has(p.id);
         return `<div class="row checkin-row">
-          <div><strong>${esc(p.name)}</strong>${me && p.id === me.id ? ' <span class="muted small">(you)</span>' : ""}
+          <div><strong>${esc(p.name)}</strong>${buggyMark(p)}${me && p.id === me.id ? ' <span class="muted small">(you)</span>' : ""}
             <div class="thru">${p.ph == null ? "" : "Plays off " + p.ph}</div></div>
           <span class="spacer"></span>
           <button class="btn ${inNow ? "ghost" : "gold"}" style="min-height:40px" data-action="checkin" data-player="${p.id}" data-here="${inNow ? 0 : 1}">${inNow ? "✓ Here" : "Check in"}</button>
@@ -4827,7 +4842,7 @@
     const start = `<section class="pp-page pp-part-start">${head("Start sheet")}
       <div class="pp-facts"><span>First tee <b>${ev.tee_time ? ev.tee_time.slice(0, 5) : "—"}</b></span><span>Par <b>${parTotal(r)}</b></span>${r.tee.slope ? `<span>Slope <b>${r.tee.slope}</b></span>` : ""}${r.tee.course_rating ? `<span>CR <b>${r.tee.course_rating}</b></span>` : ""}<span>Allowance <b>${esc(String(r.setup.allowance))}%</b></span></div>
       <table class="pp-table"><thead><tr><th>Group</th><th>Tee time</th><th>Player</th><th>Index</th><th>Plays off</th><th>Pair</th><th>Here</th></tr></thead>
-      <tbody>${allGroups.map(([n, ps]) => ps.map((p, i) => `<tr class="${i === 0 ? "pp-first" : ""}"><td>${i === 0 ? n : ""}</td><td>${i === 0 && n !== "–" ? teeTimeFor(r, n) : ""}</td><td>${esc(p.name)}${p.guest ? " (guest)" : ""}</td><td>${p.index == null ? "" : p.index}</td><td><b>${p.ph == null ? "" : p.ph}</b></td><td>${(p.pairs || []).join(", ")}</td><td class="pp-box"></td></tr>`).join("")).join("")}</tbody></table>
+      <tbody>${allGroups.map(([n, ps]) => ps.map((p, i) => `<tr class="${i === 0 ? "pp-first" : ""}"><td>${i === 0 ? n : ""}</td><td>${i === 0 && n !== "–" ? teeTimeFor(r, n) : ""}</td><td>${esc(p.name)}${p.guest ? " (guest)" : ""}${buggyMark(p)}</td><td>${p.index == null ? "" : p.index}</td><td><b>${p.ph == null ? "" : p.ph}</b></td><td>${(p.pairs || []).join(", ")}</td><td class="pp-box"></td></tr>`).join("")).join("")}</tbody></table>
       ${cs.length ? `<h3>Side contests</h3><p>${cs.map(c => `${esc(c.label)} — hole ${c.holeNo}`).join(" · ")}</p>` : ""}
       <p class="pp-note">Playing handicaps are ${esc(String(r.setup.allowance))}% of course handicap for the ${esc(r.tee.name)} tees. A dot on a card means a shot on that hole.</p></section>`;
     const card = ([n, ps]) => {
@@ -5715,7 +5730,7 @@
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${x.sum.thru ? posCell(x.pos, x.tied) : ""}${move(x.player.id)}</td>
           <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
-          <td><strong>${esc(x.player.name)}</strong>${flags(r, x.player)}${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
+          <td><strong>${esc(x.player.name)}</strong>${buggyMark(x.player)}${flags(r, x.player)}${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph} · Out ${x.sum.front} · In ${x.sum.back}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num"><span class="big">${x.sum.points}</span></td>
         </tr>`).join("")}</tbody></table>
@@ -5741,7 +5756,7 @@
         <tr data-player="${x.player.id}" class="${meClass(x.player)}">
           <td class="pos">${posCell(x.pos)}${move(x.player.id)}</td>
           <td class="av">${avatar(x.player.name, x.player.profileId, meClass(x.player) ? "me" : "")}</td>
-          <td><strong>${esc(x.player.name)}</strong>${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
+          <td><strong>${esc(x.player.name)}</strong>${buggyMark(x.player)}${x.player.members && x.player.members.length > 2 ? `<div class="thru">${esc(memberNames(x.player))}</div>` : ""}<div class="thru">PH ${x.player.ph == null ? "?" : x.player.ph}</div></td>
           <td class="num thru">${thruText(x.sum)}</td>
           <td class="num">${x.nr ? "NR" : x.sum.thru ? (gross ? x.sum.gross : x.sum.net) : "–"}</td>
           <td class="num"><span class="big ${parClass(x.score)}">${x.nr ? "NR" : x.sum.thru ? toPar(x.score) : "–"}</span></td>
@@ -6158,7 +6173,7 @@
     const groups = new Map();
     (r.people || r.players).forEach(p => { const g = p.group || 0; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p); });
     const nums = [...groups.keys()].sort((a, b) => (a || 99) - (b || 99));
-    return `<div class="card"><h2>Tee sheet</h2>${nums.length ? nums.map(g => `<div class="wz-group"><b>${g ? `Group ${g}${teeTimeFor(r, g) ? " · " + teeTimeFor(r, g) : ""}` : "No group yet"}</b><span>${groups.get(g).map(p => esc(p.name)).join(", ")}</span></div>`).join("")
+    return `<div class="card"><h2>Tee sheet</h2>${nums.length ? nums.map(g => `<div class="wz-group"><b>${g ? `Group ${g}${teeTimeFor(r, g) ? " · " + teeTimeFor(r, g) : ""}` : "No group yet"}</b><span>${groups.get(g).map(p => esc(p.name) + buggyMark(p)).join(", ")}</span></div>`).join("")
       : `<p class="small muted">Nobody in the field yet.</p>`}</div>`;
   }
 

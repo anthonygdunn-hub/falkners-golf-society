@@ -1267,3 +1267,11 @@ input[type="date"]::-webkit-date-and-time-value, input[type="time"]::-webkit-dat
    (js/round-options.js), the same buttons as the fixtures page. */
 .year-tabs.round-seasons { margin: 2px 0 10px; gap: 6px; }
 .round-seasons .year-tab { font-size: 0.85rem; padding: 7px 12px; }
+
+/* Golf buggy beside a player's name (attendance.buggy) */
+.buggy-ic { display: inline-flex; vertical-align: -3px; width: 18px; height: 18px; margin-left: 4px; color: var(--gold); }
+.buggy-ic svg { width: 100%; height: 100%; }
+
+/* Round notice, e.g. the 4-club rule (events.app_notice) */
+.round-notice { background: #fbf1d6; border: 1px solid #e3c46f; border-left: 5px solid var(--gold); border-radius: var(--radius); padding: 12px 14px; margin: 0 0 16px; font-weight: 600; color: var(--ink, #171F30); line-height: 1.45; }
+.round-notice-label { display: block; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #7A5A11; margin-bottom: 4px; font-weight: 500; }

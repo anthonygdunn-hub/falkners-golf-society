@@ -1427,3 +1427,14 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .pay-dl dt { color: var(--ink-soft); }
 .pay-dl dd { margin: 0; font-weight: 600; }
 .pay-dl .mono { font-family: ui-monospace, Menlo, monospace; letter-spacing: .04em; }
+
+/* Golf buggy beside a player's name (attendance.buggy) */
+.buggy-ic { display: inline-flex; vertical-align: -3px; width: 18px; height: 18px; margin-left: 4px; color: var(--gold, #B8923C); }
+.buggy-ic svg { width: 100%; height: 100%; }
+.pp-table .buggy-ic { color: #1B3A6C; width: 15px; height: 15px; }
+
+/* Round notice, e.g. the 4-club rule (events.app_notice) */
+.card.round-notice { background: #fbf1d6; border: 1px solid #e3c46f; border-left: 5px solid var(--gold); font-weight: 600; line-height: 1.45; }
+.round-notice-label { display: block; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: #7A5A11; margin-bottom: 4px; font-weight: 700; }
+.hero-notice { margin: 10px 0 12px; padding: 9px 12px; border-radius: 10px; background: rgba(217,190,124,.16); border: 1px solid rgba(217,190,124,.45); color: #fff; font-size: .86rem; line-height: 1.4; }
+.hero-notice b { color: #D9BE7C; text-transform: uppercase; letter-spacing: .06em; font-size: .72rem; display: block; }

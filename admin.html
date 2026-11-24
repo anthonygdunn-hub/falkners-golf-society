@@ -6,7 +6,7 @@
 <title>Committee Admin — The Falkners Arms Golf Society</title>
 <meta name="robots" content="noindex">
 <link rel="icon" href="assets/logo.jpeg"><link rel="apple-touch-icon" href="assets/logo.jpeg">
-<link rel="stylesheet" href="css/style.css?v=2026-11-24b">
+<link rel="stylesheet" href="css/style.css?v=2026-11-24c">
 </head>
 <body>
 
@@ -122,6 +122,7 @@
               <div class="form-field"><label for="edit-hole-np2-front">Nearest the pin in 2 &mdash; front 9</label><input id="edit-hole-np2-front" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
               <div class="form-field"><label for="edit-hole-np2-back">Nearest the pin in 2 &mdash; back 9</label><input id="edit-hole-np2-back" type="number" min="1" max="18" step="1" placeholder="Hole"></div>
             </div>
+            <div class="form-field"><label for="edit-event-notice">Round notice</label><textarea id="edit-event-notice" rows="2" placeholder="A rule or must-know for this round, e.g. 4-club rule. Shows in a highlighted box at the top of the fixture and in the app."></textarea></div>
             <div class="form-field"><label>Notes</label><textarea id="edit-event-notes" rows="3" placeholder="Meet time, dress code, food afterwards..."></textarea></div>
             <button class="btn btn-brass" type="submit">Save changes</button>
             <div id="edit-event-status" class="small" style="margin-top:8px;"></div>
@@ -312,7 +313,7 @@
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
 <script src="js/password-reset.js?v=2026-11-24a"></script>
-<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/round-options.js?v=2026-11-24c"></script><script src="js/admin.js?v=2026-11-24b"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-11-24a"></script><script src="js/admin-view.js?v=2026-10-07a"></script><script src="js/admin-overview.js?v=2026-11-20c"></script><script src="js/pages-admin.js?v=2026-09-03b"></script><script src="js/roles-admin.js?v=2026-11-24b"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
+<script src="js/competitions.js?v=2026-09-01c"></script><script src="js/round-options.js?v=2026-11-24c"></script><script src="js/admin.js?v=2026-11-24d"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-11-24a"></script><script src="js/admin-view.js?v=2026-10-07a"></script><script src="js/admin-overview.js?v=2026-11-20c"></script><script src="js/pages-admin.js?v=2026-09-03b"></script><script src="js/roles-admin.js?v=2026-11-24b"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
 <script>
 FGSReset.attach({
   link: document.getElementById("forgot-password-link"),

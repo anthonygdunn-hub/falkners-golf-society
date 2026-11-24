@@ -345,7 +345,12 @@ function renderFixtureFacts(event) {
     ? `<div class="fixture-notes">${escapeHtml(event.notes)}</div>`
     : "";
 
-  return facts + renderCompetitions(event) + notes;
+  // A round notice (e.g. the 4-club rule) leads the panel, highlighted.
+  const notice = event.app_notice
+    ? `<div class="round-notice" role="note"><span class="round-notice-label">Round rule</span>${escapeHtml(event.app_notice)}</div>`
+    : "";
+
+  return notice + facts + renderCompetitions(event) + notes;
 }
 
 /* The side competitions this round is running, with the hole each is

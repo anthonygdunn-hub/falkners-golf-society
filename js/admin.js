@@ -335,6 +335,9 @@ async function saveLeagueSettings(e) {
 
 // Every "pick a fixture" dropdown on this page is the same list, so
 // they're filled from one place rather than four near-identical copies.
+// A small golf buggy beside the name of anyone riding in one.
+const BUGGY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12"/><path d="M7 4v8M16 4l1 8"/><path d="M9 12V9h4"/><path d="M3 12h17l1 4H3z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>';
+
 function fillEventSelect(id, { includeBlank = false, onlyRounds = false, mode = "" } = {}) { const eventList = onlyRounds ? currentEvents.filter(e => !e.is_trip) : currentEvents;
   const select = document.getElementById(id);
   if (!select) return null;
@@ -804,7 +807,7 @@ async function refreshPlayingList(eventId) {
 
   const [{ data: rows, error }, { data: settings }] = await Promise.all([
     client.from("attendance")
-      .select("id, profile_id, player_id, created_at, status, guest_of")
+      .select("id, profile_id, player_id, created_at, status, guest_of, buggy")
       .eq("event_id", eventId)
       .order("created_at", { ascending: true }),
     client.from("league_settings").select("max_players, close_days").maybeSingle()
@@ -843,7 +846,7 @@ async function refreshPlayingList(eventId) {
     else if (r.guest_of) tag = `guest of ${profById.get(r.guest_of) || "a member"}` + (hosts.has(r.guest_of) ? "" : " (who has pulled out)");
     else tag = "added by the committee";
     return {
-      id: r.id, status: r.status, tag, orphan: !!r.guest_of && !hosts.has(r.guest_of),
+      id: r.id, status: r.status, tag, orphan: !!r.guest_of && !hosts.has(r.guest_of), buggy: !!r.buggy,
       name: isMember ? (profById.get(r.profile_id) || "Member") : (playerById.get(r.player_id) || "Player")
     };
   };
@@ -857,8 +860,11 @@ async function refreshPlayingList(eventId) {
 
   const line = p => `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${escapeHtml(p.name)} <span class="small" style="color:${p.orphan ? "#8A560B" : "var(--muted)"};">${escapeHtml(p.tag)}</span></span>
+        <span>${escapeHtml(p.name)}${p.buggy ? ' <span class="buggy-ic" title="In a buggy">' + BUGGY_SVG + "</span>" : ""} <span class="small" style="color:${p.orphan ? "#8A560B" : "var(--muted)"};">${escapeHtml(p.tag)}</span></span>
         <span style="display:flex; gap:6px; flex:0 0 auto;">
+          ${p.status === "playing"
+            ? `<button class="btn ${p.buggy ? "btn-brass" : "btn-outline"} btn-small" type="button" data-buggy="${p.id}" data-on="${p.buggy ? 1 : 0}" aria-pressed="${p.buggy}" title="Riding in a golf buggy">${p.buggy ? "Buggy ✓" : "Buggy"}</button>`
+            : ""}
           ${p.status === "waiting"
             ? `<button class="btn btn-brass btn-small" type="button" data-move-attendance="${p.id}" data-move-to="playing">Give them a place</button>`
             : ""}
@@ -876,6 +882,17 @@ async function refreshPlayingList(eventId) {
 
   el.querySelectorAll("[data-remove-attendance]").forEach(btn => {
     btn.addEventListener("click", () => removeFromRound(btn.dataset.removeAttendance, eventId));
+  });
+  // Buggy on/off: shows a little buggy by their name on the tee groups,
+  // in the app and on the printed start sheet.
+  el.querySelectorAll("[data-buggy]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const { error: bErr } = await client.from("attendance").update({ buggy: btn.dataset.on !== "1" }).eq("id", btn.dataset.buggy);
+      const statusEl = document.getElementById("guest-status");
+      if (bErr) { statusEl.textContent = "Couldn't change the buggy: " + bErr.message; statusEl.className = "status-msg err"; btn.disabled = false; return; }
+      await refreshPlayingPanels(eventId);
+    });
   });
   el.querySelectorAll("[data-move-attendance]").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -977,6 +994,7 @@ function loadEventIntoEditForm(eventId) {
   set("edit-event-website", event.website);
   set("edit-event-format", event.format);
   set("edit-event-notes", event.notes);
+  set("edit-event-notice", event.app_notice);
   window.ROUND_COMPETITIONS.forEach(comp => {
     const hole = window.competitionHole(event, comp);
     set("edit-hole-" + comp.id, hole == null ? "" : hole);
@@ -1003,6 +1021,7 @@ async function saveEventEdits(e) {
     website: val("edit-event-website") || null,
     format: val("edit-event-format") || null,
     notes: val("edit-event-notes") || null,
+    app_notice: val("edit-event-notice") || null,
     cost: costRaw === "" ? null : Number(costRaw)
   };
 
