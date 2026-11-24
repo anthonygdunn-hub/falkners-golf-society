@@ -41,6 +41,8 @@
         </div>
         <button class="btn btn-brass" type="submit">Sign in</button>
       </form>
+      <p class="small" style="margin-top:12px;"><a href="#" id="forgot-password-link">Forgotten your password?</a></p>
+      <div id="reset-panel"></div>
     </div>
 
     <div id="dashboard" style="display:none;">
@@ -309,6 +311,15 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
+<script src="js/password-reset.js?v=2026-11-24a"></script>
 <script src="js/competitions.js?v=2026-09-01c"></script><script src="js/admin.js?v=2026-11-20c"></script><script src="js/trip-payments.js?v=2026-08-16c"></script><script src="js/pairings.js?v=2026-10-07a"></script><script src="js/admin-view.js?v=2026-10-07a"></script><script src="js/admin-overview.js?v=2026-11-20c"></script><script src="js/pages-admin.js?v=2026-09-03b"></script><script src="js/roles-admin.js?v=2026-09-03a"></script><script src="js/back-to-top.js?v=2026-08-16c"></script> 
+<script>
+FGSReset.attach({
+  link: document.getElementById("forgot-password-link"),
+  mount: document.getElementById("reset-panel"),
+  hide: [document.getElementById("login-form"), document.getElementById("login-status")],
+  emailFrom: document.getElementById("login-email"),
+});
+</script>
 </body>
 </html>

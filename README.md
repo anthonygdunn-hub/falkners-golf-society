@@ -30,7 +30,7 @@ or write anything they shouldn't.
 | `contact.html` | General enquiries |
 | `committee.html` | Who's who |
 | `admin.html` | Committee dashboard — everything below |
-| `reset-password.html` | Where the password reset email lands |
+| `reset-password.html` | Where old-style password reset links land (resets now use an emailed code, see below) |
 
 ## What the committee can do
 
@@ -175,7 +175,25 @@ email to the committee.
 Two settings in the Supabase dashboard matter and aren't in any SQL file.
 Under Authentication → URL Configuration, the Site URL must be the live domain
 and the redirect list must include `https://www.thefalknersarmsgolfsociety.co.uk/**`,
-or password reset emails will send people to the wrong place.
+or sign-up emails will send people to the wrong place.
+
+### Forgotten passwords
+
+Every sign-in screen (My Account, `admin.html`, `newsletter-admin.html` and the
+app) has a "Forgotten your password?" link, handled by `js/password-reset.js`.
+The member types their email, gets a code by email, then types the code and a
+new password on the same screen and is signed straight in. Nothing to click in
+the email, so it works the same whichever device opened the email.
+
+This depends on two dashboard settings:
+
+- Authentication → Emails → Reset password: the template shows `{{ .Token }}`
+  (the code), not `{{ .ConfirmationURL }}`. The code length and expiry are under
+  Sign In / Providers → Email (currently 8 digits, one hour)
+- Authentication → Emails → SMTP Settings: custom SMTP through Resend
+  (`smtp.resend.com`, port 465, username `resend`, password = the Resend API key,
+  sender on the society domain). Supabase's built-in mailer only delivers to the
+  project's own team, so without this members never receive the code
 
 ## Where secrets go
 

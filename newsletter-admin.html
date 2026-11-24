@@ -53,6 +53,8 @@
         </div>
         <button class="btn btn-brass" type="submit">Sign in</button>
       </form>
+      <p class="small" style="margin-top:12px;"><a href="#" id="forgot-password-link">Forgotten your password?</a></p>
+      <div id="reset-panel"></div>
     </div>
 
     <div id="workspace" style="display:none;">
@@ -129,6 +131,7 @@
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="js/config.js?v=2026-08-16c"></script>
+<script src="js/password-reset.js?v=2026-11-24a"></script>
 <script>
 (function () {
   var client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -308,6 +311,14 @@
 
   boot();
 })();
+</script>
+<script>
+FGSReset.attach({
+  link: document.getElementById("forgot-password-link"),
+  mount: document.getElementById("reset-panel"),
+  hide: [document.getElementById("gate-form"), document.getElementById("gate-status")],
+  emailFrom: document.getElementById("gate-email"),
+});
 </script>
 </body>
 </html>

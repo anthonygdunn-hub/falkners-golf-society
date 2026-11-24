@@ -219,9 +219,21 @@
         </form>
         <p class="small" style="margin-top:16px;">
           New to the society? <a href="../member.html">Join on the website</a><br>
-          Forgotten your password? <a href="../member.html">Reset it here</a>
+          Forgotten your password? <a href="#" id="forgot-password-link">Reset it here</a>
         </p>
-      </div>`;
+      </div>
+      <div class="card" id="reset-panel"></div>`;
+    // Emailed-code reset, same as the website. Once it's done they're
+    // signed in, so carry on exactly as after a normal sign-in.
+    if (window.FGSReset) FGSReset.attach({
+      link: $("#forgot-password-link"),
+      mount: $("#reset-panel"),
+      hide: [$("#signin-form").closest(".card")],
+      emailFrom: $("#signin-form [name=email]"),
+      client,
+      variant: "app",
+      onDone: async () => { await loadUser(); route(); },
+    });
     $("#signin-form").addEventListener("submit", async e => {
       e.preventDefault();
       const f = new FormData(e.target);

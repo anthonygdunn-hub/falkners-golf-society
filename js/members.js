@@ -345,63 +345,13 @@ document.addEventListener("DOMContentLoaded", () => { setTimeout(showEventContex
 // ------------------------------------------------------------------
 function wirePasswordReset() {
   const link = document.getElementById("forgot-password-link");
-  const panel = document.getElementById("reset-request-panel");
-  const emailEl = document.getElementById("reset-email");
-  const submit = document.getElementById("reset-submit");
-  const cancel = document.getElementById("reset-cancel");
-  if (!link || !panel || !emailEl || !submit) return;
-
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
-    panel.style.display = "block";
-    link.style.display = "none";
-    // Save them retyping it if they already started signing in.
-    const typed = (document.getElementById("login-email") || {}).value || "";
-    if (typed && !emailEl.value) emailEl.value = typed.trim();
-    emailEl.focus();
+  const form = document.getElementById("login-form");
+  if (!link || !form || !window.FGSReset) return;
+  FGSReset.attach({
+    link,
+    mount: document.getElementById("reset-panel"),
+    hide: [form, form.previousElementSibling],
+    emailFrom: document.getElementById("login-email"),
+    client,
   });
-
-  if (cancel) cancel.addEventListener("click", () => {
-    panel.style.display = "none";
-    link.style.display = "";
-    document.getElementById("reset-request-status").textContent = "";
-  });
-
-  submit.addEventListener("click", sendPasswordReset);
-
-  // Enter inside this box should send the reset, not submit the sign-in form.
-  emailEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); sendPasswordReset(); }
-  });
-}
-
-async function sendPasswordReset() {
-  const statusEl = document.getElementById("reset-request-status");
-  const submit = document.getElementById("reset-submit");
-  const email = (document.getElementById("reset-email").value || "").trim();
-
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    statusEl.textContent = "Enter a valid email address.";
-    statusEl.className = "status-msg err";
-    return;
-  }
-
-  submit.disabled = true;
-  statusEl.textContent = "Sending\u2026";
-  statusEl.className = "status-msg";
-
-  const redirectTo = window.location.origin +
-    window.location.pathname.replace(/member\.html$/, "") + "reset-password.html";
-  const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
-
-  submit.disabled = false;
-
-  if (error) {
-    statusEl.textContent = error.message;
-    statusEl.className = "status-msg err";
-    return;
-  }
-
-  statusEl.textContent = "If that address has an account, a reset link is on its way. Check your inbox and spam folder.";
-  statusEl.className = "status-msg ok";
 }
