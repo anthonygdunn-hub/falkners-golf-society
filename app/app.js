@@ -345,6 +345,18 @@
     const upcoming = events.filter(e => e.event_date >= today && status.get(e.id) !== "live");
     const past = events.filter(e => e.event_date < today && status.get(e.id) !== "live").reverse();
 
+    // This season's rounds still to come are listed; next season's sit
+    // under their own heading, folded, so they don't push this season down.
+    const thisYear = today.slice(0, 4);
+    const coming = live.length ? upcoming : upcoming.slice(1);
+    const comingNow = coming.filter(e => e.event_date.slice(0, 4) <= thisYear);
+    const laterYears = [...new Set(coming.filter(e => e.event_date.slice(0, 4) > thisYear).map(e => e.event_date.slice(0, 4)))].sort();
+    const comingLater = laterYears.map(y => [y, coming.filter(e => e.event_date.slice(0, 4) === y)]);
+    const roundRange = list => {
+      const f = d => new Date(d + "T12:00:00").toLocaleDateString("en-GB", { month: "short" });
+      return list.length > 1 ? `${f(list[0].event_date)} to ${f(list[list.length - 1].event_date)}` : f(list[0].event_date);
+    };
+
     const first = prof && prof.display_name ? String(prof.display_name).trim().split(/\s+/)[0] : "";
     const hour = Number(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/London" }));
     const hello = hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
@@ -361,7 +373,9 @@
       ${lastScoreCard(myResults.data || [], events)}
       <div class="card" id="season-card"><div class="loading" style="padding:12px">Loading the Order of Merit…</div></div>
       ${live.length > 1 ? `<div class="section-label">Live now</div>${live.slice(1).map(e => roundItem(e, status, playing)).join("")}` : ""}
-      ${(live.length ? upcoming : upcoming.slice(1)).length ? `<div class="section-label">Coming up</div>${(live.length ? upcoming : upcoming.slice(1)).map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${comingNow.length ? `<div class="section-label">Coming up</div>${comingNow.map(e => roundItem(e, status, playing)).join("")}` : ""}
+      ${comingLater.map(([y, list]) => `<div class="section-label">${y} season</div>
+        <details class="more-rounds"><summary>${list.length} round${list.length === 1 ? "" : "s"} · ${esc(roundRange(list))}</summary>${list.map(e => roundItem(e, status, playing)).join("")}</details>`).join("")}
       ${app.practiceOn ? `<div class="section-label">Private games</div>
         ${privateGames.map(e => roundItem(e, status, playing)).join("")}
         <button class="btn ghost block practice-new" data-action="private-new">＋ New private game</button>

@@ -223,7 +223,8 @@
     var events = evRes.data || [];
     var select = document.getElementById("pair-event-select");
     if (select) {
-      select.innerHTML = events.map(function (e) { return '<option value="' + e.id + '">' + escapeHtml(e.name) + " - " + e.event_date + "</option>"; }).join("");
+      if (window.RoundOptions) window.RoundOptions.fill(select, events);
+      else select.innerHTML = events.map(function (e) { return '<option value="' + e.id + '">' + escapeHtml(e.name) + " - " + e.event_date + "</option>"; }).join("");
       select.onchange = function () { refreshPairList(select.value); };
       if (events.length) await refreshPairList(select.value);
     }

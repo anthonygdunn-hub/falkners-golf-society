@@ -335,17 +335,11 @@ async function saveLeagueSettings(e) {
 
 // Every "pick a fixture" dropdown on this page is the same list, so
 // they're filled from one place rather than four near-identical copies.
-function fillEventSelect(id, { includeBlank = false, onlyRounds = false } = {}) { const eventList = onlyRounds ? currentEvents.filter(e => !e.is_trip) : currentEvents;
+function fillEventSelect(id, { includeBlank = false, onlyRounds = false, mode = "" } = {}) { const eventList = onlyRounds ? currentEvents.filter(e => !e.is_trip) : currentEvents;
   const select = document.getElementById(id);
   if (!select) return null;
-  const previous = select.value;
-  select.innerHTML =
-    (includeBlank ? `<option value="">Not tied to a round</option>` : "") +
-    eventList.map(e =>
-      `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
-    ).join("");
-  if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
-  return select;
+  // Grouped by season, opening on the next round (js/round-options.js).
+  return window.RoundOptions.fill(select, eventList, { blank: includeBlank ? "Not tied to a round" : "", mode });
 }
 
 // ---- Round prizes ----------------------------------------------------
@@ -399,7 +393,7 @@ function renderPrizeCompetitions(event, data) {
 }
 
 const PRIZE_SELECTS = ["prize-first","prize-second","prize-third","prize-pair-a","prize-pair-b"]; function prizeSelectIds() { return PRIZE_SELECTS.concat(window.ROUND_COMPETITIONS.map(compFieldId)); } function fillPrizePlayerSelects() { const opts = '<option value="">-- none --</option>' + (currentPlayers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => '<option value="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</option>').join(""); prizeSelectIds().forEach(id => { const el = document.getElementById(id); if (el && el.tagName === "SELECT") { const keep = el.value; el.innerHTML = opts; el.value = keep; } }); } function setPrizeValue(id, value) { const el = document.getElementById(id); if (!el) return; const val = String(value || "").trim(); if (val && el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === val)) { const opt = document.createElement("option"); opt.value = val; opt.textContent = val + " (not in the player list)"; el.appendChild(opt); } el.value = val; } function populatePrizeEventSelect() {
-  const select = fillEventSelect("prize-event-select");
+  const select = fillEventSelect("prize-event-select", { mode: "results" });
   if (!select) return;
   select.onchange = () => loadPrizes(select.value);
   if (currentEvents.length) loadPrizes(select.value);
@@ -679,11 +673,7 @@ function populatePlayingEventSelect() {
   const select = document.getElementById("playing-event-select");
   if (!select) return;
 
-  const previous = select.value;
-  select.innerHTML = eventList.map(e =>
-    `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
-  ).join("");
-  if (previous && currentEvents.some(e => e.id === previous)) select.value = previous;
+  window.RoundOptions.fill(select, eventList);
 
   const datalist = document.getElementById("known-players");
   if (datalist) {
@@ -965,13 +955,9 @@ function populateEditEventSelect() {
   const select = document.getElementById("edit-event-select");
   if (!select) return;
 
-  const previous = select.value;
-  select.innerHTML = eventList.map(e =>
-    `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date}</option>`
-  ).join("");
-
-  // Keep the committee on the fixture they were already editing after a save.
-  if (previous && currentEvents.some(e => e.id === previous)) select.value = previous;
+  // Grouped by season; keeps the committee on the fixture they were
+  // already editing after a save, otherwise opens on the next round.
+  window.RoundOptions.fill(select, eventList);
 
   if (currentEvents.length) loadEventIntoEditForm(select.value);
   select.onchange = () => loadEventIntoEditForm(select.value);
@@ -1069,10 +1055,9 @@ async function saveEventEdits(e) {
 
 function populateEventSelect() {
   const select = document.getElementById("event-select");
-  select.innerHTML = eventList.map(e =>
-    `<option value="${e.id}">${escapeHtml(e.name)} — ${e.event_date} — ${escapeHtml(e.venue || 'Venue TBC')}</option>`
-  ).join("");
-  if (currentEvents.length) loadResultsFormFor(currentEvents[0].id);
+  // Results open on the most recent round played, not the newest fixture.
+  window.RoundOptions.fill(select, eventList, { venue: true, mode: "results" });
+  if (currentEvents.length && select.value) loadResultsFormFor(select.value);
   select.onchange = () => loadResultsFormFor(select.value);
 }
 

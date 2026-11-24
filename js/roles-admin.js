@@ -174,12 +174,9 @@
         (blanket ? "" :
           '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
           '<select data-add-for="' + esc(m.id) + '" style="max-width:280px;">' +
-          '<option value="">Add a fixture…</option>' +
-          events.filter(function (ev) {
+          window.RoundOptions.html(events.filter(function (ev) {
             return !held.some(function (g) { return g.event_id === ev.id; });
-          }).map(function (ev) {
-            return '<option value="' + esc(ev.id) + '">' + esc(ev.name) + " — " + esc(shortDate(ev.event_date)) + "</option>";
-          }).join("") +
+          }), { blank: "Add a fixture…" }) +
           "</select></div>" +
           '<div style="margin-top:8px;">' +
           (held.length
