@@ -2353,6 +2353,7 @@
     if (r.tab === "score") {
       body.innerHTML = scoreView(r);
       fillPayCard(r);
+      maybeHoleGuide(r);
       if (store.get("gps-on", false) && r.geo && r.geo.size && window.HoleMaps) window.HoleMaps.startGps();
       maybeMapHelp(r);
     }
@@ -2447,6 +2448,126 @@
   const noticeCard = e => e && e.app_notice
     ? `<div class="card round-notice" role="note"><span class="round-notice-label">Round rule</span>${esc(e.app_notice)}</div>` : "";
 
+  // ---------- hole guide ----------
+  // When the group moves on to a new hole, a card pops up: yards, par,
+  // SI, everyone's shots, how the hole plays (course_hole_guides, which
+  // the committee can edit), members' tips, and a club plan from the
+  // player's own bag. Each hole pops up once per round per phone; the
+  // "Hole guide" link under the GPS bar opens it again any time.
+  async function ensureGuides(r) {
+    if (r.guides || !r.course) return;
+    const [g, t] = await Promise.all([
+      client.from("course_hole_guides").select("*").eq("course_id", r.course.id),
+      client.from("course_notes").select("hole, body, created_at").eq("course_id", r.course.id).order("created_at", { ascending: false }),
+    ]);
+    r.guides = new Map((g.error ? [] : g.data || []).map(x => [x.hole, x]));
+    r.tips = t.error ? [] : t.data || [];
+  }
+
+  function maybeHoleGuide(r) {
+    if (!r.course || !r.setup || r.setup.status !== "live" || !canScore(r)) return;
+    const players = selectedPlayers(r);
+    if (!players.length) return;
+    if (r.holes.every(h => players.every(p => hasScore(p, h.hole)))) return;
+    const n = nextHole(r, players);
+    const key = "guide-seen-" + r.id;
+    const seen = store.get(key, []);
+    if (seen.includes(n)) return;
+    setTimeout(() => {
+      if (!app.round || app.round.id !== r.id || r.tab !== "score" || !$("#sheet").hidden) return;
+      store.set(key, store.get(key, []).concat(n));
+      openHoleGuide(r, n);
+    }, 450);
+  }
+
+  // A plan for the hole from the player's bag: the tee club, then what
+  // it leaves. Driver off the tee on par 4s and 5s unless it would run
+  // out of hole; a fairway club for a par 5's second when it's long.
+  function clubPlan(h) {
+    const bag = (app.bag || []).filter(x => x.club !== "PT" && x.distance);
+    if (!bag.length || !h.yards) return null;
+    const nm = c => (CLUB.get(c.club) || { name: c.club }).name;
+    if (h.par === 3) { const t = clubFor(h.yards); return t ? [{ club: nm(t.c), yds: t.c.distance, what: `to the green (${h.yards} yds)` }] : null; }
+    const byLong = bag.slice().sort((a, b) => b.distance - a.distance);
+    let tee = byLong[0];
+    if (tee.distance >= h.yards - 20) {
+      // Short hole: lay up to leave a full shot rather than run out of fairway.
+      const wedge = bag.slice().sort((a, b) => a.distance - b.distance).find(x => x.distance >= 70) || byLong[byLong.length - 1];
+      const t = clubFor(h.yards - wedge.distance);
+      if (t) tee = t.c;
+    }
+    const steps = [{ club: nm(tee), yds: tee.distance, what: "off the tee" }];
+    let left = h.yards - tee.distance;
+    if (h.par >= 5) {
+      const fw = byLong.find(x => x.club !== "DR" && x.club !== tee.club) || byLong.find(x => x.club !== "DR");
+      if (fw && left - fw.distance > 30) { steps.push({ club: nm(fw), yds: fw.distance, what: "second shot" }); left -= fw.distance; }
+    }
+    if (left <= 15) steps.push({ club: "Chip or putt", yds: null, what: "from the edge" });
+    else { const t = clubFor(left); if (t) steps.push({ club: nm(t.c), yds: t.c.distance, what: `about ${left} yds in` }); }
+    return steps;
+  }
+
+  async function openHoleGuide(r, n) {
+    const h = r.holes.find(x => x.hole === Number(n));
+    if (!h) return;
+    openSheet(`<div class="loading" style="padding:16px">Loading hole ${h.hole}…</div>`);
+    try { await ensureGuides(r); } catch (e) { /* show what we have */ }
+    if (!app.bag && app.approved) { try { await loadMyBag(); } catch (e) { /* no plan then */ } }
+    if ($("#sheet").hidden) return;
+    const g = r.guides && r.guides.get(h.hole);
+    const players = selectedPlayers(r).length ? selectedPlayers(r) : r.me ? [r.me] : [];
+    const shots = players.map(p => `<span class="hg-shot"><b>${esc(shortName(p.name))}</b>${shotBadge(r, p, h.hole) || '<i class="shot-badge none">no shot</i>'}</span>`).join("");
+    // Club-limit rounds (a round notice like "4-club rule") skip the plan:
+    // it would suggest clubs that were left in the car.
+    const limited = /\b\d+\s*-?\s*club\b/i.test((r.event && r.event.app_notice) || "");
+    const plan = limited ? null : clubPlan(h);
+    const tips = (r.tips || []).filter(t => t.hole === h.hole).slice(0, 3);
+    const mapped = r.geo && r.geo.get(h.hole) && r.geo.get(h.hole).green_lat != null;
+    const shotWord = x => x.yds ? ` <span class="muted">${x.yds} yds</span>` : "";
+    openSheet(`
+      <div class="hg">
+        <div class="hg-kick">${esc(r.course.name)}</div>
+        <h2 class="hg-title">Hole ${h.hole}</h2>
+        <div class="hg-facts">
+          <div><span>Par</span><b>${h.par}</b></div>
+          <div><span>Yards</span><b>${h.yards || "–"}</b></div>
+          <div><span>SI</span><b>${h.stroke_index}</b></div>
+        </div>
+        ${players.length ? `<div class="hg-sec"><div class="hg-label">Shots on this hole</div><div class="hg-shots">${shots}</div></div>` : ""}
+        ${g && g.guide ? `<div class="hg-sec"><div class="hg-label">How it plays</div><p class="hg-text">${esc(g.guide)}</p>
+          ${(g.hazards || []).length ? `<div class="hg-haz">${g.hazards.map(z => `<span>${esc(z)}</span>`).join("")}</div>` : ""}</div>`
+          : `<div class="hg-sec"><p class="small muted">No write-up for this hole yet.</p></div>`}
+        <div class="hg-sec"><div class="hg-label">Your clubs</div>
+          ${plan ? `<ol class="hg-plan">${plan.map(x => `<li><b>${esc(x.club)}</b>${shotWord(x)} <span class="small muted">· ${esc(x.what)}</span></li>`).join("")}</ol>
+            <p class="small muted" style="margin:4px 0 0">From the distances in your bag, on the card yardage. Allow for slopes, wind and the lie.</p>`
+            : limited ? `<p class="small muted">No club plan on this round: it's a ${esc(((r.event.app_notice || "").match(/\d+\s*-?\s*club/i) || ["club-limit"])[0].replace(/\s+/g, ""))} round, so play the clubs you brought.</p>`
+            : app.approved && !app.guest ? `<p class="small muted"><button class="mv-link" data-action="go-bag">Add your clubs and how far you hit them</button> to get a club plan for every hole.</p>` : ""}
+        </div>
+        ${tips.length ? `<div class="hg-sec"><div class="hg-label">Members' tips</div>${tips.map(t => `<p class="hg-tip">“${esc(t.body)}”</p>`).join("")}</div>` : ""}
+        ${app.committee ? `<details class="hg-edit"><summary>Edit this hole's guide</summary>
+          <label class="field"><span>How it plays</span><textarea id="hg-text" rows="4">${esc(g ? g.guide : "")}</textarea></label>
+          <label class="field"><span>Hazards, separated by commas</span><input id="hg-haz" value="${esc(g ? (g.hazards || []).join(", ") : "")}"></label>
+          <button class="btn gold block" data-action="hole-guide-save" data-hole="${h.hole}">Save guide</button></details>` : ""}
+        <div class="hg-actions">
+          ${mapped ? `<button class="btn ghost" data-action="hole-guide-map" data-hole="${h.hole}">Map &amp; live yards</button>` : ""}
+          <button class="btn gold" data-action="close-sheet">Got it</button>
+        </div>
+        ${g && g.source ? `<p class="small muted hg-src">Guide based on ${esc(g.source)}.</p>` : ""}
+      </div>`);
+  }
+
+  async function saveHoleGuide(el) {
+    const r = app.round; const hole = Number(el.dataset.hole);
+    const guide = ($("#hg-text").value || "").trim();
+    const hazards = ($("#hg-haz").value || "").split(",").map(x => x.trim()).filter(Boolean);
+    el.disabled = true;
+    const { error } = await client.from("course_hole_guides").upsert({ course_id: r.course.id, hole, guide, hazards, updated_by: app.user.id, updated_at: new Date().toISOString() });
+    el.disabled = false;
+    if (error) return toast(error.message, true);
+    r.guides = null; toast("Guide saved");
+    openHoleGuide(r, hole);
+  }
+
   // A small golf buggy beside the name of anyone riding in one.
   const BUGGY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12"/><path d="M7 4v8M16 4l1 8"/><path d="M9 12V9h4"/><path d="M3 12h17l1 4H3z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>';
   const buggyMark = p => p && p.buggy ? ` <span class="buggy-ic" title="In a buggy" role="img" aria-label="in a buggy">${BUGGY_SVG}</span>` : "";
@@ -2511,6 +2632,7 @@
       ${disputeBanner(r, players)}
       ${contestsCard(r)}
       ${gpsBar(r, next)}
+      ${r.course ? `<button class="hole-guide-link" data-action="hole-guide" data-hole="${next}">📋 Hole ${next} guide · yards, hazards &amp; your clubs</button>` : ""}
       ${scoreGrid(r, players)}
       <div class="grid-actions">
         <button class="btn gold block" data-action="review-cards">Review &amp; submit cards</button>
@@ -2525,8 +2647,27 @@
 
   // The group's own mini leaderboard at the top of the card, with the
   // way through to the whole field and the pairs.
+  // "+1 shot" by a name: the shots that player gets on the hole being played.
+  function shotBadge(r, p, hole) {
+    const h = r.holes.find(x => x.hole === hole);
+    if (!h || p.ph == null) return "";
+    const n = S.shotsOnHole(p.ph, h.stroke_index, r.holes.length);
+    return n > 0 ? `<i class="shot-badge" title="Shots on hole ${hole}">+${n} shot${n > 1 ? "s" : ""}</i>`
+      : n < 0 ? `<i class="shot-badge give" title="Gives a shot back on hole ${hole}">gives ${-n}</i>` : "";
+  }
+
+  // The same, as a small bubble on the player's avatar for the group card.
+  function shotPip(r, p, hole) {
+    const h = r.holes.find(x => x.hole === hole);
+    if (!h || p.ph == null) return "";
+    const n = S.shotsOnHole(p.ph, h.stroke_index, r.holes.length);
+    return n ? `<i class="shot-pip${n < 0 ? " give" : ""}" title="${n > 0 ? `+${n} shot${n > 1 ? "s" : ""}` : "gives a shot back"} on hole ${hole}">${n > 0 ? "+" + n : n}</i>` : "";
+  }
+
   function groupBoard(r, players) {
     const rows = players.map(p => ({ p, sum: S.summarise(r.holes, p.scores, p.ph) }));
+    const onHole = nextHole(r, players);
+    const allIn = r.holes.every(h => players.every(p => hasScore(p, h.hole)));
     const circ = (v, cls) => `<span class="gb-c ${cls || ""}">${v}</span>`;
     const tp = n => n == null ? "–" : n === 0 ? "E" : n > 0 ? "+" + n : String(n);
     const tpc = n => n == null || n === 0 ? "" : n < 0 ? "under" : "over";
@@ -2534,12 +2675,12 @@
     const label = r.groupKey === "me" ? "Your card" : r.groupKey && r.groupKey.startsWith("g") ? "Group " + r.groupKey.slice(1) : "Your players";
     return `<div class="card group-board">
       <div class="gb-head">
-        <span class="gb-title">${esc(label)}${live ? ' <span class="gb-live"><i></i>live</span>' : ""}</span>
+        <span class="gb-title">${esc(label)}${live ? ' <span class="gb-live"><i></i>live</span>' : ""}${allIn ? "" : ` <span class="gb-hole">· shots on hole ${onHole}</span>`}</span>
         <span>HCP</span><span>Thru</span><span>Gross</span><span>Net</span><span>Pts</span>
       </div>
       ${rows.map(({ p, sum }) => `
         <button class="gb-row${r.me && p.id === r.me.id ? " me" : ""}" data-action="open-card" data-player="${p.id}">
-          <span class="gb-name">${avatar(p.name, p.profileId, r.me && p.id === r.me.id ? "me" : "")}<b>${esc(shortName(p.name))}</b>${flags(r, p)}</span>
+          <span class="gb-name"><span class="gb-av">${avatar(p.name, p.profileId, r.me && p.id === r.me.id ? "me" : "")}${allIn ? "" : shotPip(r, p, onHole)}</span><b>${esc(shortName(p.name))}</b>${flags(r, p)}</span>
           <span class="gb-n">${p.ph == null ? "?" : p.ph}</span>
           <span class="gb-n">${sum.thru}</span>
           ${circ(sum.pickups ? "NR" : tp(sum.thru ? sum.grossToPar : null), "dark")}
@@ -7432,6 +7573,13 @@
       case "meal-open": app.mealFromList = el.dataset.from === "list"; mealForm(app.round, el.dataset.player); break;
       case "meal-save": mealSave(); break;
       case "pay-claim": payClaim(el); break;
+      case "hole-guide": openHoleGuide(app.round, el.dataset.hole); break;
+      case "hole-guide-save": saveHoleGuide(el); break;
+      case "go-bag": closeSheet(); location.hash = "#/me/bag"; break;
+      case "hole-guide-map": closeSheet(); app.round.gpsHole = Number(el.dataset.hole);
+        window.HoleMaps.openHoleMap({ course: app.round.course, holes: app.round.holes, geo: app.round.geo, hole: Number(el.dataset.hole),
+          onClose: hole => { store.set("gps-on", true); if (app.round) { app.round.hole = hole; savePrefs(); renderRoundBody(); } } });
+        break;
       case "meal-list": mealList(app.round); break;
       case "meal-paid": mealPaid(el); break;
       case "meal-remove": mealRemove(el.dataset.player); break;

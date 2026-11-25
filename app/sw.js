@@ -2,23 +2,23 @@
 // The shell (pages, styles, scripts) comes from the network when it can
 // and from the cache when it can't. Data calls to Supabase are never
 // cached — scores queue on the phone instead (see app.js).
-const CACHE = "falkners-app-v48";
+const CACHE = "falkners-app-v49";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.css?v=48",
-  "./app.js?v=48",
-  "./scoring.js?v=48",
-  "./maps.js?v=48",
+  "./app.css?v=49",
+  "./app.js?v=49",
+  "./scoring.js?v=49",
+  "./maps.js?v=49",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "../js/config.js",
   "../js/competitions.js",
-  "../js/site-data.js?v=48",
+  "../js/site-data.js?v=49",
   "../js/image-resize.js",
   "../js/weather.js",
-  "../js/card-pay.js?v=48",
-  "../js/password-reset.js?v=48",
+  "../js/card-pay.js?v=49",
+  "../js/password-reset.js?v=49",
   "https://unpkg.com/@supabase/supabase-js@2",
 ];
 
