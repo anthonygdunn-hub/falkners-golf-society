@@ -2614,7 +2614,7 @@
     const picker = `
       <div class="group-picker">
         ${r.me ? `<button data-action="group" data-key="me" aria-selected="${r.groupKey === "me"}">Just me</button>` : ""}
-        ${groups.map(([n, ps]) => `<button data-action="group" data-key="g${n}" aria-selected="${r.groupKey === "g" + n}">Group ${n}${ps.some(p => r.me && p.id === r.me.id) ? " ★" : ""}</button>`).join("")}
+        ${groups.map(([n, ps]) => `<button data-action="group" data-key="g${n}" aria-selected="${r.groupKey === "g" + n}">Group ${n}${ps.some(p => r.me && p.id === r.me.id) ? " ★" : ""}${teeTimeFor(r, Number(n)) ? `<small class="chip-time">${teeTimeFor(r, Number(n))}</small>` : ""}</button>`).join("")}
         <button data-action="custom-group" aria-selected="${r.groupKey === "custom"}">Pick players</button>
       </div>`;
 
@@ -2672,7 +2672,9 @@
     const tp = n => n == null ? "–" : n === 0 ? "E" : n > 0 ? "+" + n : String(n);
     const tpc = n => n == null || n === 0 ? "" : n < 0 ? "under" : "over";
     const live = r.setup && r.setup.status === "live";
-    const label = r.groupKey === "me" ? "Your card" : r.groupKey && r.groupKey.startsWith("g") ? "Group " + r.groupKey.slice(1) : "Your players";
+    const gNum = r.groupKey && r.groupKey.startsWith("g") ? Number(r.groupKey.slice(1)) : r.groupKey === "me" && r.me && r.me.group != null ? Number(r.me.group) : null;
+    const tee = gNum ? teeTimeFor(r, gNum) : "";
+    const label = (r.groupKey === "me" ? "Your card" : gNum ? "Group " + gNum : "Your players") + (tee ? " · tees off " + tee : "");
     return `<div class="card group-board">
       <div class="gb-head">
         <span class="gb-title">${esc(label)}${live ? ' <span class="gb-live"><i></i>live</span>' : ""}${allIn ? "" : ` <span class="gb-hole">· shots on hole ${onHole}</span>`}</span>

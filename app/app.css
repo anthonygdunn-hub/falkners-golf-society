@@ -1475,3 +1475,6 @@ button.back-link { font-family: inherit; cursor: pointer; }
 .gb-av { position: relative; display: inline-flex; flex: none; }
 .shot-pip { position: absolute; bottom: -7px; right: -6px; min-width: 22px; height: 18px; padding: 0 4px; border-radius: 999px; background: var(--gold); color: var(--navy-dark); font-style: normal; font-size: .68rem; font-weight: 800; line-height: 18px; text-align: center; border: 2px solid #fff; box-sizing: content-box; }
 .shot-pip.give { background: #e7ecf5; color: var(--navy); }
+
+/* Tee time under each group chip */
+.chip-time { display: block; font-size: .72rem; font-weight: 600; opacity: .75; margin-top: 1px; letter-spacing: .02em; }
